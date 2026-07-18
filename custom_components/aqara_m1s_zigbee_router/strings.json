@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Aqara M1S Zigbee Router",
+        "description": "Connect to an Aqara M1S Gen 1 converted to a JN5189 Zigbee Router.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password",
+          "name": "Name"
+        }
+      }
+    }
+  }
+}
