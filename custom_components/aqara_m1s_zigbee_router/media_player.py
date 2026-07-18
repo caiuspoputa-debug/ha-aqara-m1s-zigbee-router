@@ -8,6 +8,7 @@ from typing import Any
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
+    MediaPlayerDeviceClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
     MediaPlayerState,
@@ -68,9 +69,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity):
     """Stream Home Assistant media to the Aqara M1S speaker."""
 
     _attr_name = "Radio"
+    _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
     _attr_supported_features = (
-        MediaPlayerEntityFeature.PLAY_MEDIA
+        MediaPlayerEntityFeature.BROWSE_MEDIA
+        | MediaPlayerEntityFeature.PLAY_MEDIA
         | MediaPlayerEntityFeature.STOP
         | MediaPlayerEntityFeature.PLAY
         | MediaPlayerEntityFeature.VOLUME_SET
@@ -120,6 +123,18 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity):
             self._volume_restart_task = None
         async with self._lock:
             await self._stop_locked(update_state=False)
+
+    async def async_browse_media(
+        self,
+        media_content_type: str | None = None,
+        media_content_id: str | None = None,
+    ):
+        """Expose Home Assistant audio sources in the native media browser."""
+        return await media_source.async_browse_media(
+            self.hass,
+            media_content_id,
+            content_filter=lambda item: item.media_content_type.startswith("audio/"),
+        )
 
     async def async_play_media(
         self,
