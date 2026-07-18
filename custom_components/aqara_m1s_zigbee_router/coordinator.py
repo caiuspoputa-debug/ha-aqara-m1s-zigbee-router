@@ -11,6 +11,8 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
 
     def __init__(self, hass: HomeAssistant, client) -> None:
         self.client = client
+        self._was_online = False
+        self._online_generation = 0
         super().__init__(
             hass,
             logger=__import__("logging").getLogger(__name__),
@@ -21,7 +23,17 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
     async def _async_update_data(self) -> dict:
         online = await self.hass.async_add_executor_job(self.client.check_online)
         if not online:
+            self._was_online = False
             raise UpdateFailed("Hub is offline")
+
+        if not self._was_online:
+            # The stock boot leaves the ring red. Turn it off on the first
+            # successful connection and after every real offline/online cycle.
+            await self.hass.async_add_executor_job(
+                self.client.set_rgb, 0, 0, 0
+            )
+            self._online_generation += 1
+        self._was_online = True
 
         illuminance = None
         try:
@@ -36,4 +48,5 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         return {
             "online": True,
             "illuminance": illuminance,
+            "online_generation": self._online_generation,
         }

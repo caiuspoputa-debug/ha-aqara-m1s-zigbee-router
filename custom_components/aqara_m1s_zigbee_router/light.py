@@ -40,6 +40,9 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
         self._attr_is_on = False
         self._attr_brightness = 64
         self._attr_rgb_color = (255, 0, 0)
+        self._online_generation = (coordinator.data or {}).get(
+            "online_generation", 0
+        )
         self._attr_device_info = {
             "identifiers": {(DOMAIN, client.host)},
             "name": entry.data.get("name", f"Aqara M1S Router {client.host}"),
@@ -51,12 +54,23 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
         await super().async_added_to_hass()
         restored = await self.async_get_last_state()
         if restored is not None:
-            self._attr_is_on = restored.state == "on"
             if restored.attributes.get("brightness") is not None:
                 self._attr_brightness = int(restored.attributes["brightness"])
             rgb = restored.attributes.get("rgb_color")
             if rgb and len(rgb) == 3:
                 self._attr_rgb_color = tuple(int(value) for value in rgb)
+        # Setup physically turns off the red boot light. Restore only the last
+        # chosen color and brightness, never a stale ON state.
+        self._attr_is_on = False
+
+    def _handle_coordinator_update(self) -> None:
+        generation = (self.coordinator.data or {}).get(
+            "online_generation", 0
+        )
+        if generation != self._online_generation:
+            self._online_generation = generation
+            self._attr_is_on = False
+        super()._handle_coordinator_update()
 
     async def async_turn_on(self, **kwargs) -> None:
         if ATTR_RGB_COLOR in kwargs:

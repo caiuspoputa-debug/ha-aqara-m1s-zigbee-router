@@ -108,10 +108,26 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         return self.hass.data[DOMAIN][DATA_CLIENTS][self.config_entry.entry_id]
 
     async def async_step_init(self, user_input=None):
+        menu_options = ["upload_sound"]
+        try:
+            sounds = await self.hass.async_add_executor_job(
+                self._client.list_sounds
+            )
+        except (OSError, RuntimeError):
+            sounds = []
+        if any(
+            path.startswith(f"{MANAGED_SOUND_ROOT}/")
+            for path in sounds
+        ):
+            menu_options.append("delete_sound")
+        menu_options.append("finish")
         return self.async_show_menu(
             step_id="init",
-            menu_options=["upload_sound", "delete_sound"],
+            menu_options=menu_options,
         )
+
+    async def async_step_finish(self, user_input=None):
+        return self.async_create_entry(title="", data={})
 
     async def async_step_upload_sound(self, user_input=None):
         errors = {}
@@ -135,7 +151,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     self.hass,
                     sound_list_signal(self.config_entry.entry_id),
                 )
-                return self.async_create_entry(title="", data={})
+                return await self.async_step_init()
 
         return self.async_show_form(
             step_id="upload_sound",
@@ -164,7 +180,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     self.hass,
                     sound_list_signal(self.config_entry.entry_id),
                 )
-                return self.async_create_entry(title="", data={})
+                return await self.async_step_init()
 
         try:
             sounds = await self.hass.async_add_executor_job(
@@ -178,7 +194,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             if path.startswith(f"{MANAGED_SOUND_ROOT}/")
         ]
         if not managed_sounds:
-            return self.async_abort(reason="no_managed_sounds")
+            return await self.async_step_init()
 
         return self.async_show_form(
             step_id="delete_sound",

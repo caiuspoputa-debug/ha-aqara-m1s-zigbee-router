@@ -18,10 +18,11 @@
     "step": {
       "init": {
         "title": "Administrarea fișierelor audio",
-        "description": "Alege dacă vrei să încarci un fișier WAV nou sau să ștergi un fișier existent din folderul protejat al sunetelor chinezești.",
+        "description": "Încarcă sau șterge oricâte fișiere WAV dorești. Fereastra rămâne deschisă după fiecare operație; când ai terminat, alege Finalizare și închidere.",
         "menu_options": {
           "upload_sound": "Încarcă un fișier WAV în /data/musics/music-ch",
-          "delete_sound": "Șterge un fișier WAV din /data/musics/music-ch"
+          "delete_sound": "Șterge un fișier WAV din /data/musics/music-ch",
+          "finish": "Finalizare și închidere"
         }
       },
       "upload_sound": {

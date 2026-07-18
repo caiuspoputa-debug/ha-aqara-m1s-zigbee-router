@@ -18,10 +18,11 @@
     "step": {
       "init": {
         "title": "Sound file management",
-        "description": "Choose whether to upload a new WAV file or delete an existing file from the protected Chinese sound folder.",
+        "description": "Upload or delete as many WAV files as needed. This window remains open after every operation; choose Finish and close when done.",
         "menu_options": {
           "upload_sound": "Upload a WAV file to /data/musics/music-ch",
-          "delete_sound": "Delete a WAV file from /data/musics/music-ch"
+          "delete_sound": "Delete a WAV file from /data/musics/music-ch",
+          "finish": "Finish and close"
         }
       },
       "upload_sound": {

@@ -65,7 +65,6 @@ SENSORS = [
         UnitOfTemperature.CELSIUS,
         SensorDeviceClass.TEMPERATURE,
     ),
-    SensorDef("uptime", "Uptime Seconds", "cat /proc/uptime | cut -d ' ' -f1", last_number, "s"),
     SensorDef("wifi_ip", "WiFi IP", "ifconfig wlan0 | grep 'inet addr'", parse_wifi_ip),
     SensorDef("homekit_process", "HomeKit Process", "ps w | grep homekitserver | grep -v grep",
               lambda value: "running" if "homekitserver" in value else "stopped"),
@@ -87,6 +86,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     )
     if obsolete_entity_id is not None:
         entity_registry.async_remove(obsolete_entity_id)
+
+    obsolete_uptime_id = entity_registry.async_get_entity_id(
+        "sensor",
+        DOMAIN,
+        f"{entry.entry_id}_uptime",
+    )
+    if obsolete_uptime_id is not None:
+        entity_registry.async_remove(obsolete_uptime_id)
 
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
     coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
