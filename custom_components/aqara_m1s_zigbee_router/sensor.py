@@ -38,13 +38,15 @@ def last_number(text: str):
 
 
 def parse_temperature(text: str):
-    value = last_number(text)
-    if value is None:
+    # The M1S exposes its valid hub temperature through this Android property.
+    # Ignore shell-echo numbers such as the "2" from 2>/dev/null and reject the
+    # known bogus thermal-zone value of 1 °C.
+    values = [float(value) for value in re.findall(r"(?<![\d.])-?\d+(?:\.\d+)?", text)]
+    plausible = [value for value in values if 5 <= value <= 100]
+    if not plausible:
         return None
-    # Linux thermal zones normally expose millidegrees Celsius.
-    if abs(float(value)) >= 1000:
-        value = float(value) / 1000
-    return int(value) if float(value).is_integer() else round(float(value), 1)
+    value = plausible[-1]
+    return int(value) if value.is_integer() else round(value, 1)
 
 
 def parse_wifi_ip(text: str):
@@ -58,10 +60,7 @@ SENSORS = [
     SensorDef(
         "temperature",
         "Hub Temperature",
-        "v=$(getprop persist.sys.temperature 2>/dev/null); "
-        "if [ -n \"$v\" ]; then echo \"$v\"; else "
-        "for z in /sys/class/thermal/thermal_zone*/temp; do "
-        "[ -r \"$z\" ] && { cat \"$z\"; break; }; done; fi",
+        "getprop persist.sys.temperature 2>/dev/null",
         parse_temperature,
         UnitOfTemperature.CELSIUS,
         SensorDeviceClass.TEMPERATURE,
