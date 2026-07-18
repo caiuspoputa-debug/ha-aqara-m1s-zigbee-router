@@ -8,6 +8,9 @@
   "documentation": "https://github.com/caiuspoputa-debug/ha-aqara-m1s-zigbee-router",
   "issue_tracker": "https://github.com/caiuspoputa-debug/ha-aqara-m1s-zigbee-router/issues",
   "iot_class": "local_polling",
+  "dependencies": [
+    "file_upload"
+  ],
   "requirements": [],
-  "version": "0.1.3"
+  "version": "0.1.4"
 }

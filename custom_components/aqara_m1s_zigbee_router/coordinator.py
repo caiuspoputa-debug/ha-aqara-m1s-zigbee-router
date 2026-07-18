@@ -6,8 +6,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 
-class AqaraM1SRouterCoordinator(DataUpdateCoordinator[bool]):
-    """Shared online/offline state for every live hub entity."""
+class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
+    """Shared availability and JN5189 lux data for the hub entities."""
 
     def __init__(self, hass: HomeAssistant, client) -> None:
         self.client = client
@@ -18,8 +18,22 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[bool]):
             update_interval=timedelta(seconds=15),
         )
 
-    async def _async_update_data(self) -> bool:
+    async def _async_update_data(self) -> dict:
         online = await self.hass.async_add_executor_job(self.client.check_online)
         if not online:
             raise UpdateFailed("Hub is offline")
-        return True
+
+        illuminance = None
+        try:
+            illuminance = await self.hass.async_add_executor_job(
+                self.client.read_illuminance
+            )
+        except Exception:
+            # A failed lux request must not make the otherwise healthy hub and
+            # all of its entities unavailable.
+            illuminance = None
+
+        return {
+            "online": True,
+            "illuminance": illuminance,
+        }

@@ -9,6 +9,36 @@ from dataclasses import dataclass, field
 
 from .const import MANAGED_SOUND_ROOT
 
+UART_PORT = 1886
+UART_FIFO = "/tmp/ha_m1s_uart_fifo"
+UART_CAT_PID = "/tmp/ha_m1s_uart_cat.pid"
+UART_NC_PID = "/tmp/ha_m1s_uart_nc.pid"
+UART_REQUEST_LUX = bytes([0xA6, 0x00, 0x00, 0x00, 0xA6])
+
+UPLOAD_PORT = 12349
+UPLOAD_TEMP = "/tmp/ha_m1s_sound_upload.wav"
+UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
+
+UART_STOP_COMMAND = (
+    f"for f in {UART_CAT_PID} {UART_NC_PID}; do "
+    '[ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; '
+    "done; "
+    f"rm -f {UART_CAT_PID} {UART_NC_PID} {UART_FIFO}"
+)
+
+UART_START_COMMAND = (
+    "if ! netstat -lnt 2>/dev/null | grep -q ':1886 '; then "
+    + UART_STOP_COMMAND
+    + f"; mkfifo {UART_FIFO}; "
+    + "stty -F /dev/ttyS1 115200 raw -echo; "
+    + f"cat /dev/ttyS1 > {UART_FIFO} 2>/tmp/ha_m1s_uart_cat.log & "
+    + f"echo $! > {UART_CAT_PID}; "
+    + f"nc -l -p {UART_PORT} < {UART_FIFO} > /dev/ttyS1 "
+      "2>/tmp/ha_m1s_uart_nc.log & "
+    + f"echo $! > {UART_NC_PID}; "
+    + "fi"
+)
+
 IAC = 255
 DONT = 254
 DO = 253
@@ -24,6 +54,8 @@ class AqaraM1SClient:
     password: str = ""
     timeout: float = 8.0
     _sock: socket.socket | None = field(default=None, init=False, repr=False)
+    _uart_sock: socket.socket | None = field(default=None, init=False, repr=False)
+    _uart_rx: bytearray = field(default_factory=bytearray, init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _command_id: int = field(default=0, init=False, repr=False)
 
@@ -96,7 +128,63 @@ class AqaraM1SClient:
 
     def close(self) -> None:
         with self._lock:
+            self._close_uart_locked()
+            try:
+                self._run_command_locked(UART_STOP_COMMAND)
+            except Exception:
+                pass
             self._close_locked()
+
+    def _close_uart_locked(self) -> None:
+        sock = self._uart_sock
+        self._uart_sock = None
+        self._uart_rx.clear()
+        if sock is None:
+            return
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+    def _connect_uart_locked(self) -> socket.socket:
+        if self._uart_sock is not None:
+            return self._uart_sock
+
+        self.run_command(UART_START_COMMAND)
+        last_error: OSError | None = None
+        for _ in range(20):
+            try:
+                sock = socket.create_connection(
+                    (self.host, UART_PORT), timeout=1.0
+                )
+                sock.settimeout(0.25)
+                self._uart_sock = sock
+                return sock
+            except OSError as err:
+                last_error = err
+                time.sleep(0.1)
+        assert last_error is not None
+        raise ConnectionError(
+            f"Could not connect to the JN5189 UART tunnel on port {UART_PORT}"
+        ) from last_error
+
+    def _uart_send_locked(self, frame: bytes) -> None:
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                self._connect_uart_locked().sendall(frame)
+                return
+            except (OSError, ConnectionError) as err:
+                last_error = err
+                self._close_uart_locked()
+                if attempt == 0:
+                    continue
+        assert last_error is not None
+        raise last_error
 
     def _connect_locked(self) -> socket.socket:
         if self._sock is not None:
@@ -192,9 +280,80 @@ class AqaraM1SClient:
     def set_rgb(self, red: int, green: int, blue: int) -> None:
         values = [max(0, min(255, int(value))) for value in (red, green, blue)]
         checksum = 0xA5 ^ values[0] ^ values[1] ^ values[2]
-        frame = [0xA5, *values, checksum]
-        escaped = "".join(f"\\{value:03o}" for value in frame)
-        self.run_command(f"printf '{escaped}' > /dev/ttyS1")
+        frame = bytes([0xA5, *values, checksum])
+        with self._lock:
+            try:
+                self._uart_send_locked(frame)
+            except Exception:
+                # Keep RGB usable even if the optional TCP UART proxy cannot start.
+                escaped = "".join(f"\\{value:03o}" for value in frame)
+                self.run_command(f"printf '{escaped}' > /dev/ttyS1")
+
+    def read_illuminance(self) -> dict[str, int]:
+        """Read a validated A6 lux response from the JN5189 firmware."""
+        with self._lock:
+            last_error: Exception | None = None
+            for attempt in range(2):
+                try:
+                    sock = self._connect_uart_locked()
+
+                    # Discard a stale partial frame left by a previous failed read.
+                    self._uart_rx.clear()
+                    sock.settimeout(0.02)
+                    while True:
+                        try:
+                            stale = sock.recv(256)
+                            if not stale:
+                                raise ConnectionError("UART tunnel closed")
+                        except socket.timeout:
+                            break
+
+                    sock.sendall(UART_REQUEST_LUX)
+                    deadline = time.monotonic() + 2.5
+                    sock.settimeout(0.25)
+                    while time.monotonic() < deadline:
+                        try:
+                            chunk = sock.recv(256)
+                            if not chunk:
+                                raise ConnectionError("UART tunnel closed")
+                            self._uart_rx.extend(chunk)
+                        except socket.timeout:
+                            pass
+
+                        while self._uart_rx:
+                            try:
+                                start = self._uart_rx.index(0xA6)
+                            except ValueError:
+                                self._uart_rx.clear()
+                                break
+                            if start:
+                                del self._uart_rx[:start]
+                            if len(self._uart_rx) < 8:
+                                break
+                            response = bytes(self._uart_rx[:8])
+                            if response[7] == self._xor_checksum(response[:7]):
+                                del self._uart_rx[:8]
+                                return {
+                                    "raw": int.from_bytes(response[1:3], "big"),
+                                    "millivolts": int.from_bytes(response[3:5], "big"),
+                                    "lux": int.from_bytes(response[5:7], "big"),
+                                }
+                            del self._uart_rx[0]
+                    raise TimeoutError("No valid A6 lux response from JN5189")
+                except (OSError, ConnectionError, TimeoutError) as err:
+                    last_error = err
+                    self._close_uart_locked()
+                    if attempt == 0:
+                        continue
+            assert last_error is not None
+            raise last_error
+
+    @staticmethod
+    def _xor_checksum(data: bytes) -> int:
+        checksum = 0
+        for value in data:
+            checksum ^= value
+        return checksum
 
     def upload_sound(self, destination: str, content: bytes) -> None:
         destination = self._safe_sound_path(destination)
@@ -212,6 +371,61 @@ class AqaraM1SClient:
             raise ValueError(
                 "WAV must be uncompressed PCM, mono, 32000 Hz, 32-bit little-endian"
             )
+        with self._lock:
+            try:
+                self._upload_sound_tcp_locked(destination, content)
+            except Exception:
+                # BusyBox base64 is slower but provides a proven fallback.
+                self._upload_sound_base64_locked(destination, content)
+
+    def _upload_sound_tcp_locked(self, destination: str, content: bytes) -> None:
+        parent = str(PurePosixPath(destination).parent)
+        start_command = (
+            f'[ -f {UPLOAD_PID} ] && kill -9 "$(cat {UPLOAD_PID})" '
+            "2>/dev/null; "
+            f"rm -f {UPLOAD_PID} {UPLOAD_TEMP}; mkdir -p '{parent}'; "
+            f"nc -l -p {UPLOAD_PORT} > {UPLOAD_TEMP} "
+            "2>/tmp/ha_m1s_sound_upload.log & "
+            f"echo $! > {UPLOAD_PID}"
+        )
+        self.run_command(start_command)
+
+        upload_sock: socket.socket | None = None
+        last_error: OSError | None = None
+        for _ in range(20):
+            try:
+                upload_sock = socket.create_connection(
+                    (self.host, UPLOAD_PORT), timeout=2.0
+                )
+                break
+            except OSError as err:
+                last_error = err
+                time.sleep(0.1)
+        if upload_sock is None:
+            assert last_error is not None
+            raise ConnectionError("Could not connect to WAV upload port") from last_error
+
+        try:
+            upload_sock.sendall(content)
+            upload_sock.shutdown(socket.SHUT_WR)
+        finally:
+            upload_sock.close()
+
+        expected = len(content)
+        finalize = (
+            f"i=0; while [ -f {UPLOAD_PID} ] && "
+            f"kill -0 \"$(cat {UPLOAD_PID})\" 2>/dev/null && [ $i -lt 5 ]; do "
+            "sleep 1; i=$((i+1)); done; "
+            f"actual=$(wc -c < {UPLOAD_TEMP} 2>/dev/null); "
+            f"if [ \"$actual\" = \"{expected}\" ]; then "
+            f"mv {UPLOAD_TEMP} '{destination}'; rm -f {UPLOAD_PID}; "
+            "else echo __M1S_UPLOAD_SIZE_ERROR__$actual; fi"
+        )
+        output = self.run_command(finalize)
+        if "__M1S_UPLOAD_SIZE_ERROR__" in output:
+            raise IOError("WAV upload size verification failed")
+
+    def _upload_sound_base64_locked(self, destination: str, content: bytes) -> None:
         parent = str(PurePosixPath(destination).parent)
         encoded = base64.b64encode(content).decode("ascii")
         temp = "/tmp/ha_sound_upload.b64"

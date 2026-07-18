@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import re
-from typing import Any, Callable
+from typing import Callable
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import LIGHT_LUX, PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -15,9 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
-    DATA_MQTT_CLIENTS,
     DOMAIN,
-    MQTT_TOPIC_ZIGBEE,
 )
 
 
@@ -46,31 +43,6 @@ def parse_wifi_ip(text: str):
     return None
 
 
-def _coerce_number(value: Any):
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return int(number) if number.is_integer() else number
-
-
-def _find_illuminance_resource(node: Any, inherited_did: str | None = None):
-    if isinstance(node, dict):
-        did = node.get("did", inherited_did)
-        if node.get("res_name") == "0.3.85" and did == "lumi.0":
-            return _coerce_number(node.get("value"))
-        for value in node.values():
-            result = _find_illuminance_resource(value, did)
-            if result is not None:
-                return result
-    elif isinstance(node, list):
-        for item in node:
-            result = _find_illuminance_resource(item, inherited_did)
-            if result is not None:
-                return result
-    return None
-
-
 SENSORS = [
     SensorDef("temperature", "Temperature", "getprop persist.sys.temperature", last_number,
               UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
@@ -91,12 +63,11 @@ SENSORS = [
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
     coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
-    mqtt_client = hass.data[DOMAIN][DATA_MQTT_CLIENTS][entry.entry_id]
     entities = [
         AqaraM1SRouterSensor(hass, entry, client, coordinator, definition)
         for definition in SENSORS
     ]
-    entities.append(AqaraM1SRouterIlluminanceRawSensor(entry, mqtt_client))
+    entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
     async_add_entities(entities, True)
 
 
@@ -128,42 +99,43 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
             self._attr_native_value = None
 
 
-class AqaraM1SRouterIlluminanceRawSensor(SensorEntity):
-    _attr_name = "Illuminance Raw"
+class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
+    _attr_name = "Illuminance"
     _attr_icon = "mdi:brightness-5"
+    _attr_device_class = SensorDeviceClass.ILLUMINANCE
+    _attr_native_unit_of_measurement = LIGHT_LUX
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_should_poll = False
 
-    def __init__(self, entry: ConfigEntry, mqtt_client) -> None:
+    def __init__(self, entry: ConfigEntry, client, coordinator) -> None:
+        super().__init__(coordinator)
         self.entry = entry
-        self.mqtt_client = mqtt_client
+        self.client = client
+        # Preserve the v0.1.3 unique ID so the existing registry entity is
+        # upgraded in place instead of leaving a duplicate orphan.
         self._attr_unique_id = f"{entry.entry_id}_illuminance_raw"
-        self._attr_available = mqtt_client.connected
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, mqtt_client.host)},
-            "name": entry.data.get("name", f"Aqara M1S Router {mqtt_client.host}"),
+            "identifiers": {(DOMAIN, client.host)},
+            "name": entry.data.get("name", f"Aqara M1S Router {client.host}"),
             "manufacturer": "Aqara",
             "model": "M1S Gen 1 / JN5189 Router",
         }
+        self._apply_coordinator_data()
 
-    async def async_added_to_hass(self) -> None:
-        self.async_on_remove(self.mqtt_client.add_message_listener(self._handle_message))
-        self.async_on_remove(self.mqtt_client.add_status_listener(self._handle_status))
-        self._attr_available = self.mqtt_client.connected
-        self.async_write_ha_state()
-
-    def _handle_status(self, connected: bool) -> None:
-        self._attr_available = connected
-        self.async_write_ha_state()
-
-    def _handle_message(self, topic: str, raw_payload: bytes) -> None:
-        if topic != MQTT_TOPIC_ZIGBEE:
+    def _apply_coordinator_data(self) -> None:
+        data = self.coordinator.data or {}
+        reading = data.get("illuminance")
+        if not isinstance(reading, dict):
+            self._attr_native_value = None
+            self._attr_extra_state_attributes = {}
             return
-        try:
-            payload = json.loads(raw_payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return
-        value = _find_illuminance_resource(payload)
-        if value is not None:
-            self._attr_native_value = value
-            self.async_write_ha_state()
+        self._attr_native_value = reading.get("lux")
+        self._attr_extra_state_attributes = {
+            "adc_raw": reading.get("raw"),
+            "millivolts": reading.get("millivolts"),
+            "source": "JN5189 UART A6",
+        }
+
+    def _handle_coordinator_update(self) -> None:
+        self._apply_coordinator_data()
+        self.async_write_ha_state()
