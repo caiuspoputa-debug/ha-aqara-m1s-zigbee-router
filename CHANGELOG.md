@@ -14,3 +14,4 @@
 - WAV upload validates PCM, mono, 32000 Hz and signed 32-bit samples.
 - Upload paths are restricted to `/data/musics` and files to 20 MiB.
 - Stock-firmware Telnet preparation sequence documented as `5-2-2-2-2-2-2`.
+- Local Home Assistant brand icon included in 256 px and 512 px variants.
