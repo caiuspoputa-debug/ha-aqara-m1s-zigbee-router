@@ -26,14 +26,14 @@
       },
       "upload_sound": {
         "title": "Upload WAV sound",
-        "description": "The file is validated and uploaded to /data/musics/music-ch.",
+        "description": "Select an uncompressed PCM WAV file: mono, 32000 Hz, signed 32-bit little-endian. It will be uploaded to /data/musics/music-ch using its original filename.",
         "data": {
           "source": "WAV file"
         }
       },
       "delete_sound": {
         "title": "Delete WAV sound",
-        "description": "Only files in /data/musics/music-ch are listed.",
+        "description": "Select the file to delete. Only WAV files inside /data/musics/music-ch are displayed and files in other Aqara folders are protected.",
         "data": {
           "path": "Sound file"
         }

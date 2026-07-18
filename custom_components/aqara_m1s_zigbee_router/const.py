@@ -15,8 +15,6 @@ SERVICE_RUN_COMMAND = "run_command"
 
 DATA_CLIENTS = "clients"
 DATA_COORDINATORS = "coordinators"
-DATA_SELECTED_SOUND = "selected_sound"
-DATA_SOUND_MAP = "sound_map"
 DATA_PLAYBACK_VOLUME = "playback_volume"
 
 DATA_RADIO_PLAYERS = "radio_players"
@@ -28,3 +26,8 @@ SERVICE_REFRESH_SOUNDS = "refresh_sounds"
 
 SOUND_ROOT = "/data/musics"
 MANAGED_SOUND_ROOT = "/data/musics/music-ch"
+
+
+def sound_list_signal(entry_id: str) -> str:
+    """Return the dispatcher signal for one hub's sound catalog."""
+    return f"{DOMAIN}_{entry_id}_sound_list_updated"

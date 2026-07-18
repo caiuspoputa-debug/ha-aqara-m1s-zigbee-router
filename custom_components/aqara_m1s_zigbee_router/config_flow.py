@@ -17,6 +17,7 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
 )
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
     DEFAULT_PASSWORD,
@@ -25,6 +26,7 @@ from .const import (
     DATA_CLIENTS,
     DOMAIN,
     MANAGED_SOUND_ROOT,
+    sound_list_signal,
 )
 from .sound_upload import destination_for_filename, read_uploaded_sound
 
@@ -129,10 +131,9 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             except (OSError, ValueError, RuntimeError):
                 errors["base"] = "upload_failed"
             else:
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(
-                        self.config_entry.entry_id
-                    )
+                async_dispatcher_send(
+                    self.hass,
+                    sound_list_signal(self.config_entry.entry_id),
                 )
                 return self.async_create_entry(title="", data={})
 
@@ -159,10 +160,9 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             except (OSError, ValueError, RuntimeError):
                 errors["base"] = "delete_failed"
             else:
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(
-                        self.config_entry.entry_id
-                    )
+                async_dispatcher_send(
+                    self.hass,
+                    sound_list_signal(self.config_entry.entry_id),
                 )
                 return self.async_create_entry(title="", data={})
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from homeassistant.components import button, light, media_player, number, select, sensor
+from homeassistant.components import button, light, media_player, number, sensor
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_HOST,
@@ -10,6 +10,8 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .client import AqaraM1SClient
 from .const import (
@@ -17,8 +19,6 @@ from .const import (
     DATA_COORDINATORS,
     DATA_PLAYBACK_VOLUME,
     DATA_RADIO_PLAYERS,
-    DATA_SELECTED_SOUND,
-    DATA_SOUND_MAP,
     DATA_SOUND_PLAYERS,
     DEFAULT_PASSWORD,
     DEFAULT_PORT,
@@ -30,6 +30,7 @@ from .const import (
     SERVICE_UPLOAD_SOUND,
     SERVICE_DELETE_SOUND,
     SERVICE_REFRESH_SOUNDS,
+    sound_list_signal,
 )
 from .coordinator import AqaraM1SRouterCoordinator
 from .sound_player import AqaraM1SSoundPlayer
@@ -41,7 +42,6 @@ PLATFORMS = [
     media_player.DOMAIN,
     number.DOMAIN,
     sensor.DOMAIN,
-    select.DOMAIN,
 ]
 
 
@@ -76,14 +76,6 @@ async def async_setup_entry(
         {},
     )
     hass.data[DOMAIN].setdefault(
-        DATA_SELECTED_SOUND,
-        {},
-    )
-    hass.data[DOMAIN].setdefault(
-        DATA_SOUND_MAP,
-        {},
-    )
-    hass.data[DOMAIN].setdefault(
         DATA_PLAYBACK_VOLUME,
         {},
     )
@@ -102,15 +94,6 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_COORDINATORS][
         entry.entry_id
     ] = coordinator
-    hass.data[DOMAIN][DATA_SELECTED_SOUND][
-        entry.entry_id
-    ] = (
-        "/data/musics/music-scene/"
-        "door_bell_1.wav"
-    )
-    hass.data[DOMAIN][DATA_SOUND_MAP][
-        entry.entry_id
-    ] = {}
     hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][
         entry.entry_id
     ] = 50
@@ -129,6 +112,15 @@ async def async_setup_entry(
         manufacturer="Aqara",
         model="M1S Gen 1 / JN5189 Router",
     )
+
+    entity_registry = er.async_get(hass)
+    obsolete_select_id = entity_registry.async_get_entity_id(
+        "select",
+        DOMAIN,
+        f"{entry.entry_id}_sound_select",
+    )
+    if obsolete_select_id is not None:
+        entity_registry.async_remove(obsolete_select_id)
 
     await coordinator.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(
@@ -206,18 +198,18 @@ async def async_setup_entry(
         await hass.async_add_executor_job(
             selected_client.upload_sound, destination, content
         )
-        await hass.config_entries.async_reload(selected_entry_id)
+        async_dispatcher_send(hass, sound_list_signal(selected_entry_id))
 
     async def delete_sound(call: ServiceCall) -> None:
         selected_entry_id, selected_client = await _get_target(call)
         await hass.async_add_executor_job(
             selected_client.delete_sound, call.data["path"]
         )
-        await hass.config_entries.async_reload(selected_entry_id)
+        async_dispatcher_send(hass, sound_list_signal(selected_entry_id))
 
     async def refresh_sounds(call: ServiceCall) -> None:
         selected_entry_id, _ = await _get_target(call)
-        await hass.config_entries.async_reload(selected_entry_id)
+        async_dispatcher_send(hass, sound_list_signal(selected_entry_id))
 
     if not hass.services.has_service(DOMAIN, SERVICE_PLAY_URL):
         hass.services.async_register(DOMAIN, SERVICE_PLAY_URL, play_url)
@@ -264,14 +256,6 @@ async def async_unload_entry(
     )
     if telnet_client:
         await hass.async_add_executor_job(telnet_client.close)
-    hass.data[DOMAIN][DATA_SELECTED_SOUND].pop(
-        entry.entry_id,
-        None,
-    )
-    hass.data[DOMAIN][DATA_SOUND_MAP].pop(
-        entry.entry_id,
-        None,
-    )
     hass.data[DOMAIN][DATA_PLAYBACK_VOLUME].pop(
         entry.entry_id,
         None,

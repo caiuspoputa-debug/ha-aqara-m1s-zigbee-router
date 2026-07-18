@@ -58,10 +58,10 @@ SENSORS = [
     SensorDef(
         "temperature",
         "Hub Temperature",
-        "v=''; for z in /sys/class/thermal/thermal_zone*/temp; do "
-        "[ -r \"$z\" ] && { v=$(cat \"$z\"); break; }; done; "
-        "if [ -n \"$v\" ]; then echo \"$v\"; "
-        "else getprop persist.sys.temperature; fi",
+        "v=$(getprop persist.sys.temperature 2>/dev/null); "
+        "if [ -n \"$v\" ]; then echo \"$v\"; else "
+        "for z in /sys/class/thermal/thermal_zone*/temp; do "
+        "[ -r \"$z\" ] && { cat \"$z\"; break; }; done; fi",
         parse_temperature,
         UnitOfTemperature.CELSIUS,
         SensorDeviceClass.TEMPERATURE,

@@ -1,0 +1,50 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Aqara M1S Zigbee Router",
+        "description": "Conectare la un Aqara M1S Gen 1 transformat în router Zigbee JN5189.",
+        "data": {
+          "host": "Adresă IP",
+          "port": "Port Telnet",
+          "username": "Utilizator",
+          "password": "Parolă",
+          "name": "Nume"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Administrarea fișierelor audio",
+        "description": "Alege dacă vrei să încarci un fișier WAV nou sau să ștergi un fișier existent din folderul protejat al sunetelor chinezești.",
+        "menu_options": {
+          "upload_sound": "Încarcă un fișier WAV în /data/musics/music-ch",
+          "delete_sound": "Șterge un fișier WAV din /data/musics/music-ch"
+        }
+      },
+      "upload_sound": {
+        "title": "Încărcare sunet WAV",
+        "description": "Selectează un WAV PCM necomprimat: mono, 32000 Hz, 32-bit signed little-endian. Fișierul va fi încărcat în /data/musics/music-ch cu numele original.",
+        "data": {
+          "source": "Fișier WAV"
+        }
+      },
+      "delete_sound": {
+        "title": "Ștergere sunet WAV",
+        "description": "Selectează fișierul care va fi șters. Sunt afișate numai fișierele WAV din /data/musics/music-ch; celelalte foldere Aqara sunt protejate.",
+        "data": {
+          "path": "Fișier audio"
+        }
+      }
+    },
+    "error": {
+      "upload_failed": "Încărcarea a eșuat. Verifică formatul WAV și conexiunea cu hubul.",
+      "delete_failed": "Ștergerea a eșuat. Verifică legătura cu hubul."
+    },
+    "abort": {
+      "no_managed_sounds": "Nu există fișiere WAV în /data/musics/music-ch."
+    }
+  }
+}
