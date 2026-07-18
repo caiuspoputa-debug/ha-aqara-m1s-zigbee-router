@@ -6,6 +6,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN, DATA_CLIENTS, DATA_SELECTED_SOUND, DATA_SOUND_MAP
 
@@ -43,6 +44,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
 
 class AqaraM1SSoundSelect(SelectEntity):
+    _attr_entity_category = EntityCategory.CONFIG
+
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, client, labels: list[str], mapping: dict[str, str]):
         self.hass = hass
         self.entry = entry

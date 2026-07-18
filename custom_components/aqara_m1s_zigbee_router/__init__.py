@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import base64
-from pathlib import Path
-
 from homeassistant.components import button, light, media_player, number, select, sensor
-from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_HOST,
@@ -28,7 +24,6 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_USERNAME,
     DOMAIN,
-    MANAGED_SOUND_ROOT,
     SERVICE_PLAY_SOUND,
     SERVICE_PLAY_URL,
     SERVICE_RUN_COMMAND,
@@ -38,6 +33,7 @@ from .const import (
 )
 from .coordinator import AqaraM1SRouterCoordinator
 from .sound_player import AqaraM1SSoundPlayer
+from .sound_upload import destination_for_filename, read_uploaded_sound
 
 PLATFORMS = [
     button.DOMAIN,
@@ -203,45 +199,10 @@ async def async_setup_entry(
     async def upload_sound(call: ServiceCall) -> None:
         selected_entry_id, selected_client = await _get_target(call)
         source = call.data["source"]
-
-        def _read_source() -> tuple[str, bytes]:
-            value = source
-            if isinstance(value, dict):
-                if value.get("content"):
-                    encoded = str(value["content"]).split(",", 1)[-1]
-                    filename = str(value.get("filename") or "sound.wav")
-                    return filename, base64.b64decode(encoded, validate=True)
-                value = value.get("path") or value.get("file")
-            if not isinstance(value, str):
-                raise ValueError("The file selector did not return a readable file")
-            if value.startswith("data:audio/") and "," in value:
-                return "sound.wav", base64.b64decode(
-                    value.split(",", 1)[1], validate=True
-                )
-
-            # The Home Assistant file selector returns an upload UUID, not a
-            # filesystem path. Consume that temporary upload inside its
-            # required context manager and keep the original filename.
-            try:
-                with process_uploaded_file(hass, value) as uploaded_path:
-                    return uploaded_path.name, uploaded_path.read_bytes()
-            except ValueError:
-                pass
-
-            # Retain path input for automations that explicitly use an allowed
-            # Home Assistant directory.
-            path = Path(value)
-            if not hass.config.is_allowed_path(str(path)):
-                raise ValueError("The selected WAV path is not allowed by Home Assistant")
-            return path.name, path.read_bytes()
-
-        filename, content = await hass.async_add_executor_job(_read_source)
-        if len(content) > 20 * 1024 * 1024:
-            raise ValueError("WAV file is larger than the 20 MiB safety limit")
-        safe_filename = Path(filename).name
-        if not safe_filename.lower().endswith(".wav"):
-            raise ValueError("Only .wav files can be uploaded")
-        destination = f"{MANAGED_SOUND_ROOT}/{safe_filename}"
+        filename, content = await hass.async_add_executor_job(
+            read_uploaded_sound, hass, source
+        )
+        destination = destination_for_filename(filename)
         await hass.async_add_executor_job(
             selected_client.upload_sound, destination, content
         )

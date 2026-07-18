@@ -9,13 +9,24 @@ from homeassistant.const import (
     CONF_PORT,
     CONF_USERNAME,
 )
+from homeassistant.core import callback
+from homeassistant.helpers.selector import (
+    FileSelector,
+    FileSelectorConfig,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .const import (
     DEFAULT_PASSWORD,
     DEFAULT_PORT,
     DEFAULT_USERNAME,
+    DATA_CLIENTS,
     DOMAIN,
+    MANAGED_SOUND_ROOT,
 )
+from .sound_upload import destination_for_filename, read_uploaded_sound
 
 
 class AqaraM1SZigbeeRouterConfigFlow(
@@ -23,6 +34,13 @@ class AqaraM1SZigbeeRouterConfigFlow(
     domain=DOMAIN,
 ):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        return AqaraM1SZigbeeRouterOptionsFlow(config_entry)
 
     async def async_step_user(
         self,
@@ -71,5 +89,108 @@ class AqaraM1SZigbeeRouterConfigFlow(
         return self.async_show_form(
             step_id="user",
             data_schema=schema,
+            errors=errors,
+        )
+
+
+class AqaraM1SZigbeeRouterOptionsFlow(
+    config_entries.OptionsFlowWithConfigEntry
+):
+    """Native file manager available from the integration Configure button."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        super().__init__(config_entry)
+
+    @property
+    def _client(self):
+        return self.hass.data[DOMAIN][DATA_CLIENTS][self.config_entry.entry_id]
+
+    async def async_step_init(self, user_input=None):
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["upload_sound", "delete_sound"],
+        )
+
+    async def async_step_upload_sound(self, user_input=None):
+        errors = {}
+        if user_input is not None:
+            try:
+                filename, content = await self.hass.async_add_executor_job(
+                    read_uploaded_sound,
+                    self.hass,
+                    user_input["source"],
+                )
+                destination = destination_for_filename(filename)
+                await self.hass.async_add_executor_job(
+                    self._client.upload_sound,
+                    destination,
+                    content,
+                )
+            except (OSError, ValueError, RuntimeError):
+                errors["base"] = "upload_failed"
+            else:
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(
+                        self.config_entry.entry_id
+                    )
+                )
+                return self.async_create_entry(title="", data={})
+
+        return self.async_show_form(
+            step_id="upload_sound",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("source"): FileSelector(
+                        FileSelectorConfig(accept="audio/wav,.wav")
+                    )
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_delete_sound(self, user_input=None):
+        errors = {}
+        if user_input is not None:
+            try:
+                await self.hass.async_add_executor_job(
+                    self._client.delete_sound,
+                    user_input["path"],
+                )
+            except (OSError, ValueError, RuntimeError):
+                errors["base"] = "delete_failed"
+            else:
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(
+                        self.config_entry.entry_id
+                    )
+                )
+                return self.async_create_entry(title="", data={})
+
+        try:
+            sounds = await self.hass.async_add_executor_job(
+                self._client.list_sounds
+            )
+        except (OSError, RuntimeError):
+            sounds = []
+        managed_sounds = [
+            path
+            for path in sounds
+            if path.startswith(f"{MANAGED_SOUND_ROOT}/")
+        ]
+        if not managed_sounds:
+            return self.async_abort(reason="no_managed_sounds")
+
+        return self.async_show_form(
+            step_id="delete_sound",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("path"): SelectSelector(
+                        SelectSelectorConfig(
+                            options=managed_sounds,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
             errors=errors,
         )

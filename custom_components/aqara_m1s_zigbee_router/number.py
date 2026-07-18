@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from homeassistant.components.number import (
     NumberEntity,
     NumberMode,
@@ -105,23 +103,6 @@ class AqaraM1SSoundPlaybackVolume(
             try:
                 value = int(float(restored.state))
             except (TypeError, ValueError):
-                value = None
-
-        if value is None:
-            try:
-                output = (
-                    await self.hass.async_add_executor_job(
-                        self.client.run_command,
-                        "getprop persist.sys.volume",
-                    )
-                )
-                matches = re.findall(
-                    r"(?<!\d)(\d{1,3})(?!\d)",
-                    output,
-                )
-                if matches:
-                    value = int(matches[-1])
-            except Exception:
                 value = None
 
         if value is None:

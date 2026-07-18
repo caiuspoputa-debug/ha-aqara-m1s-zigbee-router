@@ -13,5 +13,37 @@
         }
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sound file management",
+        "menu_options": {
+          "upload_sound": "Upload WAV sound",
+          "delete_sound": "Delete WAV sound"
+        }
+      },
+      "upload_sound": {
+        "title": "Upload WAV sound",
+        "description": "The file is validated and uploaded to /data/musics/music-ch.",
+        "data": {
+          "source": "WAV file"
+        }
+      },
+      "delete_sound": {
+        "title": "Delete WAV sound",
+        "description": "Only files in /data/musics/music-ch are listed.",
+        "data": {
+          "path": "Sound file"
+        }
+      }
+    },
+    "error": {
+      "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
+      "delete_failed": "Delete failed. Verify the hub connection."
+    },
+    "abort": {
+      "no_managed_sounds": "No WAV files were found in /data/musics/music-ch."
+    }
   }
 }

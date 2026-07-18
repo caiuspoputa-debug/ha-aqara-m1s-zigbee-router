@@ -223,12 +223,26 @@ class AqaraM1SClient:
             raise
 
         self._command_id += 1
-        marker = f"__M1S_DONE_{self._command_id}__"
-        sock.sendall((command + f"\necho {marker}$?\n").encode())
-        output = self._read_until_any(sock, [marker], timeout=self.timeout)
-        if marker not in output:
+        marker = f"__M1S_{self._command_id}_{time.monotonic_ns()}__"
+        begin = f"{marker}:BEGIN"
+        end = f"{marker}:END:"
+        wrapped = (
+            f"__m1s_tag='{marker}'\n"
+            "printf '%s:BEGIN\\n' \"$__m1s_tag\"\n"
+            f"{command}\n"
+            "__m1s_rc=$?\n"
+            "printf '%s:END:%s\\n' \"$__m1s_tag\" \"$__m1s_rc\"\n"
+        )
+        sock.sendall(wrapped.encode())
+        response = self._read_until_any(sock, [end], timeout=self.timeout)
+        if begin not in response or end not in response:
             raise TimeoutError(f"Command did not finish within {self.timeout} seconds")
-        return output
+
+        # The marker is assembled through a shell variable, so even on hubs
+        # that echo Telnet input the literal BEGIN/END frames occur only in the
+        # executed output. Return only the command payload between them.
+        payload = response.rsplit(begin, 1)[1].split(end, 1)[0]
+        return payload.strip("\r\n")
 
     def run_command(self, command: str) -> str:
         with self._lock:
@@ -257,10 +271,11 @@ class AqaraM1SClient:
         """Verify that the Linux side and the JN5189 UART are reachable."""
         try:
             out = self.run_command(
-                "test -c /dev/ttyS1 && "
-                "test \"$(cat /sys/class/gpio/gpio33/value 2>/dev/null)\" = 1"
+                "if test -c /dev/ttyS1 && "
+                "test \"$(cat /sys/class/gpio/gpio33/value 2>/dev/null)\" = 1; "
+                "then echo __M1S_ONLINE__; else echo __M1S_OFFLINE__; fi"
             )
-            return "__M1S_DONE_" in out
+            return "__M1S_ONLINE__" in out
         except Exception:
             return False
 

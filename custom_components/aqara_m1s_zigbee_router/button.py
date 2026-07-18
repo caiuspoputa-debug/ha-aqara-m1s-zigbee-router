@@ -7,6 +7,7 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
     DATA_CLIENTS,
@@ -116,6 +117,7 @@ class AqaraM1SSoundButton(ButtonEntity):
 class AqaraM1SDeleteSelectedSoundButton(ButtonEntity):
     _attr_name = "Delete Selected Sound"
     _attr_icon = "mdi:file-remove"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, client) -> None:
         self.hass = hass

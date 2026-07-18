@@ -6,9 +6,10 @@ from typing import Callable
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import LIGHT_LUX, PERCENTAGE, UnitOfTemperature
+from homeassistant.const import LIGHT_LUX, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -36,6 +37,16 @@ def last_number(text: str):
     return int(value) if value.is_integer() else value
 
 
+def parse_temperature(text: str):
+    value = last_number(text)
+    if value is None:
+        return None
+    # Linux thermal zones normally expose millidegrees Celsius.
+    if abs(float(value)) >= 1000:
+        value = float(value) / 1000
+    return int(value) if float(value).is_integer() else round(float(value), 1)
+
+
 def parse_wifi_ip(text: str):
     for address in re.findall(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)", text):
         if not address.startswith("127.") and all(0 <= int(x) <= 255 for x in address.split(".")):
@@ -44,9 +55,17 @@ def parse_wifi_ip(text: str):
 
 
 SENSORS = [
-    SensorDef("temperature", "Temperature", "getprop persist.sys.temperature", last_number,
-              UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
-    SensorDef("volume", "Volume Property", "getprop persist.sys.volume", last_number, PERCENTAGE),
+    SensorDef(
+        "temperature",
+        "Hub Temperature",
+        "v=''; for z in /sys/class/thermal/thermal_zone*/temp; do "
+        "[ -r \"$z\" ] && { v=$(cat \"$z\"); break; }; done; "
+        "if [ -n \"$v\" ]; then echo \"$v\"; "
+        "else getprop persist.sys.temperature; fi",
+        parse_temperature,
+        UnitOfTemperature.CELSIUS,
+        SensorDeviceClass.TEMPERATURE,
+    ),
     SensorDef("uptime", "Uptime Seconds", "cat /proc/uptime | cut -d ' ' -f1", last_number, "s"),
     SensorDef("wifi_ip", "WiFi IP", "ifconfig wlan0 | grep 'inet addr'", parse_wifi_ip),
     SensorDef("homekit_process", "HomeKit Process", "ps w | grep homekitserver | grep -v grep",
@@ -61,6 +80,15 @@ SENSORS = [
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    entity_registry = er.async_get(hass)
+    obsolete_entity_id = entity_registry.async_get_entity_id(
+        "sensor",
+        DOMAIN,
+        f"{entry.entry_id}_volume",
+    )
+    if obsolete_entity_id is not None:
+        entity_registry.async_remove(obsolete_entity_id)
+
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
     coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
     entities = [
