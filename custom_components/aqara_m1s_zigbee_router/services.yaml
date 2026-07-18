@@ -86,7 +86,7 @@ upload_sound:
     destination:
       name: Destination
       required: true
-      default: /data/musics/custom/sound.wav
+      default: /data/musics/music-ch/sound.wav
       selector:
         text:
 

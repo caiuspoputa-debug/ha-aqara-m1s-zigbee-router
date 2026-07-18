@@ -50,7 +50,11 @@ async def async_setup_entry(
     if not sounds:
         sounds = FALLBACK_SOUNDS
 
-    entities = [AqaraM1SSelectedSoundButton(hass, entry, client)]
+    entities = [
+        AqaraM1SSelectedSoundButton(hass, entry, client),
+        AqaraM1SDeleteSelectedSoundButton(hass, entry, client),
+        AqaraM1SRefreshSoundsButton(hass, entry, client),
+    ]
     entities += [AqaraM1SSoundButton(hass, entry, client, path) for path in sounds]
     async_add_entities(entities)
 
@@ -107,3 +111,46 @@ class AqaraM1SSoundButton(ButtonEntity):
         )
         player = self.hass.data[DOMAIN][DATA_SOUND_PLAYERS][self.entry.entry_id]
         await player.async_play(self.path, volume)
+
+
+class AqaraM1SDeleteSelectedSoundButton(ButtonEntity):
+    _attr_name = "Delete Selected Sound"
+    _attr_icon = "mdi:file-remove"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, client) -> None:
+        self.hass = hass
+        self.entry = entry
+        self.client = client
+        self._attr_unique_id = f"{entry.entry_id}_delete_selected_sound"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, client.host)},
+            "name": entry.data.get("name", f"Aqara M1S Router {client.host}"),
+            "manufacturer": "Aqara",
+            "model": "M1S Gen 1 / JN5189 Router",
+        }
+
+    async def async_press(self) -> None:
+        path = self.hass.data[DOMAIN][DATA_SELECTED_SOUND].get(self.entry.entry_id)
+        if not path:
+            return
+        await self.hass.async_add_executor_job(self.client.delete_sound, path)
+        await self.hass.config_entries.async_reload(self.entry.entry_id)
+
+
+class AqaraM1SRefreshSoundsButton(ButtonEntity):
+    _attr_name = "Refresh Sound List"
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, client) -> None:
+        self.hass = hass
+        self.entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_refresh_sounds"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, client.host)},
+            "name": entry.data.get("name", f"Aqara M1S Router {client.host}"),
+            "manufacturer": "Aqara",
+            "model": "M1S Gen 1 / JN5189 Router",
+        }
+
+    async def async_press(self) -> None:
+        await self.hass.config_entries.async_reload(self.entry.entry_id)

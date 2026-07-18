@@ -16,14 +16,17 @@ from homeassistant.helpers import device_registry as dr
 
 from .client import AqaraM1SClient
 from .const import (
+    CONF_MQTT_PORT,
     DATA_CLIENTS,
     DATA_COORDINATORS,
+    DATA_MQTT_CLIENTS,
     DATA_PLAYBACK_VOLUME,
     DATA_RADIO_PLAYERS,
     DATA_SELECTED_SOUND,
     DATA_SOUND_MAP,
     DATA_SOUND_PLAYERS,
     DEFAULT_PASSWORD,
+    DEFAULT_MQTT_PORT,
     DEFAULT_PORT,
     DEFAULT_USERNAME,
     DOMAIN,
@@ -35,6 +38,7 @@ from .const import (
     SERVICE_REFRESH_SOUNDS,
 )
 from .coordinator import AqaraM1SRouterCoordinator
+from .mqtt_client import AqaraM1SMqttClient
 from .sound_player import AqaraM1SSoundPlayer
 
 PLATFORMS = [
@@ -54,6 +58,7 @@ async def async_setup_entry(
 ) -> bool:
     host = entry.data[CONF_HOST]
     port = entry.data.get(CONF_PORT, DEFAULT_PORT)
+    mqtt_port = entry.data.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT)
     username = entry.data.get(
         CONF_USERNAME,
         DEFAULT_USERNAME,
@@ -69,6 +74,7 @@ async def async_setup_entry(
         username=username,
         password=password,
     )
+    mqtt_client = AqaraM1SMqttClient(host=host, port=mqtt_port)
     coordinator = AqaraM1SRouterCoordinator(hass, client)
 
     hass.data.setdefault(DOMAIN, {})
@@ -77,6 +83,7 @@ async def async_setup_entry(
         DATA_COORDINATORS,
         {},
     )
+    hass.data[DOMAIN].setdefault(DATA_MQTT_CLIENTS, {})
     hass.data[DOMAIN].setdefault(
         DATA_SELECTED_SOUND,
         {},
@@ -104,6 +111,7 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_COORDINATORS][
         entry.entry_id
     ] = coordinator
+    hass.data[DOMAIN][DATA_MQTT_CLIENTS][entry.entry_id] = mqtt_client
     hass.data[DOMAIN][DATA_SELECTED_SOUND][
         entry.entry_id
     ] = (
@@ -133,6 +141,7 @@ async def async_setup_entry(
     )
 
     await coordinator.async_config_entry_first_refresh()
+    await mqtt_client.start()
     await hass.config_entries.async_forward_entry_setups(
         entry,
         PLATFORMS,
@@ -261,6 +270,9 @@ async def async_unload_entry(
         return False
 
     hass.data[DOMAIN][DATA_COORDINATORS].pop(entry.entry_id, None)
+    mqtt_client = hass.data[DOMAIN][DATA_MQTT_CLIENTS].pop(entry.entry_id, None)
+    if mqtt_client:
+        await mqtt_client.stop()
 
     radio_player = hass.data[DOMAIN][DATA_RADIO_PLAYERS].pop(
         entry.entry_id,

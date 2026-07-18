@@ -7,6 +7,8 @@ import wave
 from pathlib import PurePosixPath
 from dataclasses import dataclass, field
 
+from .const import MANAGED_SOUND_ROOT
+
 IAC = 255
 DONT = 254
 DO = 253
@@ -179,8 +181,10 @@ class AqaraM1SClient:
         candidate = PurePosixPath(path)
         if candidate.suffix.lower() != ".wav":
             raise ValueError("Only .wav files are supported")
-        if not str(candidate).startswith("/data/musics/"):
-            raise ValueError("Sound path must be below /data/musics")
+        if candidate.parent != PurePosixPath(MANAGED_SOUND_ROOT):
+            raise ValueError(
+                f"Sound file must be directly inside {MANAGED_SOUND_ROOT}"
+            )
         if ".." in candidate.parts:
             raise ValueError("Invalid sound path")
         return str(candidate)

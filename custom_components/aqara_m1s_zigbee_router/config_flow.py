@@ -11,6 +11,8 @@ from homeassistant.const import (
 )
 
 from .const import (
+    CONF_MQTT_PORT,
+    DEFAULT_MQTT_PORT,
     DEFAULT_PASSWORD,
     DEFAULT_PORT,
     DEFAULT_USERNAME,
@@ -52,6 +54,10 @@ class AqaraM1SZigbeeRouterConfigFlow(
                 vol.Optional(
                     CONF_PORT,
                     default=DEFAULT_PORT,
+                ): int,
+                vol.Optional(
+                    CONF_MQTT_PORT,
+                    default=DEFAULT_MQTT_PORT,
                 ): int,
                 vol.Optional(
                     CONF_USERNAME,

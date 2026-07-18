@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import re
-from typing import Callable
+from typing import Any, Callable
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DATA_CLIENTS, DATA_COORDINATORS, DOMAIN
+from .const import (
+    DATA_CLIENTS,
+    DATA_COORDINATORS,
+    DATA_MQTT_CLIENTS,
+    DOMAIN,
+    MQTT_TOPIC_ZIGBEE,
+)
 
 
 @dataclass
@@ -39,6 +46,31 @@ def parse_wifi_ip(text: str):
     return None
 
 
+def _coerce_number(value: Any):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def _find_illuminance_resource(node: Any, inherited_did: str | None = None):
+    if isinstance(node, dict):
+        did = node.get("did", inherited_did)
+        if node.get("res_name") == "0.3.85" and did == "lumi.0":
+            return _coerce_number(node.get("value"))
+        for value in node.values():
+            result = _find_illuminance_resource(value, did)
+            if result is not None:
+                return result
+    elif isinstance(node, list):
+        for item in node:
+            result = _find_illuminance_resource(item, inherited_did)
+            if result is not None:
+                return result
+    return None
+
+
 SENSORS = [
     SensorDef("temperature", "Temperature", "getprop persist.sys.temperature", last_number,
               UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
@@ -59,10 +91,13 @@ SENSORS = [
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
     coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
-    async_add_entities([
+    mqtt_client = hass.data[DOMAIN][DATA_MQTT_CLIENTS][entry.entry_id]
+    entities = [
         AqaraM1SRouterSensor(hass, entry, client, coordinator, definition)
         for definition in SENSORS
-    ], True)
+    ]
+    entities.append(AqaraM1SRouterIlluminanceRawSensor(entry, mqtt_client))
+    async_add_entities(entities, True)
 
 
 class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
@@ -91,3 +126,44 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
             self._attr_native_value = self.definition.parser(output)
         except Exception:
             self._attr_native_value = None
+
+
+class AqaraM1SRouterIlluminanceRawSensor(SensorEntity):
+    _attr_name = "Illuminance Raw"
+    _attr_icon = "mdi:brightness-5"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry, mqtt_client) -> None:
+        self.entry = entry
+        self.mqtt_client = mqtt_client
+        self._attr_unique_id = f"{entry.entry_id}_illuminance_raw"
+        self._attr_available = mqtt_client.connected
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, mqtt_client.host)},
+            "name": entry.data.get("name", f"Aqara M1S Router {mqtt_client.host}"),
+            "manufacturer": "Aqara",
+            "model": "M1S Gen 1 / JN5189 Router",
+        }
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self.mqtt_client.add_message_listener(self._handle_message))
+        self.async_on_remove(self.mqtt_client.add_status_listener(self._handle_status))
+        self._attr_available = self.mqtt_client.connected
+        self.async_write_ha_state()
+
+    def _handle_status(self, connected: bool) -> None:
+        self._attr_available = connected
+        self.async_write_ha_state()
+
+    def _handle_message(self, topic: str, raw_payload: bytes) -> None:
+        if topic != MQTT_TOPIC_ZIGBEE:
+            return
+        try:
+            payload = json.loads(raw_payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+        value = _find_illuminance_resource(payload)
+        if value is not None:
+            self._attr_native_value = value
+            self.async_write_ha_state()
