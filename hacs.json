@@ -1,6 +1,4 @@
 {
   "name": "Aqara M1S Zigbee Router",
   "homeassistant": "2024.1.0",
-  "zip_release": true,
-  "filename": "aqara_m1s_zigbee_router_v0_1_0.zip"
 }
