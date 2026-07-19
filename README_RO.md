@@ -6,11 +6,23 @@ Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
 NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
 locală a hubului.
 
-Versiune curentă: **0.2.1 (test release)**
+Versiune curentă: **0.2.4 (test release)**
 
 > Proiectul este destinat modelului Aqara M1S Gen 1 `lumi.gateway.aeu01`.
 > Scrierea JN5189 este o operație avansată. Păstrează un backup verificat și nu
 > scrie niciodată EFUSE, ROM, Config sau PSECT.
+
+
+## Ce s-a schimbat în v0.2.4
+
+- etichete bilingve în meniul Configure, cu româna afișată prima
+- actualizarea imediată a catalogului de sunete după încărcarea sau ștergerea unui WAV
+- reîncărcarea completă și controlată a integrării prin
+  **Finalizare și închidere / Finish and close**
+- documentație mai clară pentru upload, ștergere, download și reîncărcarea finală
+- butonul **X** aparține interfeței Home Assistant; folosirea lui sare numai peste
+  reîncărcarea finală a intrării de configurare, nu și peste actualizarea imediată
+  a catalogului de sunete
 
 ## Configurație validată
 
@@ -488,7 +500,7 @@ Repornește Home Assistant și adaugă integrarea. Domeniul este diferit de
 `aqara_m1s_local`, deci cele două integrări pot coexista, dar nu trebuie să
 concureze pentru același UART sau aceleași resurse audio ale hubului.
 
-## Entități în v0.2.3
+## Entități în v0.2.4
 
 - `Ring Light`: inel RGB cu luminozitate
 - `Radio`: difuzor/media player general Home Assistant
@@ -536,16 +548,18 @@ Deschide:
 
 **Setări > Dispozitive și servicii > Aqara M1S Zigbee Router > Configure**
 
-Sesiunea de administrare oferă:
+Sesiunea de administrare folosește etichete bilingve, cu româna prima:
 
-- **Încărcare sunet WAV**
-- **Ștergere sunet WAV**
-- **Conectare la alt coordonator Zigbee** (acțiune separată cu confirmare)
-- **Finalizare și închidere**
+- **Încărcare sunet WAV / Upload WAV sound**
+- **Ștergere sunet WAV / Delete WAV sound**
+- **Conectare la alt coordonator Zigbee / Join a different Zigbee coordinator**
+  (acțiune separată cu confirmare)
+- **Finalizare și închidere / Finish and close**
 
 ### Încărcarea unui fișier WAV
 
-1. Deschide **Configure** și selectează **Încărcare sunet WAV**.
+1. Deschide **Configure** și selectează
+   **Încărcare sunet WAV / Upload WAV sound**.
 2. Selectează fișierul WAV sau trage-l în câmpul de încărcare.
 3. Așteaptă mesajul de succes. Fișierul încărcat corect este copiat în:
 
@@ -555,15 +569,18 @@ Sesiunea de administrare oferă:
 
 4. Repetă operația pentru celelalte fișiere. Fereastra de administrare rămâne
    deschisă după fiecare încărcare.
-5. După terminarea tuturor operațiilor, revino în meniul de administrare și
-   apasă **Finalizare și închidere**.
+5. După terminarea tuturor operațiilor, revino în meniul de administrare și apasă
+   **Finalizare și închidere / Finish and close**.
 
-Încărcarea nu este considerată complet finalizată până când nu apeși
-**Finalizare și închidere**. În versiunea 0.2.3, acest buton reîncarcă automat
-intrarea integrării Home Assistant, reconstruiește catalogul sunetelor și
-actualizează informațiile dispozitivului și entitățile. Nu închide fereastra cu
-**X** după modificarea fișierelor, deoarece astfel sari peste reîncărcarea finală
-automată.
+Operația de upload actualizează imediat catalogul de sunete. Pentru reîncărcarea
+completă a intrării de configurare, apasă
+**Finalizare și închidere / Finish and close**. Versiunea 0.2.4 reconstruiește
+apoi celelalte entități și actualizează informațiile dispozitivului.
+
+Butonul **X** aparține interfeței Home Assistant și nu poate fi eliminat de o
+integrare custom. Închiderea cu **X** sare peste reîncărcarea finală a intrării
+de configurare, dar nu mai lasă catalogul de sunete neactualizat după upload sau
+ștergere.
 
 Format acceptat:
 
@@ -587,12 +604,14 @@ ca metodă de rezervă.
 
 ### Ștergerea unui fișier WAV
 
-1. Deschide **Configure** și selectează **Ștergere sunet WAV**.
+1. Deschide **Configure** și selectează
+   **Ștergere sunet WAV / Delete WAV sound**.
 2. Selectează fișierul personalizat care trebuie eliminat.
 3. Confirmă ștergerea.
 4. Repetă pentru celelalte fișiere, dacă este necesar.
-5. Apasă **Finalizare și închidere**, pentru ca versiunea 0.2.3 să reîncarce
-   integrarea și să elimine din Home Assistant butoanele de redare aferente.
+5. Apasă **Finalizare și închidere / Finish and close**, pentru ca versiunea 0.2.4
+   să facă reîncărcarea completă a integrării și să actualizeze toate informațiile
+   asociate dispozitivului.
 
 Pot fi administrate numai fișierele aflate direct în directorul protejat:
 
@@ -655,9 +674,11 @@ entitatea devine indisponibilă.
 
 Coordinatorul verifică hubul la 15 secunde. Entitățile live devin indisponibile
 cât timp hubul este offline; butoanele sunetelor rămân vizibile intenționat.
-După reconectarea Wi-Fi, integrarea trimite o singură comandă RGB OFF pentru a
-stinge roșul slab de boot al firmware-ului, dar păstrează în Home Assistant
-ultima culoare și luminozitate pentru următoarea pornire manuală.
+După ce hubul devine accesibil, integrarea așteaptă **10 secunde** și trimite
+o singură comandă RGB OFF. Întârzierea permite stabilizarea Wi-Fi, Telnet și
+UART-ului JN5189 înainte de stingerea roșului slab de boot. Ultima culoare și
+luminozitate selectate în Home Assistant rămân memorate pentru următoarea
+pornire manuală.
 
 ## Securitate și recuperare
 
