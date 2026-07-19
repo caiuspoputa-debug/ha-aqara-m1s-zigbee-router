@@ -22,6 +22,7 @@
         "menu_options": {
           "upload_sound": "Încarcă un fișier WAV în /data/musics/music-ch",
           "delete_sound": "Șterge un fișier WAV din /data/musics/music-ch",
+          "rejoin_zigbee": "Conectare la alt coordonator Zigbee",
           "finish": "Finalizare și închidere"
         }
       },
@@ -38,11 +39,20 @@
         "data": {
           "path": "Fișier audio"
         }
+      },
+      "rejoin_zigbee": {
+        "title": "Conectare la alt coordonator Zigbee",
+        "description": "Activează mai întâi Permit join pe noul coordonator. Acțiunea șterge definitiv numai asocierea de rețea Zigbee din JN5189, îl repornește și pornește Network Steering. Intrarea din vechiul coordonator rămâne învechită. Linux, Wi-Fi, RGB, luxul și fișierele audio nu sunt șterse.",
+        "data": {
+          "confirm": "Am înțeles și vreau să șterg asocierea Zigbee actuală"
+        }
       }
     },
     "error": {
       "upload_failed": "Încărcarea a eșuat. Verifică formatul WAV și conexiunea cu hubul.",
-      "delete_failed": "Ștergerea a eșuat. Verifică legătura cu hubul."
+      "delete_failed": "Ștergerea a eșuat. Verifică legătura cu hubul.",
+      "rejoin_confirmation_required": "Confirmarea este obligatorie înainte de ștergerea asocierii Zigbee actuale.",
+      "rejoin_failed": "JN5189 nu a confirmat comanda de reconectare. Verifică legătura cu hubul și firmware-ul compatibil."
     },
     "abort": {
       "no_managed_sounds": "Nu există fișiere WAV în /data/musics/music-ch."

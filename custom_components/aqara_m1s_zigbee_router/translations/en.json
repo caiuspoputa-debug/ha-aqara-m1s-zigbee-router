@@ -22,6 +22,7 @@
         "menu_options": {
           "upload_sound": "Upload a WAV file to /data/musics/music-ch",
           "delete_sound": "Delete a WAV file from /data/musics/music-ch",
+          "rejoin_zigbee": "Join a different Zigbee coordinator",
           "finish": "Finish and close"
         }
       },
@@ -38,11 +39,20 @@
         "data": {
           "path": "Sound file"
         }
+      },
+      "rejoin_zigbee": {
+        "title": "Join a different Zigbee coordinator",
+        "description": "First enable permit join on the new coordinator. This action permanently clears only the JN5189 Zigbee network context, restarts it and starts Network Steering. The old coordinator entry becomes stale. Linux, Wi-Fi, RGB, lux and sound files are not erased.",
+        "data": {
+          "confirm": "I understand and want to clear the current Zigbee network association"
+        }
       }
     },
     "error": {
       "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
-      "delete_failed": "Delete failed. Verify the hub connection."
+      "delete_failed": "Delete failed. Verify the hub connection.",
+      "rejoin_confirmation_required": "Confirmation is required before clearing the current Zigbee association.",
+      "rejoin_failed": "The JN5189 did not acknowledge the rejoin command. Verify the hub connection and compatible firmware."
     },
     "abort": {
       "no_managed_sounds": "No WAV files were found in /data/musics/music-ch."

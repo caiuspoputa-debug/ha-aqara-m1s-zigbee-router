@@ -11,6 +11,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     FileSelector,
     FileSelectorConfig,
     SelectSelector,
@@ -120,7 +121,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             for path in sounds
         ):
             menu_options.append("delete_sound")
-        menu_options.append("finish")
+        menu_options.extend(["rejoin_zigbee", "finish"])
         return self.async_show_menu(
             step_id="init",
             menu_options=menu_options,
@@ -206,6 +207,32 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     )
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_rejoin_zigbee(self, user_input=None):
+        """Move the JN5189 router to a different Zigbee coordinator."""
+        errors = {}
+        if user_input is not None:
+            if not user_input.get("confirm", False):
+                errors["base"] = "rejoin_confirmation_required"
+            else:
+                try:
+                    await self.hass.async_add_executor_job(
+                        self._client.rejoin_zigbee_network
+                    )
+                except (OSError, RuntimeError):
+                    errors["base"] = "rejoin_failed"
+                else:
+                    return self.async_create_entry(title="", data={})
+
+        return self.async_show_form(
+            step_id="rejoin_zigbee",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("confirm", default=False): BooleanSelector(),
                 }
             ),
             errors=errors,

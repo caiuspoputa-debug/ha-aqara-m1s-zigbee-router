@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 from homeassistant.core import HomeAssistant
@@ -27,8 +28,11 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             raise UpdateFailed("Hub is offline")
 
         if not self._was_online:
-            # The stock boot leaves the ring red. Turn it off on the first
-            # successful connection and after every real offline/online cycle.
+            # The stock boot leaves the ring red. Give Wi-Fi, Telnet and the
+            # JN5189 UART 10 seconds to settle before forcing the ring off.
+            # This runs on the first successful connection and after every
+            # real offline/online cycle.
+            await asyncio.sleep(10)
             await self.hass.async_add_executor_job(
                 self.client.set_rgb, 0, 0, 0
             )

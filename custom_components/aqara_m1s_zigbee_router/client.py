@@ -14,6 +14,8 @@ UART_FIFO = "/tmp/ha_m1s_uart_fifo"
 UART_CAT_PID = "/tmp/ha_m1s_uart_cat.pid"
 UART_NC_PID = "/tmp/ha_m1s_uart_nc.pid"
 UART_REQUEST_LUX = bytes([0xA6, 0x00, 0x00, 0x00, 0xA6])
+UART_REQUEST_REJOIN = bytes([0xA7, 0x52, 0x4A, 0x4E, 0xF1])
+UART_RESPONSE_REJOIN = bytes([0xA7, 0x4F, 0x4B, 0x00, 0xA3])
 
 UPLOAD_PORT = 12349
 UPLOAD_TEMP = "/tmp/ha_m1s_sound_upload.wav"
@@ -355,6 +357,50 @@ class AqaraM1SClient:
                                 }
                             del self._uart_rx[0]
                     raise TimeoutError("No valid A6 lux response from JN5189")
+                except (OSError, ConnectionError, TimeoutError) as err:
+                    last_error = err
+                    self._close_uart_locked()
+                    if attempt == 0:
+                        continue
+            assert last_error is not None
+            raise last_error
+
+    def rejoin_zigbee_network(self) -> None:
+        """Clear JN5189 Zigbee context and start steering after its reset."""
+        with self._lock:
+            last_error: Exception | None = None
+            for attempt in range(2):
+                try:
+                    sock = self._connect_uart_locked()
+
+                    # Do not let an old lux response be mistaken for the ACK.
+                    self._uart_rx.clear()
+                    sock.settimeout(0.02)
+                    while True:
+                        try:
+                            stale = sock.recv(256)
+                            if not stale:
+                                raise ConnectionError("UART tunnel closed")
+                        except socket.timeout:
+                            break
+
+                    sock.sendall(UART_REQUEST_REJOIN)
+                    deadline = time.monotonic() + 2.5
+                    sock.settimeout(0.25)
+                    while time.monotonic() < deadline:
+                        try:
+                            chunk = sock.recv(256)
+                            if not chunk:
+                                raise ConnectionError("UART tunnel closed")
+                            self._uart_rx.extend(chunk)
+                        except socket.timeout:
+                            pass
+
+                        if UART_RESPONSE_REJOIN in self._uart_rx:
+                            self._close_uart_locked()
+                            return
+
+                    raise TimeoutError("No rejoin acknowledgement from JN5189")
                 except (OSError, ConnectionError, TimeoutError) as err:
                     last_error = err
                     self._close_uart_locked()
