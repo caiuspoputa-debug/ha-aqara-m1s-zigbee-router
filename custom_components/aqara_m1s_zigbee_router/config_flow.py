@@ -132,6 +132,10 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         )
 
     async def async_step_finish(self, user_input=None):
+        """Close sound management and reload the config entry."""
+        await self.hass.config_entries.async_reload(
+            self.config_entry.entry_id
+        )
         return self.async_create_entry(title="", data={})
 
     async def async_step_upload_sound(self, user_input=None):
