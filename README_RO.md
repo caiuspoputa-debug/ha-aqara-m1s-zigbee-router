@@ -225,6 +225,96 @@ Transportul validat folosește pyserial `socket://` prin BusyBox `nc`. Procedura
 de mai jos folosește temporar portul TCP `1888`. Portul trebuie să rămână doar
 în LAN și trebuie închis imediat după programare.
 
+
+#### 4.0 Hub deja adăugat în integrarea Home Assistant
+
+Dacă hubul este deja configurat în integrarea **Aqara M1S Zigbee Router**, dezactivează
+temporar integrarea sau oprește Home Assistant înainte de programarea JN5189.
+
+Integrarea poate deschide automat sesiuni Telnet și poate porni un proces blocant:
+
+```sh
+cat /dev/ttyS1
+```
+
+Acest proces ocupă UART-ul. În această situație, conexiunea TCP pe portul `1888`
+poate funcționa, SPSDK poate trimite cadrul ISP, dar JN5189 nu răspunde și comanda
+se termină cu:
+
+```text
+GENERAL ERROR: TimeoutError
+```
+
+Oprirea doar a procesului `cat` nu este suficientă dacă integrarea îl recreează.
+După dezactivarea integrării sau oprirea Home Assistant, verifică pe hub:
+
+```sh
+ps | grep ttyS1
+ps | grep 1886
+ps | grep 1888
+ps | awk '$5=="-sh"{print $1,$5}'
+```
+
+Rezultatul corect înainte de intrarea în ISP este:
+
+- niciun `cat /dev/ttyS1`;
+- niciun listener vechi pe `1886` sau `1888`;
+- numai sesiunea Telnet folosită pentru intervenție.
+
+Dacă există shell-uri Telnet vechi care recreează `cat /dev/ttyS1`, identifică
+părintele procesului:
+
+```sh
+for p in $(ps | grep 'cat /dev/ttyS1' | grep -v grep | awk '{print $1}'); do
+  echo "CAT=$p"
+  grep PPid /proc/$p/status
+done
+```
+
+Apoi identifică shell-ul părinte:
+
+```sh
+tr '\0' ' ' < /proc/PID_PARINTE/cmdline
+echo
+cat /proc/PID_PARINTE/status | grep PPid
+```
+
+Dacă este un shell Telnet vechi și nu este sesiunea curentă, oprește-l cu:
+
+```sh
+kill -9 PID_PARINTE
+```
+
+Nu folosi `killall nc`, deoarece hubul poate avea și alte tuneluri `nc` active.
+
+După un restart fizic, serviciile stock pot porni din nou. Oprește watchdog-ul și
+eliberează UART-ul înainte de ISP:
+
+```sh
+for p in $(ps | grep '[a]pp_monitor' | awk '{print $1}'); do
+  kill -STOP "$p" 2>/dev/null
+done
+
+for p in $(ps | grep '[m]zigbee_agent' | awk '{print $1}'); do
+  kill -9 "$p" 2>/dev/null
+done
+
+for p in $(ps | grep '[c]at /dev/ttyS1' | awk '{print $1}'); do
+  kill -9 "$p" 2>/dev/null
+done
+
+ps | grep app_monitor
+ps | grep mzigbee
+ps | grep ttyS1
+```
+
+Starea validată este:
+
+- `app_monitor.sh` în starea `T`;
+- `mzigbee_agent` absent sau numai zombie;
+- niciun proces real pe `/dev/ttyS1`.
+
+
 #### 4.1 Pregătirea hubului și intrarea în ISP
 
 Rulează în Telnet pe hub. Blocul oprește procesul Zigbee stock, pune GPIO33 pe
@@ -348,6 +438,49 @@ python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n erase 0x0 
 
 Confirmă din nou `LISTEN`, apoi execută `write`. Nu scrie niciodată în EFUSE,
 ROM, Config, PSECT sau pFLASH.
+
+
+#### 5.2 Recuperare validată după `TimeoutError`
+
+Procedura validată pe un hub care fusese deja scris, dar nu mai răspundea stabil în
+ISP, a fost:
+
+1. restart fizic al hubului;
+2. dezactivarea temporară a integrării Home Assistant;
+3. suspendarea `app_monitor.sh`;
+4. oprirea `mzigbee_agent`;
+5. eliminarea tuturor proceselor `cat /dev/ttyS1` și a shell-urilor Telnet vechi
+   care le recreau;
+6. confirmarea că `/dev/ttyS1`, `1886` și `1888` sunt libere;
+7. GPIO33=`0`;
+8. reset GPIO18 `1 -> 0`;
+9. pornirea listenerului temporar:
+   ```sh
+   nc -l -p 1888 < /dev/ttyS1 > /dev/ttyS1 &
+   ```
+10. verificarea `info` din PowerShell;
+11. ștergerea numai a zonei aplicației:
+    ```powershell
+    python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n erase 0x0 0x33200 0
+    ```
+12. repornirea listenerului `1888`;
+13. scrierea imaginii folosind calea completă:
+    ```powershell
+    python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n write 0x0 "C:\cale\completa\jn5189_router_rgb_lux_rejoin_test.bin" 0
+    ```
+14. confirmarea:
+    ```text
+    Written 209296 bytes to memory ID 0 at address 0x0
+    ```
+15. boot normal cu GPIO33=`1` și reset GPIO18 `1 -> 0`.
+
+În SPSDK 3.10.0, comanda `erase` folosește argumente poziționale. Forma cu
+`--memory-id` nu este acceptată.
+
+Un listener BusyBox `nc -l` simplu deservește o singură conexiune și se închide
+după fiecare comandă SPSDK. Dacă nu se folosește bucla documentată la 4.1, trebuie
+repornit manual înainte de fiecare `info`, `erase` sau `write`.
+
 
 #### 5.1 Închiderea listenerului temporar
 
