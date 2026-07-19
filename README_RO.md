@@ -488,7 +488,7 @@ Repornește Home Assistant și adaugă integrarea. Domeniul este diferit de
 `aqara_m1s_local`, deci cele două integrări pot coexista, dar nu trebuie să
 concureze pentru același UART sau aceleași resurse audio ale hubului.
 
-## Entități în v0.2.1
+## Entități în v0.2.3
 
 - `Ring Light`: inel RGB cu luminozitate
 - `Radio`: difuzor/media player general Home Assistant
@@ -538,23 +538,34 @@ Deschide:
 
 Sesiunea de administrare oferă:
 
-- **Upload WAV sound**
-- **Delete WAV sound**
+- **Încărcare sunet WAV**
+- **Ștergere sunet WAV**
 - **Conectare la alt coordonator Zigbee** (acțiune separată cu confirmare)
-- **Finish and close**
+- **Finalizare și închidere**
 
-Fereastra rămâne deschisă după fiecare upload sau ștergere, pentru administrarea
-mai multor fișiere în aceeași sesiune. La final apasă **Finish and close**. Nu
-mai există o entitate de ștergere pe pagina dispozitivului și nici butonul
-redundant pentru redarea sunetului selectat.
+### Încărcarea unui fișier WAV
 
-Sunt administrate numai fișierele aflate direct în directorul protejat:
+1. Deschide **Configure** și selectează **Încărcare sunet WAV**.
+2. Selectează fișierul WAV sau trage-l în câmpul de încărcare.
+3. Așteaptă mesajul de succes. Fișierul încărcat corect este copiat în:
 
-```text
-/data/musics/music-ch
-```
+   ```text
+   /data/musics/music-ch
+   ```
 
-Celelalte directoare originale Aqara nu sunt modificate. Format acceptat:
+4. Repetă operația pentru celelalte fișiere. Fereastra de administrare rămâne
+   deschisă după fiecare încărcare.
+5. După terminarea tuturor operațiilor, revino în meniul de administrare și
+   apasă **Finalizare și închidere**.
+
+Încărcarea nu este considerată complet finalizată până când nu apeși
+**Finalizare și închidere**. În versiunea 0.2.3, acest buton reîncarcă automat
+intrarea integrării Home Assistant, reconstruiește catalogul sunetelor și
+actualizează informațiile dispozitivului și entitățile. Nu închide fereastra cu
+**X** după modificarea fișierelor, deoarece astfel sari peste reîncărcarea finală
+automată.
+
+Format acceptat:
 
 - extensie `.wav`
 - PCM necomprimat
@@ -569,10 +580,58 @@ Conversie cu FFmpeg:
 ffmpeg -y -i input.mp3 -ac 1 -ar 32000 -c:a pcm_s32le output.wav
 ```
 
-Uploadul folosește transfer LAN cu verificarea dimensiunii pe portul TCP
-`12349`, cu BusyBox `base64` ca rezervă. Catalogul și butoanele individuale se
-actualizează fără reload pentru config entry și fără resetarea entităților lux,
-temperatură, RGB sau media.
+Uploadul folosește un transfer LAN verificat pe portul TCP `12349`. Integrarea
+verifică dimensiunea și integritatea fișierului transferat înainte de mutarea
+fișierului temporar în directorul protejat. BusyBox `base64` rămâne disponibil
+ca metodă de rezervă.
+
+### Ștergerea unui fișier WAV
+
+1. Deschide **Configure** și selectează **Ștergere sunet WAV**.
+2. Selectează fișierul personalizat care trebuie eliminat.
+3. Confirmă ștergerea.
+4. Repetă pentru celelalte fișiere, dacă este necesar.
+5. Apasă **Finalizare și închidere**, pentru ca versiunea 0.2.3 să reîncarce
+   integrarea și să elimine din Home Assistant butoanele de redare aferente.
+
+Pot fi administrate numai fișierele aflate direct în directorul protejat:
+
+```text
+/data/musics/music-ch
+```
+
+Sunetele Aqara originale din directoare precum `/data/musics/music-scene` nu
+sunt oferite pentru ștergere de integrare.
+
+### Descărcarea unui WAV existent de pe hub
+
+Fereastra de administrare Home Assistant poate încărca și șterge fișiere, dar
+nu oferă momentan un buton de descărcare în browser. Pentru copierea unui WAV
+existent de pe hub, folosește un transfer TCP temporar, numai în rețeaua locală.
+
+Pe hub, găsește fișierul și pornește un listener pentru o singură conexiune:
+
+```sh
+find /data/musics -type f -name '*.wav'
+nc -l -p 1889 < /data/musics/music-scene/disarm.wav
+```
+
+Apoi rulează în Windows PowerShell, schimbând numele fișierului când este cazul:
+
+```powershell
+$client = New-Object System.Net.Sockets.TcpClient
+$client.Connect("IP_HUB", 1889)
+$stream = $client.GetStream()
+$file = [System.IO.File]::Create("$env:USERPROFILE\Downloads\disarm.wav")
+$stream.CopyTo($file)
+$file.Close()
+$stream.Close()
+$client.Close()
+Get-Item "$env:USERPROFILE\Downloads\disarm.wav"
+```
+
+Listenerul `nc` de pe hub se închide automat după transfer. Păstrează portul
+`1889` numai în LAN și nu îl expune prin port forwarding.
 
 Integrarea înregistrează și următoarele acțiuni pentru automatizări avansate:
 
