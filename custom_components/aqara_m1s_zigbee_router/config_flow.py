@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -30,6 +32,8 @@ from .const import (
     sound_list_signal,
 )
 from .sound_upload import destination_for_filename, read_uploaded_sound
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AqaraM1SZigbeeRouterConfigFlow(
@@ -145,7 +149,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     destination,
                     content,
                 )
-            except (OSError, ValueError, RuntimeError):
+            except (OSError, ValueError, RuntimeError) as err:
+                _LOGGER.exception("WAV upload failed: %s", err)
                 errors["base"] = "upload_failed"
             else:
                 async_dispatcher_send(

@@ -4,6 +4,7 @@ import time
 import base64
 import io
 import wave
+import hashlib
 from pathlib import PurePosixPath
 from dataclasses import dataclass, field
 
@@ -440,24 +441,38 @@ class AqaraM1SClient:
                 self._upload_sound_base64_locked(destination, content)
 
     def _upload_sound_tcp_locked(self, destination: str, content: bytes) -> None:
+        """Upload a WAV through a one-shot BusyBox nc listener and verify it."""
         parent = str(PurePosixPath(destination).parent)
+        expected_size = len(content)
+        expected_md5 = hashlib.md5(content).hexdigest()
+
+        # Kill only stale upload listeners created for this dedicated port.
+        # Do not use killall nc because the hub can have unrelated nc services.
         start_command = (
-            f'[ -f {UPLOAD_PID} ] && kill -9 "$(cat {UPLOAD_PID})" '
-            "2>/dev/null; "
+            f"for p in $(ps w | grep '[n]c -l -p {UPLOAD_PORT}' | "
+            "awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "
+            f'[ -f {UPLOAD_PID} ] && kill -9 "$(cat {UPLOAD_PID})" 2>/dev/null; '
             f"rm -f {UPLOAD_PID} {UPLOAD_TEMP}; mkdir -p '{parent}'; "
             f"nc -l -p {UPLOAD_PORT} > {UPLOAD_TEMP} "
             "2>/tmp/ha_m1s_sound_upload.log & "
-            f"echo $! > {UPLOAD_PID}"
+            f"echo $! > {UPLOAD_PID}; "
+            "i=0; while [ $i -lt 50 ]; do "
+            f"netstat -lnt 2>/dev/null | grep -q ':{UPLOAD_PORT}' && "
+            "echo __M1S_UPLOAD_LISTEN__ && break; "
+            "sleep 0.1; i=$((i+1)); done"
         )
-        self.run_command(start_command)
+        output = self.run_command(start_command)
+        if "__M1S_UPLOAD_LISTEN__" not in output:
+            raise ConnectionError("WAV upload listener did not start")
 
         upload_sock: socket.socket | None = None
         last_error: OSError | None = None
-        for _ in range(20):
+        for _ in range(30):
             try:
                 upload_sock = socket.create_connection(
                     (self.host, UPLOAD_PORT), timeout=2.0
                 )
+                upload_sock.settimeout(10.0)
                 break
             except OSError as err:
                 last_error = err
@@ -472,31 +487,55 @@ class AqaraM1SClient:
         finally:
             upload_sock.close()
 
-        expected = len(content)
+        # nc is one-shot. Wait for it to close the file, then verify both size
+        # and MD5 before replacing any existing destination file.
         finalize = (
-            f"i=0; while [ -f {UPLOAD_PID} ] && "
-            f"kill -0 \"$(cat {UPLOAD_PID})\" 2>/dev/null && [ $i -lt 5 ]; do "
-            "sleep 1; i=$((i+1)); done; "
+            "i=0; while [ $i -lt 30 ]; do "
+            f"pid=$(cat {UPLOAD_PID} 2>/dev/null); "
+            "[ -z \"$pid\" ] || ! kill -0 \"$pid\" 2>/dev/null || "
+            f"[ $(wc -c < {UPLOAD_TEMP} 2>/dev/null) -ge {expected_size} ] && break; "
+            "sleep 0.2; i=$((i+1)); done; "
             f"actual=$(wc -c < {UPLOAD_TEMP} 2>/dev/null); "
-            f"if [ \"$actual\" = \"{expected}\" ]; then "
-            f"mv {UPLOAD_TEMP} '{destination}'; rm -f {UPLOAD_PID}; "
-            "else echo __M1S_UPLOAD_SIZE_ERROR__$actual; fi"
+            f"actual_md5=$(md5sum {UPLOAD_TEMP} 2>/dev/null | awk '{{print $1}}'); "
+            f"if [ \"$actual\" = \"{expected_size}\" ] && "
+            f"[ \"$actual_md5\" = \"{expected_md5}\" ]; then "
+            f"mv {UPLOAD_TEMP} '{destination}'; chmod 664 '{destination}' 2>/dev/null; "
+            f"rm -f {UPLOAD_PID}; echo __M1S_UPLOAD_OK__; "
+            "else echo __M1S_UPLOAD_VERIFY_ERROR__:$actual:$actual_md5; fi"
         )
         output = self.run_command(finalize)
-        if "__M1S_UPLOAD_SIZE_ERROR__" in output:
-            raise IOError("WAV upload size verification failed")
+        if "__M1S_UPLOAD_OK__" not in output:
+            self.run_command(
+                f"[ -f {UPLOAD_PID} ] && kill -9 \"$(cat {UPLOAD_PID})\" "
+                f"2>/dev/null; rm -f {UPLOAD_PID} {UPLOAD_TEMP}"
+            )
+            raise IOError(f"WAV upload verification failed: {output}")
 
     def _upload_sound_base64_locked(self, destination: str, content: bytes) -> None:
+        """Fallback upload over Telnet using small base64 chunks, with MD5 check."""
         parent = str(PurePosixPath(destination).parent)
         encoded = base64.b64encode(content).decode("ascii")
+        expected_size = len(content)
+        expected_md5 = hashlib.md5(content).hexdigest()
         temp = "/tmp/ha_sound_upload.b64"
-        self.run_command(f"mkdir -p '{parent}'; : > {temp}")
-        for start in range(0, len(encoded), 2048):
-            chunk = encoded[start : start + 2048]
+        decoded = "/tmp/ha_sound_upload_decoded.wav"
+        self.run_command(f"mkdir -p '{parent}'; rm -f {temp} {decoded}; : > {temp}")
+        for start in range(0, len(encoded), 1024):
+            chunk = encoded[start : start + 1024]
             self.run_command(f"printf '%s' '{chunk}' >> {temp}")
-        self.run_command(
-            f"base64 -d {temp} > '{destination}' && rm -f {temp}"
+        output = self.run_command(
+            f"base64 -d {temp} > {decoded} && "
+            f"actual=$(wc -c < {decoded}); "
+            f"actual_md5=$(md5sum {decoded} | awk '{{print $1}}'); "
+            f"if [ \"$actual\" = \"{expected_size}\" ] && "
+            f"[ \"$actual_md5\" = \"{expected_md5}\" ]; then "
+            f"mv {decoded} '{destination}'; chmod 664 '{destination}' 2>/dev/null; "
+            "echo __M1S_UPLOAD_OK__; "
+            "else echo __M1S_UPLOAD_VERIFY_ERROR__:$actual:$actual_md5; fi; "
+            f"rm -f {temp} {decoded}"
         )
+        if "__M1S_UPLOAD_OK__" not in output:
+            raise IOError(f"Base64 WAV upload verification failed: {output}")
 
     def delete_sound(self, path: str) -> None:
         path = self._safe_sound_path(path)
