@@ -6,11 +6,20 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.2.3 (test release)**
+Current version: **0.2.4 (test release)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
 > EFUSE, ROM, Config or PSECT.
+
+## What changed in v0.2.4
+
+- bilingual Configure labels, with Romanian displayed first
+- immediate sound-catalogue refresh after WAV upload or deletion
+- controlled full integration reload through **Finalizare și închidere / Finish and close**
+- clearer documentation for upload, deletion, download and final reload behavior
+- the Home Assistant **X** close control remains frontend-managed; using it skips only
+  the final config-entry reload, not the immediate sound-catalogue refresh
 
 ## Validated configuration
 
@@ -42,9 +51,9 @@ Current version: **0.2.3 (test release)**
 - confirmed migration of the router to a different Zigbee coordinator
 
 When the hub is offline, the light, media player, volume and live sensors become
-unavailable. Sound buttons intentionally remain visible. Upload and deletion
-refresh only the sound catalogue; they do not reload the integration or reset
-the other entities.
+unavailable. Sound buttons intentionally remain visible. Upload and deletion refresh the sound catalogue immediately. The full config-entry
+reload is performed only through **Finalizare și închidere / Finish and close**, so
+the remaining entities and device information are rebuilt in a controlled way.
 
 ## Current RGB + lux + rejoin firmware
 
@@ -492,7 +501,7 @@ Then restart Home Assistant and add the integration. The domain differs from
 `aqara_m1s_local`, so both integrations can coexist, although they must not
 compete for the same hub UART or audio resources.
 
-## Entities in v0.2.3
+## Entities in v0.2.4
 
 - `Ring Light`: RGB ring with brightness
 - `Radio`: general Home Assistant speaker/media player
@@ -539,16 +548,17 @@ Open:
 
 **Settings > Devices & services > Aqara M1S Zigbee Router > Configure**
 
-The management session provides:
+The management session uses bilingual labels, with Romanian first:
 
-- **Upload WAV sound**
-- **Delete WAV sound**
-- **Join a different Zigbee coordinator** (separate confirmed action)
-- **Finish and close**
+- **Încărcare sunet WAV / Upload WAV sound**
+- **Ștergere sunet WAV / Delete WAV sound**
+- **Conectare la alt coordonator Zigbee / Join a different Zigbee coordinator**
+  (separate confirmed action)
+- **Finalizare și închidere / Finish and close**
 
 ### Upload a WAV file
 
-1. Open **Configure** and select **Upload WAV sound**.
+1. Open **Configure** and select **Încărcare sunet WAV / Upload WAV sound**.
 2. Select or drag the WAV file into the upload field.
 3. Wait for the success message. A successful upload is copied to:
 
@@ -559,13 +569,15 @@ The management session provides:
 4. Repeat the operation for any other files needed. The management window stays
    open after every upload.
 5. When all operations are complete, return to the management menu and press
-   **Finish and close**.
+   **Finalizare și închidere / Finish and close**.
 
-The upload is not considered fully finished until **Finish and close** is
-pressed. Version 0.2.3 then automatically reloads the Home Assistant config
-entry, rebuilds the sound catalogue and refreshes the device information and
-entities. Do not close the dialog with the **X** after changing files, because
-that bypasses the final automatic reload.
+The upload operation refreshes the sound catalogue immediately. For the complete
+config-entry reload, press **Finalizare și închidere / Finish and close**. Version
+0.2.4 then rebuilds the remaining entities and refreshes the device information.
+
+The **X** button belongs to the Home Assistant frontend and cannot be removed by a
+custom integration. Closing with **X** skips the final config-entry reload, but it
+no longer leaves the sound catalogue stale after upload or deletion.
 
 Accepted uploads:
 
@@ -588,12 +600,12 @@ protected sound directory. BusyBox `base64` is retained as a fallback.
 
 ### Delete a WAV file
 
-1. Open **Configure** and select **Delete WAV sound**.
+1. Open **Configure** and select **Ștergere sunet WAV / Delete WAV sound**.
 2. Select the custom file to remove.
 3. Confirm the deletion.
 4. Repeat for any additional files.
-5. Press **Finish and close** so version 0.2.3 reloads the integration and removes
-   the corresponding playback buttons from Home Assistant.
+5. Press **Finalizare și închidere / Finish and close** so version 0.2.4 performs
+   the complete integration reload and refreshes all related device information.
 
 Only files directly inside the following protected directory can be managed:
 
