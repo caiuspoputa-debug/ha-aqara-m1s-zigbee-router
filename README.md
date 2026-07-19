@@ -223,6 +223,97 @@ The validated network transport is pyserial `socket://` through BusyBox `nc`.
 The procedure below uses temporary TCP port `1888`. Keep it inside the trusted
 LAN and close it immediately after programming.
 
+
+#### 4.0 Hub already added to the Home Assistant integration
+
+If the hub is already configured in the **Aqara M1S Zigbee Router** integration,
+temporarily disable the integration or stop Home Assistant before programming the
+JN5189.
+
+The integration may automatically open Telnet sessions and start a blocking
+process:
+
+```sh
+cat /dev/ttyS1
+```
+
+This process owns the UART. In this condition, the TCP connection on port `1888`
+may still work and SPSDK may send the ISP frame, but the JN5189 does not reply and
+the command ends with:
+
+```text
+GENERAL ERROR: TimeoutError
+```
+
+Killing only the `cat` process is not enough if the integration recreates it.
+After disabling the integration or stopping Home Assistant, verify on the hub:
+
+```sh
+ps | grep ttyS1
+ps | grep 1886
+ps | grep 1888
+ps | awk '$5=="-sh"{print $1,$5}'
+```
+
+The correct state before entering ISP is:
+
+- no `cat /dev/ttyS1`;
+- no old listener on `1886` or `1888`;
+- only the Telnet session used for the intervention.
+
+If old Telnet shells recreate `cat /dev/ttyS1`, identify the process parent:
+
+```sh
+for p in $(ps | grep 'cat /dev/ttyS1' | grep -v grep | awk '{print $1}'); do
+  echo "CAT=$p"
+  grep PPid /proc/$p/status
+done
+```
+
+Then identify the parent shell:
+
+```sh
+tr '\0' ' ' < /proc/PARENT_PID/cmdline
+echo
+cat /proc/PARENT_PID/status | grep PPid
+```
+
+If it is an old Telnet shell and not the current session, stop it with:
+
+```sh
+kill -9 PARENT_PID
+```
+
+Do not use `killall nc`, because the hub may have other active `nc` tunnels.
+
+After a physical restart, stock services may start again. Stop the watchdog and
+free the UART before ISP:
+
+```sh
+for p in $(ps | grep '[a]pp_monitor' | awk '{print $1}'); do
+  kill -STOP "$p" 2>/dev/null
+done
+
+for p in $(ps | grep '[m]zigbee_agent' | awk '{print $1}'); do
+  kill -9 "$p" 2>/dev/null
+done
+
+for p in $(ps | grep '[c]at /dev/ttyS1' | awk '{print $1}'); do
+  kill -9 "$p" 2>/dev/null
+done
+
+ps | grep app_monitor
+ps | grep mzigbee
+ps | grep ttyS1
+```
+
+The validated state is:
+
+- `app_monitor.sh` in state `T`;
+- `mzigbee_agent` absent or zombie only;
+- no real process owning `/dev/ttyS1`.
+
+
 #### 4.1 Prepare the hub and enter ISP
 
 Run in Telnet on the hub. This block stops the stock Zigbee owner, puts
@@ -349,6 +440,48 @@ python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n erase 0x0 
 
 Then confirm `LISTEN` again and execute the `write` command. Never write EFUSE,
 ROM, Config, PSECT or pFLASH.
+
+
+#### 5.2 Validated recovery after `TimeoutError`
+
+The validated procedure for a hub that had already been flashed but no longer
+responded reliably in ISP was:
+
+1. physically power-cycle the hub;
+2. temporarily disable the Home Assistant integration;
+3. suspend `app_monitor.sh`;
+4. stop `mzigbee_agent`;
+5. remove all `cat /dev/ttyS1` processes and stale Telnet shells recreating them;
+6. confirm that `/dev/ttyS1`, `1886` and `1888` are free;
+7. set GPIO33=`0`;
+8. pulse GPIO18 `1 -> 0`;
+9. start the temporary listener:
+   ```sh
+   nc -l -p 1888 < /dev/ttyS1 > /dev/ttyS1 &
+   ```
+10. run `info` from PowerShell;
+11. erase only the application area:
+    ```powershell
+    python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n erase 0x0 0x33200 0
+    ```
+12. restart the `1888` listener;
+13. write the image using its full path:
+    ```powershell
+    python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n write 0x0 "C:\full\path\jn5189_router_rgb_lux_rejoin_test.bin" 0
+    ```
+14. confirm:
+    ```text
+    Written 209296 bytes to memory ID 0 at address 0x0
+    ```
+15. boot normally with GPIO33=`1` and pulse GPIO18 `1 -> 0`.
+
+In SPSDK 3.10.0, the `erase` command uses positional arguments. The
+`--memory-id` form is not accepted.
+
+A simple BusyBox `nc -l` listener serves one connection and exits after every
+SPSDK command. If the loop documented in 4.1 is not used, restart the listener
+manually before every `info`, `erase` or `write`.
+
 
 #### 5.1 Close the temporary programming listener
 
