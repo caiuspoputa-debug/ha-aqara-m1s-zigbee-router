@@ -27,6 +27,7 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_USERNAME,
     DATA_CLIENTS,
+    DATA_COORDINATORS,
     DOMAIN,
     MANAGED_SOUND_ROOT,
     sound_list_signal,
@@ -161,6 +162,11 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     self.hass,
                     sound_list_signal(self.config_entry.entry_id),
                 )
+                coordinator = self.hass.data[DOMAIN][DATA_COORDINATORS].get(
+                    self.config_entry.entry_id
+                )
+                if coordinator is not None:
+                    await coordinator.async_request_refresh()
                 return await self.async_step_init()
 
         return self.async_show_form(
@@ -190,6 +196,11 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     self.hass,
                     sound_list_signal(self.config_entry.entry_id),
                 )
+                coordinator = self.hass.data[DOMAIN][DATA_COORDINATORS].get(
+                    self.config_entry.entry_id
+                )
+                if coordinator is not None:
+                    await coordinator.async_request_refresh()
                 return await self.async_step_init()
 
         try:

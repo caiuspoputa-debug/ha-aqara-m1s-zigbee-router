@@ -17,34 +17,34 @@
   "options": {
     "step": {
       "init": {
-        "title": "Sound file management",
-        "description": "Upload or delete as many WAV files as needed. This window remains open after every operation; choose Finish and close when done.",
+        "title": "Administrarea fișierelor audio / Sound file management",
+        "description": "Folosește opțiunile de mai jos pentru încărcare sau ștergere. După fiecare operație lista și informațiile sunt reîmprospătate imediat. Pentru închiderea corectă și reîncărcarea completă a integrării, alege Finalizare și închidere / Use the options below to upload or delete files. The list and information refresh immediately after each operation. To close correctly and fully reload the integration, choose Finish and close.",
         "menu_options": {
-          "upload_sound": "Upload a WAV file to /data/musics/music-ch",
-          "delete_sound": "Delete a WAV file from /data/musics/music-ch",
-          "rejoin_zigbee": "Join a different Zigbee coordinator",
-          "finish": "Finish and close"
+          "upload_sound": "Încarcă WAV / Upload WAV",
+          "delete_sound": "Șterge WAV / Delete WAV",
+          "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
+          "finish": "Finalizare și închidere / Finish and close"
         }
       },
       "upload_sound": {
-        "title": "Upload WAV sound",
-        "description": "The file is validated and uploaded to /data/musics/music-ch.",
+        "title": "Încărcare sunet WAV / Upload WAV sound",
+        "description": "Selectează un WAV PCM necomprimat: mono, 32000 Hz, 32-bit signed little-endian. Fișierul este încărcat în /data/musics/music-ch și lista este reîmprospătată imediat. / Select an uncompressed PCM WAV: mono, 32000 Hz, signed 32-bit little-endian. The file is uploaded to /data/musics/music-ch and the list refreshes immediately.",
         "data": {
-          "source": "WAV file"
+          "source": "Fișier WAV / WAV file"
         }
       },
       "delete_sound": {
-        "title": "Delete WAV sound",
-        "description": "Only files in /data/musics/music-ch are listed.",
+        "title": "Ștergere sunet WAV / Delete WAV sound",
+        "description": "Sunt afișate numai fișierele din /data/musics/music-ch. După ștergere lista este reîmprospătată imediat. / Only files in /data/musics/music-ch are shown. The list refreshes immediately after deletion.",
         "data": {
-          "path": "Sound file"
+          "path": "Fișier audio / Sound file"
         }
       },
       "rejoin_zigbee": {
-        "title": "Join a different Zigbee coordinator",
+        "title": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
         "description": "First enable permit join on the new coordinator. This action permanently clears only the JN5189 Zigbee network context, restarts it and starts Network Steering. The old coordinator entry becomes stale. Linux, Wi-Fi, RGB, lux and sound files are not erased.",
         "data": {
-          "confirm": "I understand and want to clear the current Zigbee network association"
+          "confirm": "Am înțeles și vreau să șterg asocierea Zigbee actuală / I understand and want to clear the current Zigbee association"
         }
       }
     },
