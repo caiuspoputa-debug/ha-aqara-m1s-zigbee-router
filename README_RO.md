@@ -6,7 +6,7 @@ Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
 NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
 locală a hubului.
 
-Versiune curentă: **0.2.0 (test release)**
+Versiune curentă: **0.2.1 (test release)**
 
 > Proiectul este destinat modelului Aqara M1S Gen 1 `lumi.gateway.aeu01`.
 > Scrierea JN5189 este o operație avansată. Păstrează un backup verificat și nu
@@ -39,27 +39,29 @@ Versiune curentă: **0.2.0 (test release)**
 - diagnostic pentru IP Wi-Fi, procese și starea JN5189
 - monitorizare comună online/offline la 15 secunde
 - stingerea automată a inelului roșu de boot după reconectarea Wi-Fi
+- mutarea confirmată a routerului la un alt coordonator Zigbee
 
 Când hubul este offline, lumina, media playerul, volumul și senzorii live devin
 indisponibili. Butoanele sunetelor rămân intenționat vizibile. Uploadul și
 ștergerea actualizează numai catalogul de sunete; nu reîncarcă integrarea și nu
 resetează celelalte entități.
 
-## Firmware-ul final RGB + lux
+## Firmware RGB + lux + rejoin curent
 
-Imaginea finală folosește **PIO19/ADC5** pentru senzorul de lumină ambientală:
+Imaginea de test compatibilă cu v0.2.1 folosește **PIO19/ADC5** pentru lumină
+ambientală și adaugă comanda UART protejată pentru rejoin:
 
 ```text
-Fișier: jn5189_router_rgb_lux_pio19.bin
-Dimensiune: 209312 bytes (0x331A0)
-Lungime erase parțial: 0x33200
+Fișier: jn5189_router_rgb_lux_rejoin_test.bin
+Dimensiune: 209296 bytes (0x33190)
+Zona imaginii rotunjită la sector: 0x33200
 Memorie: ID 0 / FLASH
-SHA256: 33FB799E4B5E9C3B33E9B8E1B40089DBD04FA2DCDD7BF5D681E41F152BD8D611
 ```
 
-Aceasta este singura imagine de flash care trebuie publicată împreună cu
-proiectul. Build-ul final a fost validat fizic la aproximativ `54 lx` cu
-senzorul luminat și `2 lx` cu senzorul acoperit.
+Imaginea a fost scrisă cu succes la 19 iulie 2026, iar routerul a revenit online
+în Zigbee2MQTT fără ștergerea completă a memoriei. Înainte de publicarea unui
+fișier binar trebuie calculat și notat SHA256; două builduri cu nume asemănător
+nu trebuie presupuse identice.
 
 ## Instalare completă pornind de la un hub stock
 
@@ -197,7 +199,7 @@ Telnet trebuie să ruleze, `mzigbee_agent` nu trebuie să ocupe UART-ul, iar
 valorile GPIO trebuie să fie `1`, apoi `0`. Scriptul nu creează vechiul tunel
 MQTT; v0.2.0 citește lux direct din JN5189 și nu necesită MQTT.
 
-### 4. Backup pentru flash-ul original JN5189
+### 4. Backup și programarea JN5189
 
 Instalează SPSDK în Windows:
 
@@ -207,104 +209,152 @@ python -m pip install "spsdk[dk6]"
 python -m spsdk.apps.dk6prog --help
 ```
 
-Transportul prin rețea folosește backendul `PYSERIAL` și URL-ul pyserial
-`socket://HUB_IP:1886`. Unele versiuni SPSDK pot necesita ca driverul PYSERIAL
-să deschidă dispozitivul cu `serial.serial_for_url(...)`.
+Transportul validat folosește pyserial `socket://` prin BusyBox `nc`. Procedura
+de mai jos folosește temporar portul TCP `1888`. Portul trebuie să rămână doar
+în LAN și trebuie închis imediat după programare.
 
-Înainte de preluarea `/dev/ttyS1`, oprește procesul care îl ocupă și împiedică
-monitorul să-l repornească. Identifică mai întâi PID-urile exacte:
+#### 4.1 Pregătirea hubului și intrarea în ISP
 
-```sh
-ps | grep '[a]pp_monitor'
-ps | grep '[m]zigbee_agent'
-```
-
-Pentru sesiunea temporară de programare:
+Rulează în Telnet pe hub. Blocul oprește procesul Zigbee stock, pune GPIO33 pe
+nivelul ISP, resetează JN5189 și pornește un listener direct TCP–UART care se
+repornește după fiecare conexiune. Nu folosește FIFO și nici proces `cat`.
 
 ```sh
-kill -STOP PID_APP_MONITOR
-kill PID_MZIGBEE_AGENT
-```
+PORT=1888
+LOOP_PID_FILE=/var/tmp/jn1888_loop.pid
+LOOP_LOG=/var/tmp/jn1888_loop.log
 
-Înlocuiește valorile numai cu PID-urile afișate de comenzile precedente.
+if [ -f "$LOOP_PID_FILE" ]; then
+    OLD_LOOP=$(cat "$LOOP_PID_FILE" 2>/dev/null)
+    [ -n "$OLD_LOOP" ] && kill -9 "$OLD_LOOP" 2>/dev/null
+    rm -f "$LOOP_PID_FILE"
+fi
 
-Înainte de **fiecare** comandă SPSDK, recreează tunelul UART și resetează
-JN5189 în ISP:
+for p in $(ps w | grep "[n]c -l -p $PORT" | awk '{print $1}'); do
+    kill -9 "$p" 2>/dev/null
+done
 
-```sh
-for p in $(ps | grep '[c]at /dev/ttyS1' | awk '{print $1}'); do kill "$p"; done
-for p in $(ps | grep '[n]c -l -p 1886' | awk '{print $1}'); do kill "$p"; done
+for p in $(ps w | grep '[a]pp_monitor' | awk '{print $1}'); do
+    kill -STOP "$p" 2>/dev/null
+done
+for p in $(ps w | grep '[m]zigbee_agent' | awk '{print $1}'); do
+    kill -9 "$p" 2>/dev/null
+done
 
-rm -f /tmp/jn_uart_fifo
-mkfifo /tmp/jn_uart_fifo
-stty 115200 cs8 -parenb -cstopb -ixon -ixoff -icanon -echo min 1 time 0 < /dev/ttyS1
-cat /dev/ttyS1 > /tmp/jn_uart_fifo &
-nc -l -p 1886 < /tmp/jn_uart_fifo > /dev/ttyS1 &
+stty 115200 cs8 -parenb -cstopb cread clocal -crtscts \
+  -ignbrk -brkint -ignpar -parmrk -inpck -istrip \
+  -ixon -ixoff -icanon -echo min 1 time 0 < /dev/ttyS1
 
+echo out > /sys/class/gpio/gpio33/direction
+echo out > /sys/class/gpio/gpio18/direction
 echo 0 > /sys/class/gpio/gpio33/value
 echo 1 > /sys/class/gpio/gpio18/value
 sleep 1
 echo 0 > /sys/class/gpio/gpio18/value
 sleep 1
 
-netstat -lnt | grep 1886
+(
+    while true; do
+        nc -l -p "$PORT" < /dev/ttyS1 > /dev/ttyS1
+        sleep 1
+    done
+) >"$LOOP_LOG" 2>&1 &
+LOOP_PID=$!
+echo "$LOOP_PID" > "$LOOP_PID_FILE"
+
+sleep 3
+netstat -lnt | grep ":$PORT"
 ```
 
-Verifică legătura din PowerShell:
+Confirmarea importantă este linia `LISTEN` pentru portul `1888`. O sesiune
+`nc` se închide după fiecare comandă SPSDK, iar bucla pornește listenerul
+următor. Verifică `netstat` înaintea fiecărei comenzi SPSDK.
+
+#### 4.2 Verificarea comunicației
+
+În PowerShell:
 
 ```powershell
-python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1886" -n info
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n info
 ```
 
 Rezultatul trebuie să includă:
 
 ```text
 Detected DEVICE: JN5189
-FLASH: base 0x0, length 0x9DE00, sector 0x200
+FLASH  Memory ID 0  Base 0x0  Length 0x9DE00  Sector 0x200
 ```
 
-Recreează tunelul și resetul ISP, apoi citește flash-ul original:
+După `info`, revino în Telnet și verifică dacă bucla a recreat listenerul:
+
+```sh
+netstat -lnt | grep 1888
+```
+
+#### 4.3 Backup pentru un hub stock
+
+Înaintea primei conversii, citește Memory ID 0 și păstrează backupul în două
+locuri sigure:
 
 ```powershell
-python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1886" -n read -o "jn5189_original_flash.bin" 0x0 646656 0
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n read -o ".\jn5189_original_flash.bin" 0x0 646656 0
 Get-FileHash ".\jn5189_original_flash.bin" -Algorithm SHA256
 ```
 
-Păstrează acest backup în două locuri sigure.
+Verifică din nou `LISTEN` înaintea oricărei alte comenzi SPSDK.
 
-### 5. Verificarea și scrierea imaginii finale
+### 5. Scrierea sau actualizarea firmware-ului
 
-Verifică mai întâi imaginea descărcată:
-
-```powershell
-Get-FileHash ".\jn5189_router_rgb_lux_pio19.bin" -Algorithm SHA256
-```
-
-Trebuie să corespundă hash-ului SHA256 complet din secțiunea firmware.
-
-Nu folosi erase complet pentru o actualizare normală. Recreează tunelul și
-resetul ISP, apoi șterge numai zona imaginii:
+Verifică fișierul exact ales pentru flash:
 
 ```powershell
-python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1886" -n erase 0x0 0x33200 0
+Get-Item ".\jn5189_router_rgb_lux_rejoin_test.bin"
+Get-FileHash ".\jn5189_router_rgb_lux_rejoin_test.bin" -Algorithm SHA256
 ```
 
-Recreează iar tunelul și resetul ISP, apoi scrie imaginea:
+Pentru actualizarea unui firmware Router deja funcțional, scrie direct la
+adresa `0x0`, **fără erase complet**. Aceasta este procedura reușită la
+19 iulie 2026 și a păstrat asocierea Zigbee existentă:
 
 ```powershell
-python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1886" -n write 0x0 ".\jn5189_router_rgb_lux_pio19.bin"
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n write 0x0 ".\jn5189_router_rgb_lux_rejoin_test.bin"
 ```
 
-Nu combina erase și write. Recreează încă o dată tunelul și resetul ISP, apoi
-citește înapoi exact 209312 bytes:
+Confirmarea reușită pentru acest build este:
+
+```text
+Written 209296 bytes to memory ID 0 at address 0x0
+```
+
+La prima conversie sau la recuperare, când ștergerea zonei imaginii este cu
+adevărat necesară, șterge numai zona aplicației rotunjită la sector, niciodată
+întregul cip:
 
 ```powershell
-python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1886" -n read -o ".\jn5189_router_rgb_lux_pio19_verify.bin" 0x0 209312 0
-Get-FileHash ".\jn5189_router_rgb_lux_pio19.bin", ".\jn5189_router_rgb_lux_pio19_verify.bin" -Algorithm SHA256
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n erase 0x0 0x33200 0
 ```
 
-Ambele hash-uri trebuie să fie identice. Nu porni o imagine care nu trece
-verificarea.
+Confirmă din nou `LISTEN`, apoi execută `write`. Nu scrie niciodată în EFUSE,
+ROM, Config, PSECT sau pFLASH.
+
+#### 5.1 Închiderea listenerului temporar
+
+După ultima comandă SPSDK, rulează în Telnet:
+
+```sh
+if [ -f /var/tmp/jn1888_loop.pid ]; then
+    LOOP_PID=$(cat /var/tmp/jn1888_loop.pid 2>/dev/null)
+    [ -n "$LOOP_PID" ] && kill -9 "$LOOP_PID" 2>/dev/null
+    rm -f /var/tmp/jn1888_loop.pid
+fi
+for p in $(ps w | grep '[n]c -l -p 1888' | awk '{print $1}'); do
+    kill -9 "$p" 2>/dev/null
+done
+sleep 2
+netstat -lnt | grep 1888
+```
+
+Ultima comandă nu trebuie să afișeze nimic.
 
 ### 6. Ieșirea din ISP și pornirea Routerului
 
@@ -374,6 +424,34 @@ validează și publică `LUX_H * 256 + LUX_L` în lux. Nu lăsa un proces blocan
 `cat /dev/ttyS1` pornit după testele manuale; integrarea creează și administrează
 singură tunelul TCP/UART pe portul `1886`.
 
+### Protocolul de rejoin și locul butonului (firmware compatibil v0.2.1)
+
+Activează mai întâi **Permit join** pe coordonatorul destinație.
+
+Acțiunea de rejoin nu este o entitate pe pagina dispozitivului. Se găsește aici:
+
+**Setări > Dispozitive și servicii > Aqara M1S Zigbee Router > Configure > Conectare la alt coordonator Zigbee**
+
+Citește avertismentul și confirmă. Integrarea trimite comanda numai după pasul
+de confirmare.
+
+
+Integrarea trimite această cerere distinctă de cinci bytes:
+
+```text
+Cerere:    A7 52 4A 4E F1
+Confirmare: A7 4F 4B 00 A3
+```
+
+Payloadul `52 4A 4E` reprezintă `RJN`. După trimiterea confirmării, JN5189
+șterge numai contextul persistent al rețelei Zigbee și se repornește. Calea BDB
+existentă pornește automat Network Steering la boot. Linux, setările Wi-Fi,
+RGB/lux și fișierele din `/data/musics` nu sunt șterse.
+
+Firmware-ul fizic validat anterior `jn5189_router_rgb_lux_pio19.bin` nu
+implementează `A7`. Acțiunea din Configurare eșuează astfel în siguranță, fără
+să modifice nimic, până la instalarea unui build de firmware compatibil.
+
 ## Instalarea în Home Assistant
 
 ### HACS
@@ -410,7 +488,7 @@ Repornește Home Assistant și adaugă integrarea. Domeniul este diferit de
 `aqara_m1s_local`, deci cele două integrări pot coexista, dar nu trebuie să
 concureze pentru același UART sau aceleași resurse audio ale hubului.
 
-## Entități în v0.2.0
+## Entități în v0.2.1
 
 - `Ring Light`: inel RGB cu luminozitate
 - `Radio`: difuzor/media player general Home Assistant
@@ -462,6 +540,7 @@ Sesiunea de administrare oferă:
 
 - **Upload WAV sound**
 - **Delete WAV sound**
+- **Conectare la alt coordonator Zigbee** (acțiune separată cu confirmare)
 - **Finish and close**
 
 Fereastra rămâne deschisă după fiecare upload sau ștergere, pentru administrarea
@@ -532,14 +611,17 @@ ultima culoare și luminozitate pentru următoarea pornire manuală.
   backupul original validat în Memory ID 0, citește-l înapoi, compară SHA256,
   apoi pornește cu GPIO33=`1` și GPIO18=`0`.
 
-## Actualizare de la v0.1.9
+## Actualizare de la v0.2.0
 
-1. Actualizează fișierele repository-ului și manifestul la `0.2.0`.
-2. Creează/publică tagul `v0.2.0`.
-3. Actualizează integrarea prin HACS.
-4. Repornește complet Home Assistant.
-5. Deschide entitatea `Radio`; browserul media nativ trebuie să fie disponibil.
+1. Compilează și validează fizic sursa JN5189 furnizată cu protocolul `A7`.
+2. Scrie numai imaginea compatibilă verificată și testează RGB, lux și Zigbee.
+3. Actualizează fișierele repository-ului și manifestul la `0.2.1`.
+4. Creează/publică tagul `v0.2.1`.
+5. Actualizează prin HACS și repornește complet Home Assistant.
+6. Activează Permit join pe coordonatorul destinație.
+7. Deschide **Configurare** la integrare, alege **Conectare la alt coordonator
+   Zigbee**, citește avertizarea și confirmă.
 
-Nu este necesară rescrierea firmware-ului JN5189 dacă firmware-ul final
-PIO19 RGB+lux este deja instalat. Modificarea v0.2.0 extinde numai interfața
-media player din Home Assistant.
+Vechiul coordonator poate păstra o intrare învechită, care poate fi ștearsă după
+apariția routerului în noul coordonator. Acțiunea nu șterge Linux, Wi-Fi,
+RGB/lux sau fișierele audio.
