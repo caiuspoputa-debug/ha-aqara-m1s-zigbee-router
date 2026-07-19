@@ -6,7 +6,7 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.2.1 (test release)**
+Current version: **0.2.3 (test release)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
@@ -492,7 +492,7 @@ Then restart Home Assistant and add the integration. The domain differs from
 `aqara_m1s_local`, so both integrations can coexist, although they must not
 compete for the same hub UART or audio resources.
 
-## Entities in v0.2.1
+## Entities in v0.2.3
 
 - `Ring Light`: RGB ring with brightness
 - `Radio`: general Home Assistant speaker/media player
@@ -546,18 +546,28 @@ The management session provides:
 - **Join a different Zigbee coordinator** (separate confirmed action)
 - **Finish and close**
 
-The window remains open after each upload or deletion so several files can be
-managed in one session. Press **Finish and close** when done. There is no
-delete entity on the device page and there is no redundant selected-sound play
-button.
+### Upload a WAV file
 
-Only files directly inside this protected directory are managed:
+1. Open **Configure** and select **Upload WAV sound**.
+2. Select or drag the WAV file into the upload field.
+3. Wait for the success message. A successful upload is copied to:
 
-```text
-/data/musics/music-ch
-```
+   ```text
+   /data/musics/music-ch
+   ```
 
-Other original Aqara sound directories are not modified. Accepted uploads:
+4. Repeat the operation for any other files needed. The management window stays
+   open after every upload.
+5. When all operations are complete, return to the management menu and press
+   **Finish and close**.
+
+The upload is not considered fully finished until **Finish and close** is
+pressed. Version 0.2.3 then automatically reloads the Home Assistant config
+entry, rebuilds the sound catalogue and refreshes the device information and
+entities. Do not close the dialog with the **X** after changing files, because
+that bypasses the final automatic reload.
+
+Accepted uploads:
 
 - `.wav`
 - uncompressed PCM
@@ -572,10 +582,57 @@ Convert with FFmpeg:
 ffmpeg -y -i input.mp3 -ac 1 -ar 32000 -c:a pcm_s32le output.wav
 ```
 
-Upload uses a verified-size LAN transfer on TCP port `12349`, with BusyBox
-`base64` as fallback. The catalogue and its individual sound buttons update
-without reloading the config entry or resetting lux, temperature, RGB or media
-entities.
+Upload uses a verified LAN transfer on TCP port `12349`. The integration checks
+the transferred size and integrity before moving the temporary file into the
+protected sound directory. BusyBox `base64` is retained as a fallback.
+
+### Delete a WAV file
+
+1. Open **Configure** and select **Delete WAV sound**.
+2. Select the custom file to remove.
+3. Confirm the deletion.
+4. Repeat for any additional files.
+5. Press **Finish and close** so version 0.2.3 reloads the integration and removes
+   the corresponding playback buttons from Home Assistant.
+
+Only files directly inside the following protected directory can be managed:
+
+```text
+/data/musics/music-ch
+```
+
+Original Aqara sounds from directories such as `/data/musics/music-scene` are
+not offered for deletion by the integration.
+
+### Download an existing WAV from the hub
+
+The Home Assistant management dialog currently uploads and deletes files; it
+does not expose a browser-download button. To copy an existing WAV from the hub,
+use a temporary LAN-only TCP transfer.
+
+On the hub, first locate the file and start a one-shot listener:
+
+```sh
+find /data/musics -type f -name '*.wav'
+nc -l -p 1889 < /data/musics/music-scene/disarm.wav
+```
+
+Then run this in Windows PowerShell, replacing the output name when needed:
+
+```powershell
+$client = New-Object System.Net.Sockets.TcpClient
+$client.Connect("HUB_IP", 1889)
+$stream = $client.GetStream()
+$file = [System.IO.File]::Create("$env:USERPROFILE\Downloads\disarm.wav")
+$stream.CopyTo($file)
+$file.Close()
+$stream.Close()
+$client.Close()
+Get-Item "$env:USERPROFILE\Downloads\disarm.wav"
+```
+
+The hub-side `nc` listener exits automatically after the transfer. Keep port
+`1889` inside the trusted LAN and do not expose it through router forwarding.
 
 The integration also registers these actions for advanced automation use:
 
@@ -628,4 +685,4 @@ Home Assistant color and brightness remain stored for the next manual turn-on.
 
 The old coordinator may retain a stale device entry that can be removed after
 the router appears on the new coordinator. The action does not erase the Linux
-hub, Wi-Fi, RGB/lux support or audio files.
+hub, Wi-Fi, RGB/lux support or audio files
