@@ -6,15 +6,17 @@ Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
 NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
 locală a hubului.
 
-Versiune curentă: **0.2.4 (test release)**
+Versiune curentă: **0.2.6 (test release)**
 
 > Proiectul este destinat modelului Aqara M1S Gen 1 `lumi.gateway.aeu01`.
 > Scrierea JN5189 este o operație avansată. Păstrează un backup verificat și nu
 > scrie niciodată EFUSE, ROM, Config sau PSECT.
 
 
-## Ce s-a schimbat în v0.2.4
+## Ce s-a schimbat în v0.2.6
 
+- numele afișat al entității a fost schimbat din **Radio** în **Media Player**
+- volumul media playerului permite pași de 0,1%
 - etichete bilingve în meniul Configure, cu româna afișată prima
 - actualizarea imediată a catalogului de sunete după încărcarea sau ștergerea unui WAV
 - reîncărcarea completă și controlată a integrării prin
@@ -74,6 +76,24 @@ Imaginea a fost scrisă cu succes la 19 iulie 2026, iar routerul a revenit onlin
 în Zigbee2MQTT fără ștergerea completă a memoriei. Înainte de publicarea unui
 fișier binar trebuie calculat și notat SHA256; două builduri cu nume asemănător
 nu trebuie presupuse identice.
+
+
+### Build experimental fără serverul On/Off
+
+A fost compilată imaginea experimentală
+`jn5189_router_rgb_lux_no_switch.bin`, după dezactivarea macro-urilor serverului
+On/Off și eliminarea referințelor directe care împiedicau compilarea.
+
+```text
+Dimensiune: 208784 bytes (0x32F90)
+Zona aplicației rotunjită la sector: 0x33000
+```
+
+Imaginea a pornit, iar routerul a revenit online după restartarea Zigbee2MQTT.
+Totuși, Zigbee2MQTT a afișat în continuare switch-ul vechi după rejoin,
+interview și reconfigure. Prin urmare, acest build **nu este validat ca eliminând
+switch-ul**. Descriptorul endpointului sau o altă definiție ZCL generată trebuie
+verificată înainte ca imaginea să fie publicată drept firmware de înlocuire.
 
 ## Instalare completă pornind de la un hub stock
 
@@ -135,9 +155,11 @@ poate fi temporară.
 
 #### Telnet persistent și pornirea Routerului
 
-Următorul `post_init.sh` este destinat unui hub Router pregătit de la zero. Dacă
-hubul este deja convertit și scriptul său actual de boot funcționează, fă backup
-și nu îl suprascrie inutil.
+Următorul `post_init.sh` este scriptul de boot validat în prezent. A fost
+instalat pe patru huburi convertite. La fiecare restart Linux păstrează
+serviciile originale Linux, Wi-Fi, HomeKit și audio, pornește Telnet persistent,
+suspendă watchdog-ul stock, oprește `mzigbee_agent`, pornește normal JN5189 și
+trimite RGB OFF după încă 10 secunde.
 
 ```sh
 mkdir -p /data/scripts
@@ -151,40 +173,62 @@ LOG_FILE="/tmp/post_init.log"
 wait_for_wifi()
 {
     i=0
+
     while [ "$i" -lt 120 ]; do
         if ifconfig wlan0 2>/dev/null | grep -q 'inet addr'; then
             return 0
         fi
+
         sleep 2
         i=$((i+2))
     done
+
     return 1
 }
 
-# Necesar pentru serviciile Linux, Wi-Fi, HomeKit si audio originale.
+# Porneste serviciile Linux, Wi-Fi, HomeKit si audio originale.
 fw_manager.sh -r &
 
 (
     wait_for_wifi
     sleep 5
+
+    # Porneste Telnet persistent.
     fw_manager.sh -t -k &
     echo "$(date) Telnet start requested." >> "$LOG_FILE"
 
-    # Lasa serviciile stock sa porneasca, apoi elibereaza UART-ul JN5189.
+    # Asteapta terminarea pornirii serviciilor stock.
     sleep 20
+
+    # Suspenda watchdog-ul care ar reporni mzigbee_agent.
     for p in $(ps | grep '[a]pp_monitor' | awk '{print $1}'); do
         kill -STOP "$p" 2>/dev/null
     done
+
+    # Opreste procesul stock care ocupa UART-ul JN5189.
     for p in $(ps | grep '[m]zigbee_agent' | awk '{print $1}'); do
-        kill "$p" 2>/dev/null
+        kill -9 "$p" 2>/dev/null
     done
 
+    # Configureaza UART-ul JN5189.
     stty -F /dev/ttyS1 115200 raw -echo
+
+    # Boot normal JN5189: GPIO33=1, reset GPIO18 1 -> 0.
+    echo out > /sys/class/gpio/gpio33/direction
+    echo out > /sys/class/gpio/gpio18/direction
+
     echo 1 > /sys/class/gpio/gpio33/value
     echo 1 > /sys/class/gpio/gpio18/value
     sleep 1
     echo 0 > /sys/class/gpio/gpio18/value
-    echo "$(date) Router UART released and JN5189 started." >> "$LOG_FILE"
+
+    echo "$(date) JN5189 Router started." >> "$LOG_FILE"
+
+    # Asteapta stabilizarea routerului, apoi stinge inelul.
+    sleep 10
+    printf '\245\000\000\000\245' > /dev/ttyS1
+
+    echo "$(date) Ring light OFF sent." >> "$LOG_FILE"
 ) &
 
 exit 0
@@ -197,19 +241,28 @@ sync
 ```
 
 Rezultatul așteptat este `syntax=0`. Nu da reboot dacă rezultatul este diferit.
-După reboot, așteaptă Wi-Fi și verifică:
+După reboot, așteaptă cel puțin 40 de secunde și verifică:
 
 ```sh
 cat /tmp/post_init.log
 ps | grep '[t]elnetd'
 ps | grep '[m]zigbee_agent'
+ps | grep '[a]pp_monitor'
 cat /sys/class/gpio/gpio33/value
 cat /sys/class/gpio/gpio18/value
 ```
 
-Telnet trebuie să ruleze, `mzigbee_agent` nu trebuie să ocupe UART-ul, iar
-valorile GPIO trebuie să fie `1`, apoi `0`. Scriptul nu creează vechiul tunel
-MQTT; v0.2.0 citește lux direct din JN5189 și nu necesită MQTT.
+Starea validată este:
+
+- Telnet rulează;
+- `mzigbee_agent` este absent sau apare numai ca zombie (`Z`);
+- `app_monitor.sh` este suspendat (`T`);
+- GPIO33 este `1`, iar GPIO18 este `0`;
+- inelul roșu de boot se stinge automat după întârzierea finală de 10 secunde.
+
+Scriptul nu creează și nu oprește alte tuneluri `nc` și nu folosește `killall`.
+Vechiul tunel MQTT de pe portul `1884`, dacă există pentru alt scop, nu este
+atins. Citirea directă a luxului nu depinde de acel tunel MQTT.
 
 ### 4. Backup și programarea JN5189
 
@@ -633,10 +686,10 @@ Repornește Home Assistant și adaugă integrarea. Domeniul este diferit de
 `aqara_m1s_local`, deci cele două integrări pot coexista, dar nu trebuie să
 concureze pentru același UART sau aceleași resurse audio ale hubului.
 
-## Entități în v0.2.4
+## Entități în v0.2.6
 
 - `Ring Light`: inel RGB cu luminozitate
-- `Radio`: difuzor/media player general Home Assistant
+- `Media Player`: difuzor/media player general Home Assistant, cu pași de volum de 0,1%
 - `Sound Playback Volume`: volumul redării sunetelor locale
 - `Illuminance`: lux direct din JN5189, cu atribute ADC raw și millivolts
 - `Hub Temperature`: numai din `persist.sys.temperature`
@@ -707,7 +760,7 @@ Sesiunea de administrare folosește etichete bilingve, cu româna prima:
 
 Operația de upload actualizează imediat catalogul de sunete. Pentru reîncărcarea
 completă a intrării de configurare, apasă
-**Finalizare și închidere / Finish and close**. Versiunea 0.2.4 reconstruiește
+**Finalizare și închidere / Finish and close**. Versiunea 0.2.6 reconstruiește
 apoi celelalte entități și actualizează informațiile dispozitivului.
 
 Butonul **X** aparține interfeței Home Assistant și nu poate fi eliminat de o
@@ -742,7 +795,7 @@ ca metodă de rezervă.
 2. Selectează fișierul personalizat care trebuie eliminat.
 3. Confirmă ștergerea.
 4. Repetă pentru celelalte fișiere, dacă este necesar.
-5. Apasă **Finalizare și închidere / Finish and close**, pentru ca versiunea 0.2.4
+5. Apasă **Finalizare și închidere / Finish and close**, pentru ca versiunea 0.2.6
    să facă reîncărcarea completă a integrării și să actualizeze toate informațiile
    asociate dispozitivului.
 
