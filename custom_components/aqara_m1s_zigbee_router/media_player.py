@@ -68,7 +68,7 @@ async def async_setup_entry(
 class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity):
     """Stream Home Assistant media to the Aqara M1S speaker."""
 
-    _attr_name = "Radio"
+    _attr_name = "Media Player"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
     # Home Assistant volume uses a 0.0-1.0 scale. A step of 0.001 is 0.1%.
