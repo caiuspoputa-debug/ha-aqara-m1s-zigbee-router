@@ -20,6 +20,7 @@ from homeassistant.components.media_player.browse_media import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .client import AqaraM1SClient
@@ -73,7 +74,7 @@ async def async_setup_entry(
     async_add_entities([player])
 
 
-class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity):
+class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     """Stream Home Assistant media to the Aqara M1S speaker."""
 
     _attr_name = "Media Player"
@@ -112,6 +113,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity):
         self._attr_media_content_type = MediaType.MUSIC
         self._attr_media_title = None
         self._media_url: str | None = None
+        self._resume_media_id: str | None = None
+        self._resume_media_type: str = MediaType.MUSIC
         self._ffmpeg: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._watch_task: asyncio.Task | None = None
@@ -125,7 +128,65 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            attrs = last_state.attributes
+
+            restored_volume = attrs.get("volume_level")
+            if restored_volume is not None:
+                try:
+                    self._attr_volume_level = max(
+                        0.0, min(1.0, float(restored_volume))
+                    )
+                except (TypeError, ValueError):
+                    pass
+
+            self._attr_is_volume_muted = bool(
+                attrs.get("is_volume_muted", False)
+            )
+            self._resume_media_id = (
+                attrs.get("last_media_id") or attrs.get("media_content_id")
+            )
+            self._resume_media_type = (
+                attrs.get("last_media_type")
+                or attrs.get("media_content_type")
+                or MediaType.MUSIC
+            )
+            self._attr_media_content_id = self._resume_media_id
+            self._attr_media_content_type = self._resume_media_type
+            self._attr_media_title = (
+                attrs.get("last_media_title") or attrs.get("media_title")
+            )
+
+            # Direct URLs can be prepared immediately. Media-source IDs are
+            # resolved freshly only when PLAY is pressed, because their resolved
+            # URLs may contain temporary authentication data.
+            if self._resume_media_id and not media_source.is_media_source_id(
+                self._resume_media_id
+            ):
+                self._media_url = async_process_play_media_url(
+                    self.hass,
+                    self._resume_media_id,
+                    allow_relative_url=False,
+                )
+
+            # Never auto-start after a Home Assistant restart. The remembered
+            # media remains available and can be resumed explicitly with PLAY.
+            self._attr_state = MediaPlayerState.IDLE
+
         self.async_on_remove(self._schedule_cleanup)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Persist the last playable media and the radio volume."""
+        return {
+            "last_media_id": self._resume_media_id,
+            "last_media_type": self._resume_media_type,
+            "last_media_title": self._attr_media_title,
+            "volume_level": self._attr_volume_level,
+            "is_volume_muted": self._attr_is_volume_muted,
+        }
 
     def _schedule_cleanup(self) -> None:
         self.hass.async_create_task(self.async_shutdown())
@@ -155,18 +216,21 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity):
         media_id: str,
         **kwargs: Any,
     ) -> None:
-        """Resolve a HA media source and stream it to the hub."""
+        """Resolve a HA media source, remember it, and stream it to the hub."""
+        original_media_id = media_id
+        resolved_media_id = media_id
+
         if media_source.is_media_source_id(media_id):
             resolved = await media_source.async_resolve_media(
                 self.hass,
                 media_id,
                 self.entity_id,
             )
-            media_id = resolved.url
+            resolved_media_id = resolved.url
 
         media_url = async_process_play_media_url(
             self.hass,
-            media_id,
+            resolved_media_id,
             allow_relative_url=False,
         )
 
@@ -176,15 +240,37 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity):
             title = extra.get("title")
 
         async with self._lock:
+            self._resume_media_id = original_media_id
+            self._resume_media_type = media_type or MediaType.MUSIC
             self._media_url = media_url
-            self._attr_media_content_id = media_id
-            self._attr_media_content_type = media_type or MediaType.MUSIC
-            self._attr_media_title = title or "Radio stream"
+            self._attr_media_content_id = original_media_id
+            self._attr_media_content_type = self._resume_media_type
+            self._attr_media_title = title or self._attr_media_title or "Radio stream"
             await self._start_locked()
 
     async def async_media_play(self) -> None:
-        if self._media_url is None:
+        """Resume the last media, including after a Home Assistant restart."""
+        if not self._resume_media_id and not self._media_url:
             return
+
+        if self._resume_media_id and media_source.is_media_source_id(
+            self._resume_media_id
+        ):
+            resolved = await media_source.async_resolve_media(
+                self.hass,
+                self._resume_media_id,
+                self.entity_id,
+            )
+            media_url = async_process_play_media_url(
+                self.hass,
+                resolved.url,
+                allow_relative_url=False,
+            )
+            async with self._lock:
+                self._media_url = media_url
+                await self._start_locked()
+            return
+
         async with self._lock:
             await self._start_locked()
 
