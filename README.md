@@ -6,14 +6,16 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.2.4 (test release)**
+Current version: **0.2.6 (test release)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
 > EFUSE, ROM, Config or PSECT.
 
-## What changed in v0.2.4
+## What changed in v0.2.6
 
+- media-player display name changed from **Radio** to **Media Player**
+- media-player volume control supports 0.1% steps
 - bilingual Configure labels, with Romanian displayed first
 - immediate sound-catalogue refresh after WAV upload or deletion
 - controlled full integration reload through **Finalizare și închidere / Finish and close**
@@ -71,6 +73,24 @@ This image was written successfully on 2026-07-19 with SPSDK and the router
 returned online in Zigbee2MQTT without a full-chip erase. Before publishing a
 binary, calculate and record its SHA256; never assume that a similarly named
 build has the same hash.
+
+
+### Experimental build without the On/Off server
+
+An experimental image named `jn5189_router_rgb_lux_no_switch.bin` was built
+after disabling the On/Off server macros and removing the remaining direct
+references required for compilation.
+
+```text
+Size: 208784 bytes (0x32F90)
+Sector-rounded application area: 0x33000
+```
+
+The image booted and the router returned online after restarting Zigbee2MQTT.
+However, Zigbee2MQTT still exposed the old switch after rejoin, interview and
+reconfigure. Therefore this build is **not validated as removing the switch**.
+The endpoint descriptor or another generated ZCL definition still needs to be
+inspected before publishing it as a replacement firmware.
 
 ## Complete installation from a stock hub
 
@@ -132,9 +152,11 @@ be temporary.
 
 #### Persistent Telnet and Router startup
 
-The following `post_init.sh` is for a newly prepared Router hub. If the hub is
-already converted and its current boot script works, back it up and do not
-overwrite it unnecessarily.
+The following `post_init.sh` is the currently validated boot script. It was
+installed on four converted hubs. At every Linux restart it keeps the original
+Linux, Wi-Fi, HomeKit and audio services, starts persistent Telnet, suspends the
+stock watchdog, stops `mzigbee_agent`, boots the JN5189 normally and sends RGB
+OFF 10 seconds later.
 
 ```sh
 mkdir -p /data/scripts
@@ -148,40 +170,62 @@ LOG_FILE="/tmp/post_init.log"
 wait_for_wifi()
 {
     i=0
+
     while [ "$i" -lt 120 ]; do
         if ifconfig wlan0 2>/dev/null | grep -q 'inet addr'; then
             return 0
         fi
+
         sleep 2
         i=$((i+2))
     done
+
     return 1
 }
 
-# Required for the original Linux, Wi-Fi, HomeKit and audio services.
+# Start the original Linux, Wi-Fi, HomeKit and audio services.
 fw_manager.sh -r &
 
 (
     wait_for_wifi
     sleep 5
+
+    # Start persistent Telnet.
     fw_manager.sh -t -k &
     echo "$(date) Telnet start requested." >> "$LOG_FILE"
 
-    # Let the stock services finish starting, then free the JN5189 UART.
+    # Let the stock services finish starting.
     sleep 20
+
+    # Suspend the watchdog that would restart mzigbee_agent.
     for p in $(ps | grep '[a]pp_monitor' | awk '{print $1}'); do
         kill -STOP "$p" 2>/dev/null
     done
+
+    # Stop the stock process that owns the JN5189 UART.
     for p in $(ps | grep '[m]zigbee_agent' | awk '{print $1}'); do
-        kill "$p" 2>/dev/null
+        kill -9 "$p" 2>/dev/null
     done
 
+    # Configure the JN5189 UART.
     stty -F /dev/ttyS1 115200 raw -echo
+
+    # Normal JN5189 boot: GPIO33=1, reset GPIO18 1 -> 0.
+    echo out > /sys/class/gpio/gpio33/direction
+    echo out > /sys/class/gpio/gpio18/direction
+
     echo 1 > /sys/class/gpio/gpio33/value
     echo 1 > /sys/class/gpio/gpio18/value
     sleep 1
     echo 0 > /sys/class/gpio/gpio18/value
-    echo "$(date) Router UART released and JN5189 started." >> "$LOG_FILE"
+
+    echo "$(date) JN5189 Router started." >> "$LOG_FILE"
+
+    # Wait for the router to stabilize, then turn the ring off.
+    sleep 10
+    printf '\245\000\000\000\245' > /dev/ttyS1
+
+    echo "$(date) Ring light OFF sent." >> "$LOG_FILE"
 ) &
 
 exit 0
@@ -194,20 +238,28 @@ sync
 ```
 
 The expected syntax result is `syntax=0`. Do not reboot if it is different.
-After a reboot, wait for Wi-Fi and verify:
+After a reboot, wait at least 40 seconds and verify:
 
 ```sh
 cat /tmp/post_init.log
 ps | grep '[t]elnetd'
 ps | grep '[m]zigbee_agent'
+ps | grep '[a]pp_monitor'
 cat /sys/class/gpio/gpio33/value
 cat /sys/class/gpio/gpio18/value
 ```
 
-Telnet must be running, `mzigbee_agent` must not own the UART, and the GPIO
-values must be `1` then `0`. This script intentionally does not create the old
-MQTT tunnel; v0.2.0 reads lux directly from the JN5189 and does not require
-MQTT.
+The validated state is:
+
+- Telnet is running;
+- `mzigbee_agent` is absent or present only as a zombie (`Z`);
+- `app_monitor.sh` is suspended (`T`);
+- GPIO33 is `1` and GPIO18 is `0`;
+- the boot-red ring turns off automatically after the final 10-second delay.
+
+The script does not create or stop unrelated `nc` tunnels and does not use
+`killall`. The old MQTT tunnel on port `1884`, when present for another purpose,
+is not touched. Direct lux access does not require that MQTT tunnel.
 
 ### 4. Back up and program the JN5189
 
@@ -634,10 +686,10 @@ Then restart Home Assistant and add the integration. The domain differs from
 `aqara_m1s_local`, so both integrations can coexist, although they must not
 compete for the same hub UART or audio resources.
 
-## Entities in v0.2.4
+## Entities in v0.2.6
 
 - `Ring Light`: RGB ring with brightness
-- `Radio`: general Home Assistant speaker/media player
+- `Media Player`: general Home Assistant speaker/media player with 0.1% volume steps
 - `Sound Playback Volume`: local-sound playback volume
 - `Illuminance`: direct JN5189 lux value, with ADC raw and millivolts attributes
 - `Hub Temperature`: `persist.sys.temperature` only
@@ -737,7 +789,7 @@ protected sound directory. BusyBox `base64` is retained as a fallback.
 2. Select the custom file to remove.
 3. Confirm the deletion.
 4. Repeat for any additional files.
-5. Press **Finalizare și închidere / Finish and close** so version 0.2.4 performs
+5. Press **Finalizare și închidere / Finish and close** so version 0.2.6 performs
    the complete integration reload and refreshes all related device information.
 
 Only files directly inside the following protected directory can be managed:
