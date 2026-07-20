@@ -33,9 +33,17 @@ REMOTE_NC_PID = "/tmp/aqara_m1s_radio_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_radio_aplay.pid"
 
 REMOTE_STOP_COMMAND = (
+    # First stop the exact PIDs recorded when this integration started the
+    # receiver. PID files can be stale after a hub reboot, so this is followed
+    # by command-line scoped fallbacks. Never use killall: the hub may run
+    # unrelated nc/aplay processes.
     f'for f in {REMOTE_NC_PID} {REMOTE_APLAY_PID}; do '
     '[ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; '
     'done; '
+    f'for p in $(ps w | grep "[n]c -l -p {RADIO_PORT}" | awk '"'"'{print $1}'"'"'); do '
+    'kill -9 "$p" 2>/dev/null; done; '
+    f'for p in $(ps w | grep "[a]play .*{REMOTE_FIFO}" | awk '"'"'{print $1}'"'"'); do '
+    'kill -9 "$p" 2>/dev/null; done; '
     f'rm -f {REMOTE_NC_PID} {REMOTE_APLAY_PID} {REMOTE_FIFO}'
 )
 
