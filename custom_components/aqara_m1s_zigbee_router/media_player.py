@@ -71,12 +71,17 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity):
     _attr_name = "Radio"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
+    # Home Assistant volume uses a 0.0-1.0 scale. A step of 0.001 is 0.1%.
+    # This keeps the native media-player control while allowing fine adjustment
+    # between 0% and 1%, without creating a second volume entity.
+    _attr_volume_step = 0.001
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
         | MediaPlayerEntityFeature.STOP
         | MediaPlayerEntityFeature.PLAY
         | MediaPlayerEntityFeature.VOLUME_SET
+        | MediaPlayerEntityFeature.VOLUME_STEP
         | MediaPlayerEntityFeature.VOLUME_MUTE
         | MediaPlayerEntityFeature.TURN_OFF
     )
