@@ -88,7 +88,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
     # Native media-player slider: normal adjustment in 1% steps.
-    # A separate Number entity provides fine 0.1% adjustment from 0% to 1%.
+    # A separate Number entity provides fine 0.1% adjustment from 0% to 4%.
     _attr_volume_step = 0.01
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
