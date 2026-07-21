@@ -31,3 +31,8 @@ MANAGED_SOUND_ROOT = "/data/musics/music-ch"
 def sound_list_signal(entry_id: str) -> str:
     """Return the dispatcher signal for one hub's sound catalog."""
     return f"{DOMAIN}_{entry_id}_sound_list_updated"
+
+
+def radio_volume_signal(entry_id: str) -> str:
+    """Return dispatcher signal for radio volume changes."""
+    return f"{DOMAIN}_{entry_id}_radio_volume_updated"

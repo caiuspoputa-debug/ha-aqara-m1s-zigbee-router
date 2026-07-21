@@ -21,10 +21,17 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .client import AqaraM1SClient
-from .const import DATA_CLIENTS, DATA_COORDINATORS, DATA_RADIO_PLAYERS, DOMAIN
+from .const import (
+    DATA_CLIENTS,
+    DATA_COORDINATORS,
+    DATA_RADIO_PLAYERS,
+    DOMAIN,
+    radio_volume_signal,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,10 +87,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_name = "Media Player"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    # Home Assistant volume uses a 0.0-1.0 scale. A step of 0.001 is 0.1%.
-    # This keeps the native media-player control while allowing fine adjustment
-    # between 0% and 1%, without creating a second volume entity.
-    _attr_volume_step = 0.001
+    # Native media-player slider: normal adjustment in 1% steps.
+    # A separate Number entity provides fine 0.1% adjustment from 0% to 1%.
+    _attr_volume_step = 0.01
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
@@ -175,6 +181,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             # media remains available and can be resumed explicitly with PLAY.
             self._attr_state = MediaPlayerState.IDLE
 
+        async_dispatcher_send(
+            self.hass, radio_volume_signal(self.entry.entry_id)
+        )
         self.async_on_remove(self._schedule_cleanup)
 
     @property
@@ -292,6 +301,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._attr_volume_level = volume
         self._attr_is_volume_muted = volume == 0.0
         self.async_write_ha_state()
+        async_dispatcher_send(
+            self.hass, radio_volume_signal(self.entry.entry_id)
+        )
 
         if self._volume_restart_task:
             self._volume_restart_task.cancel()
