@@ -40,6 +40,10 @@ REMOTE_FIFO = "/tmp/aqara_m1s_radio_fifo"
 REMOTE_NC_PID = "/tmp/aqara_m1s_radio_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_radio_aplay.pid"
 
+WATCHDOG_RESTART_DELAY = 5.0
+WATCHDOG_MAX_RESTARTS = 3
+WATCHDOG_STABLE_SECONDS = 30.0
+
 REMOTE_STOP_COMMAND = (
     # First stop the exact PIDs recorded when this integration started the
     # receiver. PID files can be stale after a hub reboot, so this is followed
@@ -87,8 +91,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_name = "Media Player"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    # One native Media Player volume control from 0% to 100%, advertised to
-    # Home Assistant in 0.1% steps.
+    # Home Assistant exposes one fixed slider step. Use 0.1% so low-volume
+    # values are selectable everywhere the media player is shown; values above
+    # 4% are normalized to whole percentages by async_set_volume_level().
     _attr_volume_step = 0.001
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
@@ -128,6 +133,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._lock = asyncio.Lock()
         self._watch_task: asyncio.Task | None = None
         self._volume_restart_task: asyncio.Task | None = None
+        self._watchdog_restart_task: asyncio.Task | None = None
+        self._watchdog_stable_task: asyncio.Task | None = None
+        self._watchdog_restart_attempts = 0
         self._attr_device_info = {
             "identifiers": {(DOMAIN, client.host)},
             "name": entry.data.get("name", f"Aqara M1S {client.host}"),
@@ -205,6 +213,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "volume_level": self._attr_volume_level,
             "is_volume_muted": self._attr_is_volume_muted,
             "resume_after_reconnect": self._resume_after_reconnect,
+            "watchdog_restart_attempts": self._watchdog_restart_attempts,
         }
 
     def _schedule_cleanup(self) -> None:
@@ -217,6 +226,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if self._volume_restart_task:
             self._volume_restart_task.cancel()
             self._volume_restart_task = None
+        if self._watchdog_restart_task:
+            self._watchdog_restart_task.cancel()
+            self._watchdog_restart_task = None
+        if self._watchdog_stable_task:
+            self._watchdog_stable_task.cancel()
+            self._watchdog_stable_task = None
         async with self._lock:
             await self._stop_locked(update_state=False)
 
@@ -300,6 +315,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_media_stop(self) -> None:
         self._resume_after_reconnect = False
+        self._watchdog_restart_attempts = 0
+        if self._watchdog_restart_task:
+            self._watchdog_restart_task.cancel()
+            self._watchdog_restart_task = None
+        if self._watchdog_stable_task:
+            self._watchdog_stable_task.cancel()
+            self._watchdog_stable_task = None
         if self._resume_task:
             self._resume_task.cancel()
             self._resume_task = None
@@ -336,19 +358,23 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     @staticmethod
     def _normalize_volume(volume: float) -> float:
-        """Clamp and round the complete 0-100% range to 0.1% steps."""
+        """Use 0.1% steps through 4%, then whole 1% steps."""
         volume = max(0.0, min(1.0, volume))
-        return round(volume * 1000.0) / 1000.0
+        if volume <= 0.04:
+            return round(volume * 1000.0) / 1000.0
+        return round(volume * 100.0) / 100.0
 
     async def async_volume_up(self) -> None:
-        """Increase the native Media Player volume by 0.1%."""
+        """Increase by 0.1% at low volume and by 1% above 4%."""
         current = self._attr_volume_level or 0.0
-        await self.async_set_volume_level(current + 0.001)
+        step = 0.001 if current < 0.04 else 0.01
+        await self.async_set_volume_level(current + step)
 
     async def async_volume_down(self) -> None:
-        """Decrease the native Media Player volume by 0.1%."""
+        """Decrease by 0.1% through 4% and by 1% above it."""
         current = self._attr_volume_level or 0.0
-        await self.async_set_volume_level(current - 0.001)
+        step = 0.001 if current <= 0.04 else 0.01
+        await self.async_set_volume_level(current - step)
 
     def _handle_coordinator_update(self) -> None:
         """Resume the remembered media after a real hub reconnect."""
@@ -414,6 +440,17 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if not self._media_url:
             return
 
+        current_task = asyncio.current_task()
+        if (
+            self._watchdog_restart_task
+            and self._watchdog_restart_task is not current_task
+        ):
+            self._watchdog_restart_task.cancel()
+            self._watchdog_restart_task = None
+        if self._watchdog_stable_task:
+            self._watchdog_stable_task.cancel()
+            self._watchdog_stable_task = None
+
         await self._stop_local_ffmpeg()
         await self.hass.async_add_executor_job(
             self.client.run_command,
@@ -471,6 +508,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._watch_task = self.hass.async_create_task(
             self._watch_ffmpeg(self._ffmpeg)
         )
+        self._watchdog_stable_task = self.hass.async_create_task(
+            self._reset_watchdog_after_stable_playback(self._ffmpeg)
+        )
 
     async def _watch_ffmpeg(self, process: asyncio.subprocess.Process) -> None:
         stderr = b""
@@ -483,6 +523,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             return
 
         self._ffmpeg = None
+        if self._watchdog_stable_task:
+            self._watchdog_stable_task.cancel()
+            self._watchdog_stable_task = None
         if process.returncode not in (0, -15):
             _LOGGER.warning(
                 "Aqara M1S radio FFmpeg exited with code %s: %s",
@@ -491,6 +534,80 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             )
         self._attr_state = MediaPlayerState.IDLE
         self.async_write_ha_state()
+
+        # An explicit Stop/Turn off clears _resume_after_reconnect before it
+        # terminates FFmpeg. Reaching this point with playback still desired
+        # therefore means that this individual player's stream died without
+        # a user stop command. Restart only this player, using its own stored
+        # media source and retry counter.
+        if (
+            self._resume_after_reconnect
+            and self._resume_media_id
+            and self.coordinator.last_update_success
+        ):
+            self._schedule_watchdog_restart()
+
+    def _schedule_watchdog_restart(self) -> None:
+        if self._watchdog_restart_attempts >= WATCHDOG_MAX_RESTARTS:
+            _LOGGER.error(
+                "Aqara media watchdog stopped after %s retries for %s",
+                WATCHDOG_MAX_RESTARTS,
+                self.entity_id,
+            )
+            return
+        if self._watchdog_restart_task and not self._watchdog_restart_task.done():
+            return
+        self._watchdog_restart_task = self.hass.async_create_task(
+            self._async_watchdog_restart()
+        )
+
+    async def _async_watchdog_restart(self) -> None:
+        try:
+            await asyncio.sleep(WATCHDOG_RESTART_DELAY)
+            if (
+                not self._resume_after_reconnect
+                or not self._resume_media_id
+                or not self.coordinator.last_update_success
+                or self._attr_state == MediaPlayerState.PLAYING
+            ):
+                return
+            self._watchdog_restart_attempts += 1
+            _LOGGER.warning(
+                "Aqara media watchdog restarting %s (%s/%s)",
+                self.entity_id,
+                self._watchdog_restart_attempts,
+                WATCHDOG_MAX_RESTARTS,
+            )
+            await self.async_media_play()
+        except asyncio.CancelledError:
+            return
+        except Exception as err:
+            _LOGGER.warning(
+                "Aqara media watchdog restart failed for %s: %s",
+                self.entity_id,
+                err,
+            )
+            if self._resume_after_reconnect:
+                self._watchdog_restart_task = None
+                self._schedule_watchdog_restart()
+                return
+        finally:
+            if self._watchdog_restart_task is asyncio.current_task():
+                self._watchdog_restart_task = None
+
+    async def _reset_watchdog_after_stable_playback(
+        self, process: asyncio.subprocess.Process
+    ) -> None:
+        try:
+            await asyncio.sleep(WATCHDOG_STABLE_SECONDS)
+            if self._ffmpeg is process and process.returncode is None:
+                self._watchdog_restart_attempts = 0
+                self.async_write_ha_state()
+        except asyncio.CancelledError:
+            return
+        finally:
+            if self._watchdog_stable_task is asyncio.current_task():
+                self._watchdog_stable_task = None
 
     async def _stop_local_ffmpeg(self) -> None:
         process = self._ffmpeg
