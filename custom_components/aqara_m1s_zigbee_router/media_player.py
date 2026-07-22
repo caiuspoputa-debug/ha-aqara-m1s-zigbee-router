@@ -87,9 +87,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_name = "Media Player"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    # Home Assistant exposes one fixed slider step. Use 0.1% so low-volume
-    # values are selectable everywhere the media player is shown; values above
-    # 4% are normalized to whole percentages by async_set_volume_level().
+    # One native Media Player volume control from 0% to 100%, advertised to
+    # Home Assistant in 0.1% steps.
     _attr_volume_step = 0.001
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
@@ -337,23 +336,19 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     @staticmethod
     def _normalize_volume(volume: float) -> float:
-        """Use 0.1% steps through 4%, then whole 1% steps."""
+        """Clamp and round the complete 0-100% range to 0.1% steps."""
         volume = max(0.0, min(1.0, volume))
-        if volume <= 0.04:
-            return round(volume * 1000.0) / 1000.0
-        return round(volume * 100.0) / 100.0
+        return round(volume * 1000.0) / 1000.0
 
     async def async_volume_up(self) -> None:
-        """Increase by 0.1% at low volume and by 1% above 4%."""
+        """Increase the native Media Player volume by 0.1%."""
         current = self._attr_volume_level or 0.0
-        step = 0.001 if current < 0.04 else 0.01
-        await self.async_set_volume_level(current + step)
+        await self.async_set_volume_level(current + 0.001)
 
     async def async_volume_down(self) -> None:
-        """Decrease by 0.1% through 4% and by 1% above it."""
+        """Decrease the native Media Player volume by 0.1%."""
         current = self._attr_volume_level or 0.0
-        step = 0.001 if current <= 0.04 else 0.01
-        await self.async_set_volume_level(current - step)
+        await self.async_set_volume_level(current - 0.001)
 
     def _handle_coordinator_update(self) -> None:
         """Resume the remembered media after a real hub reconnect."""
