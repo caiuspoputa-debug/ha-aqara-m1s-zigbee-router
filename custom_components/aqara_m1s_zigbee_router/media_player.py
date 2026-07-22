@@ -87,9 +87,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_name = "Media Player"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    # Native media-player slider: normal adjustment in 1% steps.
-    # A separate Number entity provides fine 0.1% adjustment from 0% to 4%.
-    _attr_volume_step = 0.01
+    # Home Assistant exposes one fixed slider step. Use 0.1% so low-volume
+    # values are selectable everywhere the media player is shown; values above
+    # 4% are normalized to whole percentages by async_set_volume_level().
+    _attr_volume_step = 0.001
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
@@ -121,6 +122,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._media_url: str | None = None
         self._resume_media_id: str | None = None
         self._resume_media_type: str = MediaType.MUSIC
+        self._resume_after_reconnect = False
+        self._last_online_generation = 0
+        self._resume_task: asyncio.Task | None = None
         self._ffmpeg: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._watch_task: asyncio.Task | None = None
@@ -164,6 +168,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._attr_media_title = (
                 attrs.get("last_media_title") or attrs.get("media_title")
             )
+            self._resume_after_reconnect = bool(
+                attrs.get("resume_after_reconnect", last_state.state == MediaPlayerState.PLAYING)
+            )
 
             # Direct URLs can be prepared immediately. Media-source IDs are
             # resolved freshly only when PLAY is pressed, because their resolved
@@ -177,9 +184,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     allow_relative_url=False,
                 )
 
-            # Never auto-start after a Home Assistant restart. The remembered
-            # media remains available and can be resumed explicitly with PLAY.
             self._attr_state = MediaPlayerState.IDLE
+
+        data = self.coordinator.data or {}
+        self._last_online_generation = int(data.get("online_generation", 0) or 0)
+        if self._resume_after_reconnect and self._resume_media_id:
+            self._schedule_resume(delay=2.0)
 
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)
@@ -195,12 +205,16 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "last_media_title": self._attr_media_title,
             "volume_level": self._attr_volume_level,
             "is_volume_muted": self._attr_is_volume_muted,
+            "resume_after_reconnect": self._resume_after_reconnect,
         }
 
     def _schedule_cleanup(self) -> None:
         self.hass.async_create_task(self.async_shutdown())
 
     async def async_shutdown(self) -> None:
+        if self._resume_task:
+            self._resume_task.cancel()
+            self._resume_task = None
         if self._volume_restart_task:
             self._volume_restart_task.cancel()
             self._volume_restart_task = None
@@ -255,10 +269,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._attr_media_content_id = original_media_id
             self._attr_media_content_type = self._resume_media_type
             self._attr_media_title = title or self._attr_media_title or "Radio stream"
+            self._resume_after_reconnect = True
             await self._start_locked()
 
     async def async_media_play(self) -> None:
-        """Resume the last media, including after a Home Assistant restart."""
+        """Resume the last remembered media."""
+        self._resume_after_reconnect = True
         if not self._resume_media_id and not self._media_url:
             return
 
@@ -284,6 +300,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             await self._start_locked()
 
     async def async_media_stop(self) -> None:
+        self._resume_after_reconnect = False
+        if self._resume_task:
+            self._resume_task.cancel()
+            self._resume_task = None
         async with self._lock:
             await self._stop_locked(update_state=True)
 
@@ -297,7 +317,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         current Telnet transport. FFmpeg therefore still has to be restarted,
         but only once after the slider stops moving instead of once per step.
         """
-        volume = max(0.0, min(1.0, float(volume)))
+        volume = self._normalize_volume(float(volume))
         self._attr_volume_level = volume
         self._attr_is_volume_muted = volume == 0.0
         self.async_write_ha_state()
@@ -313,6 +333,62 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._volume_restart_task = self.hass.async_create_task(
                 self._restart_after_volume_settle()
             )
+
+
+    @staticmethod
+    def _normalize_volume(volume: float) -> float:
+        """Use 0.1% steps through 4%, then whole 1% steps."""
+        volume = max(0.0, min(1.0, volume))
+        if volume <= 0.04:
+            return round(volume * 1000.0) / 1000.0
+        return round(volume * 100.0) / 100.0
+
+    async def async_volume_up(self) -> None:
+        """Increase by 0.1% at low volume and by 1% above 4%."""
+        current = self._attr_volume_level or 0.0
+        step = 0.001 if current < 0.04 else 0.01
+        await self.async_set_volume_level(current + step)
+
+    async def async_volume_down(self) -> None:
+        """Decrease by 0.1% through 4% and by 1% above it."""
+        current = self._attr_volume_level or 0.0
+        step = 0.001 if current <= 0.04 else 0.01
+        await self.async_set_volume_level(current - step)
+
+    def _handle_coordinator_update(self) -> None:
+        """Resume the remembered media after a real hub reconnect."""
+        data = self.coordinator.data or {}
+        generation = int(data.get("online_generation", 0) or 0)
+        if generation > self._last_online_generation:
+            self._last_online_generation = generation
+            if self._resume_after_reconnect and self._resume_media_id:
+                self._schedule_resume(delay=2.0)
+        super()._handle_coordinator_update()
+
+    def _schedule_resume(self, delay: float) -> None:
+        if self._resume_task and not self._resume_task.done():
+            return
+        self._resume_task = self.hass.async_create_task(
+            self._async_resume_after_delay(delay)
+        )
+
+    async def _async_resume_after_delay(self, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            if (
+                self._resume_after_reconnect
+                and self._resume_media_id
+                and self.coordinator.last_update_success
+                and self._attr_state != MediaPlayerState.PLAYING
+            ):
+                await self.async_media_play()
+        except asyncio.CancelledError:
+            return
+        except Exception as err:
+            _LOGGER.warning("Could not automatically resume Aqara media: %s", err)
+        finally:
+            if self._resume_task is asyncio.current_task():
+                self._resume_task = None
 
     async def _restart_after_volume_settle(self) -> None:
         """Apply the final slider value after a short quiet period."""
