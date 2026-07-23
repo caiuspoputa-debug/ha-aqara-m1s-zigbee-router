@@ -236,12 +236,7 @@ async def async_unload_entry(
         return False
 
     hass.data[DOMAIN][DATA_COORDINATORS].pop(entry.entry_id, None)
-    radio_player = hass.data[DOMAIN][DATA_RADIO_PLAYERS].pop(
-        entry.entry_id,
-        None,
-    )
-    if radio_player:
-        await radio_player.async_shutdown()
+    hass.data[DOMAIN][DATA_RADIO_PLAYERS].pop(entry.entry_id, None)
 
     sound_player = hass.data[DOMAIN][DATA_SOUND_PLAYERS].pop(
         entry.entry_id,

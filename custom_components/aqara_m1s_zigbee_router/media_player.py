@@ -140,6 +140,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._watchdog_restart_attempts = 0
         self._ffmpeg_started_monotonic: float | None = None
         self._ffmpeg_session = 0
+        self._shutting_down = False
         self._attr_device_info = {
             "identifiers": {(DOMAIN, client.host)},
             "name": entry.data.get("name", f"Aqara M1S {client.host}"),
@@ -205,7 +206,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)
         )
-        self.async_on_remove(self._schedule_cleanup)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -220,24 +220,43 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "watchdog_restart_attempts": self._watchdog_restart_attempts,
         }
 
-    def _schedule_cleanup(self) -> None:
-        self.hass.async_create_task(self.async_shutdown())
+    async def async_will_remove_from_hass(self) -> None:
+        """Stop background work cleanly before the entity is removed."""
+        await self.async_shutdown()
+        await super().async_will_remove_from_hass()
+
+    async def _cancel_task(self, task: asyncio.Task | None) -> None:
+        """Cancel and await a task so it cannot leak into HA shutdown/startup."""
+        if task is None or task is asyncio.current_task():
+            return
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
     async def async_shutdown(self) -> None:
-        if self._resume_task:
-            self._resume_task.cancel()
-            self._resume_task = None
-        if self._volume_restart_task:
-            self._volume_restart_task.cancel()
-            self._volume_restart_task = None
-        if self._watchdog_restart_task:
-            self._watchdog_restart_task.cancel()
-            self._watchdog_restart_task = None
-        if self._watchdog_stable_task:
-            self._watchdog_stable_task.cancel()
-            self._watchdog_stable_task = None
+        """Stop FFmpeg and every watchdog task without clearing resume intent."""
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+
+        tasks = [
+            self._resume_task,
+            self._volume_restart_task,
+            self._watchdog_restart_task,
+            self._watchdog_stable_task,
+        ]
+        self._resume_task = None
+        self._volume_restart_task = None
+        self._watchdog_restart_task = None
+        self._watchdog_stable_task = None
+        for task in tasks:
+            await self._cancel_task(task)
+
         async with self._lock:
-            await self._stop_locked(update_state=False, reason="integration_unload")
+            await self._stop_locked(
+                update_state=False, reason="integration_shutdown"
+            )
 
     async def async_browse_media(
         self,
@@ -292,6 +311,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_media_play(self) -> None:
         """Resume the last remembered media."""
+        if self._shutting_down:
+            return
         self._resume_after_reconnect = True
         if not self._resume_media_id and not self._media_url:
             return
@@ -487,7 +508,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             )
 
     async def _start_locked(self) -> None:
-        if not self._media_url:
+        if self._shutting_down or not self._media_url:
             return
 
         current_task = asyncio.current_task()
@@ -569,11 +590,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         )
         self._attr_state = MediaPlayerState.PLAYING
         self.async_write_ha_state()
-        self._watch_task = self.hass.async_create_task(
-            self._watch_ffmpeg(self._ffmpeg)
+        self._watch_task = self.hass.async_create_background_task(
+            self._watch_ffmpeg(self._ffmpeg),
+            f"aqara_m1s_ffmpeg_watch_{self.entry.entry_id}",
         )
-        self._watchdog_stable_task = self.hass.async_create_task(
-            self._reset_watchdog_after_stable_playback(self._ffmpeg)
+        self._watchdog_stable_task = self.hass.async_create_background_task(
+            self._reset_watchdog_after_stable_playback(self._ffmpeg),
+            f"aqara_m1s_stable_watch_{self.entry.entry_id}",
         )
 
     async def _watch_ffmpeg(self, process: asyncio.subprocess.Process) -> None:
@@ -582,51 +605,60 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         started = self._ffmpeg_started_monotonic
         try:
             _, stderr = await process.communicate()
-        except asyncio.CancelledError:
-            return
 
-        if self._ffmpeg is not process:
-            return
+            if self._ffmpeg is not process or self._shutting_down:
+                return
 
-        runtime = max(0.0, time.monotonic() - started) if started else 0.0
-        stderr_text = stderr.decode(errors="replace")[-4000:].strip()
-        self._ffmpeg = None
-        self._ffmpeg_started_monotonic = None
-        if self._watchdog_stable_task:
-            self._watchdog_stable_task.cancel()
+            runtime = max(0.0, time.monotonic() - started) if started else 0.0
+            stderr_text = stderr.decode(errors="replace")[-4000:].strip()
+            self._ffmpeg = None
+            self._ffmpeg_started_monotonic = None
+            stable_task = self._watchdog_stable_task
             self._watchdog_stable_task = None
+            await self._cancel_task(stable_task)
 
-        _LOGGER.warning(
-            "Aqara media FFmpeg ended unexpectedly entity=%s session=%s pid=%s "
-            "host=%s returncode=%s runtime=%.1fs playback_requested=%s "
-            "source=%s stderr=%r",
-            self.entity_id,
-            session,
-            process.pid,
-            self.client.host,
-            process.returncode,
-            runtime,
-            self._resume_after_reconnect,
-            self._safe_media_for_log(self._media_url),
-            stderr_text,
-        )
-        self._attr_state = MediaPlayerState.IDLE
-        self.async_write_ha_state()
+            _LOGGER.warning(
+                "Aqara media FFmpeg ended unexpectedly entity=%s session=%s pid=%s "
+                "host=%s returncode=%s runtime=%.1fs playback_requested=%s "
+                "source=%s stderr=%r",
+                self.entity_id,
+                session,
+                process.pid,
+                self.client.host,
+                process.returncode,
+                runtime,
+                self._resume_after_reconnect,
+                self._safe_media_for_log(self._media_url),
+                stderr_text,
+            )
+            self._attr_state = MediaPlayerState.IDLE
+            self.async_write_ha_state()
 
-        await self._log_remote_audio_snapshot(session)
+            await self._log_remote_audio_snapshot(session)
 
-        # An explicit Stop/Turn off clears _resume_after_reconnect before it
-        # terminates FFmpeg. Reaching this point with playback still desired
-        # therefore means that this individual player's stream died without
-        # a user stop command.
-        if (
-            self._resume_after_reconnect
-            and self._resume_media_id
-            and self.coordinator.last_update_success
-        ):
-            self._schedule_watchdog_restart()
+            if (
+                not self._shutting_down
+                and self._resume_after_reconnect
+                and self._resume_media_id
+                and self.coordinator.last_update_success
+            ):
+                self._schedule_watchdog_restart()
+        except asyncio.CancelledError:
+            _LOGGER.debug(
+                "Aqara media FFmpeg watcher cancelled intentionally "
+                "entity=%s session=%s pid=%s",
+                self.entity_id,
+                session,
+                process.pid,
+            )
+            raise
+        finally:
+            if self._watch_task is asyncio.current_task():
+                self._watch_task = None
 
     def _schedule_watchdog_restart(self) -> None:
+        if self._shutting_down:
+            return
         if self._watchdog_restart_attempts >= WATCHDOG_MAX_RESTARTS:
             _LOGGER.error(
                 "Aqara media watchdog stopped after %s retries for %s",
@@ -636,8 +668,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             return
         if self._watchdog_restart_task and not self._watchdog_restart_task.done():
             return
-        self._watchdog_restart_task = self.hass.async_create_task(
-            self._async_watchdog_restart()
+        self._watchdog_restart_task = self.hass.async_create_background_task(
+            self._async_watchdog_restart(),
+            f"aqara_m1s_restart_watch_{self.entry.entry_id}",
         )
 
     async def _async_watchdog_restart(self) -> None:
@@ -694,9 +727,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         started = self._ffmpeg_started_monotonic
         self._ffmpeg = None
         self._ffmpeg_started_monotonic = None
-        if self._watch_task:
-            self._watch_task.cancel()
-            self._watch_task = None
+        watch_task = self._watch_task
+        self._watch_task = None
+        await self._cancel_task(watch_task)
         if process is None:
             return
         runtime = max(0.0, time.monotonic() - started) if started else 0.0
