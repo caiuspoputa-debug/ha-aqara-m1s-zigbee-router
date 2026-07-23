@@ -407,6 +407,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         generation = int(data.get("online_generation", 0) or 0)
         if generation > self._last_online_generation:
             self._last_online_generation = generation
+            # A genuine offline/online cycle starts a fresh recovery window.
+            # Fast watchdog retries may have been exhausted while the hub was
+            # unreachable; reconnect must still resume the remembered stream.
+            self._watchdog_restart_attempts = 0
             if self._resume_after_reconnect and self._resume_media_id:
                 self._schedule_resume(delay=2.0)
         super()._handle_coordinator_update()
@@ -660,8 +664,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if self._shutting_down:
             return
         if self._watchdog_restart_attempts >= WATCHDOG_MAX_RESTARTS:
-            _LOGGER.error(
-                "Aqara media watchdog stopped after %s retries for %s",
+            _LOGGER.warning(
+                "Aqara media watchdog exhausted %s fast retries for %s; "
+                "waiting for the hub coordinator to report an online reconnect",
                 WATCHDOG_MAX_RESTARTS,
                 self.entity_id,
             )

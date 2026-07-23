@@ -206,7 +206,11 @@ class AqaraM1SRadioFineVolume(
         )
 
     def _handle_radio_volume_update(self) -> None:
-        self.async_write_ha_state()
+        """Refresh the fine-volume entity from any dispatcher thread."""
+        # Dispatcher callbacks are not guaranteed to run in Home Assistant's
+        # event-loop thread. schedule_update_ha_state() is the thread-safe API;
+        # calling async_write_ha_state() here is rejected by recent HA versions.
+        self.schedule_update_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
         """Set actual radio volume between 0% and 4%."""
