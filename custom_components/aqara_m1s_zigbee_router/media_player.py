@@ -45,6 +45,7 @@ REMOTE_APLAY_PID = "/tmp/aqara_m1s_radio_aplay.pid"
 WATCHDOG_RESTART_DELAY = 5.0
 WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_STABLE_SECONDS = 30.0
+WATCHDOG_SLOW_RETRY_DELAY = 60.0
 
 REMOTE_STOP_COMMAND = (
     # First stop the exact PIDs recorded when this integration started the
@@ -137,9 +138,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._volume_restart_task: asyncio.Task | None = None
         self._watchdog_restart_task: asyncio.Task | None = None
         self._watchdog_stable_task: asyncio.Task | None = None
+        self._watchdog_slow_retry_task: asyncio.Task | None = None
         self._watchdog_restart_attempts = 0
         self._ffmpeg_started_monotonic: float | None = None
         self._ffmpeg_session = 0
+        self._last_failure_kind: str | None = None
+        self._last_failure_detail: str | None = None
+        self._recovery_pending = False
         self._shutting_down = False
         self._attr_device_info = {
             "identifiers": {(DOMAIN, client.host)},
@@ -218,6 +223,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "is_volume_muted": self._attr_is_volume_muted,
             "resume_after_reconnect": self._resume_after_reconnect,
             "watchdog_restart_attempts": self._watchdog_restart_attempts,
+            "last_failure_kind": self._last_failure_kind,
+            "last_failure_detail": self._last_failure_detail,
         }
 
     async def async_will_remove_from_hass(self) -> None:
@@ -245,11 +252,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._volume_restart_task,
             self._watchdog_restart_task,
             self._watchdog_stable_task,
+            self._watchdog_slow_retry_task,
         ]
         self._resume_task = None
         self._volume_restart_task = None
         self._watchdog_restart_task = None
         self._watchdog_stable_task = None
+        self._watchdog_slow_retry_task = None
         for task in tasks:
             await self._cancel_task(task)
 
@@ -347,6 +356,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if self._watchdog_stable_task:
             self._watchdog_stable_task.cancel()
             self._watchdog_stable_task = None
+        if self._watchdog_slow_retry_task:
+            self._watchdog_slow_retry_task.cancel()
+            self._watchdog_slow_retry_task = None
         if self._resume_task:
             self._resume_task.cancel()
             self._resume_task = None
@@ -411,7 +423,16 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             # Fast watchdog retries may have been exhausted while the hub was
             # unreachable; reconnect must still resume the remembered stream.
             self._watchdog_restart_attempts = 0
+            if self._watchdog_slow_retry_task:
+                self._watchdog_slow_retry_task.cancel()
+                self._watchdog_slow_retry_task = None
             if self._resume_after_reconnect and self._resume_media_id:
+                _LOGGER.info(
+                    "Aqara media hub reconnected; scheduling remembered media resume "
+                    "entity=%s host=%s",
+                    self.entity_id,
+                    self.client.host,
+                )
                 self._schedule_resume(delay=2.0)
         super()._handle_coordinator_update()
 
@@ -432,6 +453,19 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 and self._attr_state != MediaPlayerState.PLAYING
             ):
                 await self.async_media_play()
+            # Very short source failures can finish while this retry task is
+            # still active. Give the watcher a moment to classify the exit,
+            # then explicitly queue the next attempt after releasing this task.
+            await asyncio.sleep(0.5)
+            if (
+                self._resume_after_reconnect
+                and self._attr_state != MediaPlayerState.PLAYING
+                and self.coordinator.last_update_success
+            ):
+                next_kind = self._last_failure_kind or failure_kind
+                self._watchdog_restart_task = None
+                self._schedule_watchdog_restart(next_kind)
+                return
         except asyncio.CancelledError:
             return
         except Exception as err:
@@ -479,6 +513,38 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         except Exception:
             return "<unparseable>"
 
+    @staticmethod
+    def _classify_ffmpeg_failure(stderr_text: str, runtime: float) -> tuple[str, str]:
+        """Classify an FFmpeg exit so recovery targets the real failure domain."""
+        text = stderr_text.lower()
+        source_patterns = (
+            "error opening input",
+            "error opening input file",
+            "connection refused",
+            "server returned 4",
+            "server returned 5",
+            "http error",
+            "failed to resolve hostname",
+            "temporary failure in name resolution",
+            "name or service not known",
+            "input/output error",
+            "invalid data found when processing input",
+            "end of file",
+            "connection timed out",
+        )
+        output_patterns = (
+            "broken pipe",
+            "error muxing a packet",
+            "error writing trailer",
+            "error closing file",
+            "connection reset by peer",
+        )
+        if runtime <= 10.0 and any(pattern in text for pattern in source_patterns):
+            return "source_unavailable", "FFmpeg could not open or keep the media source"
+        if any(pattern in text for pattern in output_patterns):
+            return "hub_audio", "The hub-side TCP/audio receiver closed the output"
+        return "unknown", "FFmpeg exited for an unclassified reason"
+
     async def _log_remote_audio_snapshot(self, session: int) -> None:
         """Capture a small hub-side snapshot after an unexpected FFmpeg exit."""
         command = (
@@ -525,6 +591,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if self._watchdog_stable_task:
             self._watchdog_stable_task.cancel()
             self._watchdog_stable_task = None
+        if self._watchdog_slow_retry_task:
+            self._watchdog_slow_retry_task.cancel()
+            self._watchdog_slow_retry_task = None
 
         await self._stop_local_ffmpeg("replace_before_start")
         await self.hass.async_add_executor_job(
@@ -621,10 +690,21 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._watchdog_stable_task = None
             await self._cancel_task(stable_task)
 
+            if not self.coordinator.last_update_success:
+                failure_kind = "hub_offline"
+                failure_detail = "The coordinator reports the hub offline"
+            else:
+                failure_kind, failure_detail = self._classify_ffmpeg_failure(
+                    stderr_text, runtime
+                )
+            self._last_failure_kind = failure_kind
+            self._last_failure_detail = failure_detail
+            self._recovery_pending = True
+
             _LOGGER.warning(
                 "Aqara media FFmpeg ended unexpectedly entity=%s session=%s pid=%s "
                 "host=%s returncode=%s runtime=%.1fs playback_requested=%s "
-                "source=%s stderr=%r",
+                "failure_kind=%s source=%s stderr=%r",
                 self.entity_id,
                 session,
                 process.pid,
@@ -632,21 +712,39 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 process.returncode,
                 runtime,
                 self._resume_after_reconnect,
+                failure_kind,
                 self._safe_media_for_log(self._media_url),
                 stderr_text,
             )
             self._attr_state = MediaPlayerState.IDLE
             self.async_write_ha_state()
 
-            await self._log_remote_audio_snapshot(session)
+            if failure_kind in ("hub_audio", "unknown"):
+                await self._log_remote_audio_snapshot(session)
+            else:
+                _LOGGER.info(
+                    "Aqara media skipped hub snapshot entity=%s session=%s "
+                    "failure_kind=%s detail=%s",
+                    self.entity_id,
+                    session,
+                    failure_kind,
+                    failure_detail,
+                )
 
             if (
                 not self._shutting_down
                 and self._resume_after_reconnect
                 and self._resume_media_id
-                and self.coordinator.last_update_success
             ):
-                self._schedule_watchdog_restart()
+                if failure_kind == "hub_offline":
+                    _LOGGER.warning(
+                        "Aqara media recovery waiting for hub reconnect "
+                        "entity=%s host=%s",
+                        self.entity_id,
+                        self.client.host,
+                    )
+                else:
+                    self._schedule_watchdog_restart(failure_kind)
         except asyncio.CancelledError:
             _LOGGER.debug(
                 "Aqara media FFmpeg watcher cancelled intentionally "
@@ -660,57 +758,152 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             if self._watch_task is asyncio.current_task():
                 self._watch_task = None
 
-    def _schedule_watchdog_restart(self) -> None:
+    def _schedule_watchdog_restart(self, failure_kind: str | None = None) -> None:
         if self._shutting_down:
             return
+        failure_kind = failure_kind or self._last_failure_kind or "unknown"
         if self._watchdog_restart_attempts >= WATCHDOG_MAX_RESTARTS:
-            _LOGGER.warning(
-                "Aqara media watchdog exhausted %s fast retries for %s; "
-                "waiting for the hub coordinator to report an online reconnect",
-                WATCHDOG_MAX_RESTARTS,
-                self.entity_id,
-            )
+            if failure_kind == "hub_offline":
+                _LOGGER.warning(
+                    "Aqara media watchdog exhausted %s fast retries for %s; "
+                    "waiting for a real hub reconnect",
+                    WATCHDOG_MAX_RESTARTS,
+                    self.entity_id,
+                )
+                return
+            self._schedule_slow_retry(failure_kind)
             return
         if self._watchdog_restart_task and not self._watchdog_restart_task.done():
             return
         self._watchdog_restart_task = self.hass.async_create_background_task(
-            self._async_watchdog_restart(),
+            self._async_watchdog_restart(failure_kind),
             f"aqara_m1s_restart_watch_{self.entry.entry_id}",
         )
 
-    async def _async_watchdog_restart(self) -> None:
+    def _schedule_slow_retry(self, failure_kind: str) -> None:
+        if self._shutting_down or not self._resume_after_reconnect:
+            return
+        if self._watchdog_slow_retry_task and not self._watchdog_slow_retry_task.done():
+            return
+        _LOGGER.warning(
+            "Aqara media watchdog exhausted %s fast retries for %s; "
+            "scheduling slow retry in %.0fs failure_kind=%s",
+            WATCHDOG_MAX_RESTARTS,
+            self.entity_id,
+            WATCHDOG_SLOW_RETRY_DELAY,
+            failure_kind,
+        )
+        self._watchdog_slow_retry_task = self.hass.async_create_background_task(
+            self._async_watchdog_slow_retry(failure_kind),
+            f"aqara_m1s_slow_retry_{self.entry.entry_id}",
+        )
+
+    async def _async_watchdog_restart(self, failure_kind: str) -> None:
         try:
             await asyncio.sleep(WATCHDOG_RESTART_DELAY)
             if (
                 not self._resume_after_reconnect
                 or not self._resume_media_id
-                or not self.coordinator.last_update_success
                 or self._attr_state == MediaPlayerState.PLAYING
             ):
                 return
+            if not self.coordinator.last_update_success:
+                self._last_failure_kind = "hub_offline"
+                _LOGGER.warning(
+                    "Aqara media watchdog paused because hub is offline "
+                    "entity=%s host=%s",
+                    self.entity_id,
+                    self.client.host,
+                )
+                return
             self._watchdog_restart_attempts += 1
             _LOGGER.warning(
-                "Aqara media watchdog restarting %s (%s/%s)",
+                "Aqara media watchdog restarting %s (%s/%s) failure_kind=%s",
                 self.entity_id,
                 self._watchdog_restart_attempts,
                 WATCHDOG_MAX_RESTARTS,
+                failure_kind,
             )
             await self.async_media_play()
+            # Very short source failures can finish while this retry task is
+            # still active. Give the watcher a moment to classify the exit,
+            # then explicitly queue the next attempt after releasing this task.
+            await asyncio.sleep(0.5)
+            if (
+                self._resume_after_reconnect
+                and self._attr_state != MediaPlayerState.PLAYING
+                and self.coordinator.last_update_success
+            ):
+                next_kind = self._last_failure_kind or failure_kind
+                self._watchdog_restart_task = None
+                self._schedule_watchdog_restart(next_kind)
+                return
         except asyncio.CancelledError:
             return
         except Exception as err:
+            self._last_failure_kind = (
+                "source_unavailable" if failure_kind == "source_unavailable" else "unknown"
+            )
+            self._last_failure_detail = str(err)
             _LOGGER.warning(
-                "Aqara media watchdog restart failed for %s: %s",
+                "Aqara media watchdog restart failed for %s failure_kind=%s: %s",
                 self.entity_id,
+                self._last_failure_kind,
                 err,
             )
             if self._resume_after_reconnect:
                 self._watchdog_restart_task = None
-                self._schedule_watchdog_restart()
+                self._schedule_watchdog_restart(self._last_failure_kind)
                 return
         finally:
             if self._watchdog_restart_task is asyncio.current_task():
                 self._watchdog_restart_task = None
+
+    async def _async_watchdog_slow_retry(self, failure_kind: str) -> None:
+        try:
+            await asyncio.sleep(WATCHDOG_SLOW_RETRY_DELAY)
+            if (
+                not self._resume_after_reconnect
+                or not self._resume_media_id
+                or self._attr_state == MediaPlayerState.PLAYING
+            ):
+                return
+            if not self.coordinator.last_update_success:
+                self._last_failure_kind = "hub_offline"
+                _LOGGER.warning(
+                    "Aqara media slow retry deferred because hub is offline "
+                    "entity=%s host=%s",
+                    self.entity_id,
+                    self.client.host,
+                )
+                return
+            _LOGGER.warning(
+                "Aqara media watchdog slow retry entity=%s failure_kind=%s source=%s",
+                self.entity_id,
+                failure_kind,
+                self._safe_media_for_log(self._media_url),
+            )
+            # A new slow-retry cycle gets three fresh fast attempts if the
+            # source or hub receiver is still unavailable.
+            self._watchdog_restart_attempts = 0
+            await self.async_media_play()
+        except asyncio.CancelledError:
+            return
+        except Exception as err:
+            self._last_failure_detail = str(err)
+            _LOGGER.warning(
+                "Aqara media slow retry failed entity=%s failure_kind=%s: %s",
+                self.entity_id,
+                failure_kind,
+                err,
+            )
+            if self._resume_after_reconnect:
+                self._watchdog_slow_retry_task = None
+                self._schedule_slow_retry(failure_kind)
+                return
+        finally:
+            if self._watchdog_slow_retry_task is asyncio.current_task():
+                self._watchdog_slow_retry_task = None
 
     async def _reset_watchdog_after_stable_playback(
         self, process: asyncio.subprocess.Process
@@ -718,7 +911,27 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         try:
             await asyncio.sleep(WATCHDOG_STABLE_SECONDS)
             if self._ffmpeg is process and process.returncode is None:
+                previous_attempts = self._watchdog_restart_attempts
+                previous_kind = self._last_failure_kind
                 self._watchdog_restart_attempts = 0
+                if self._watchdog_slow_retry_task:
+                    self._watchdog_slow_retry_task.cancel()
+                    self._watchdog_slow_retry_task = None
+                if self._recovery_pending:
+                    _LOGGER.info(
+                        "Aqara media playback recovered and remained stable "
+                        "entity=%s session=%s host=%s previous_failure_kind=%s "
+                        "fast_attempts=%s source=%s",
+                        self.entity_id,
+                        self._ffmpeg_session,
+                        self.client.host,
+                        previous_kind or "unknown",
+                        previous_attempts,
+                        self._safe_media_for_log(self._media_url),
+                    )
+                self._recovery_pending = False
+                self._last_failure_kind = None
+                self._last_failure_detail = None
                 self.async_write_ha_state()
         except asyncio.CancelledError:
             return
