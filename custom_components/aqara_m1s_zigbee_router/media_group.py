@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import dataclass
 import logging
 import shutil
+import time
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
@@ -19,279 +22,827 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DATA_COORDINATORS, DATA_RADIO_PLAYERS, DOMAIN, MEDIA_GROUP_ID, media_group_signal
+from .const import media_group_signal, media_group_volume_signal
 
 _LOGGER = logging.getLogger(__name__)
 
-RADIO_PORT = 12346
-REMOTE_FIFO = "/tmp/aqara_m1s_radio_fifo"
-REMOTE_NC_PID = "/tmp/aqara_m1s_radio_nc.pid"
-REMOTE_APLAY_PID = "/tmp/aqara_m1s_radio_aplay.pid"
+GROUP_PORT = 12347
+GROUP_FIFO = "/tmp/aqara_m1s_group_fifo"
+GROUP_NC_PID = "/tmp/aqara_m1s_group_nc.pid"
+GROUP_APLAY_PID = "/tmp/aqara_m1s_group_aplay.pid"
+GROUP_OWNER = "/tmp/aqara_m1s_group_owner"
 
-REMOTE_STOP_COMMAND = (
-    f"for f in {REMOTE_NC_PID} {REMOTE_APLAY_PID}; do "
-    "[ -f \"$f\" ] && kill -9 \"$(cat \"$f\")\" 2>/dev/null; done; "
-    f"for p in $(ps w | grep \"[n]c -l -p {RADIO_PORT}\" | awk '{{print $1}}'); do "
-    "kill -9 \"$p\" 2>/dev/null; done; "
-    f"for p in $(ps w | grep \"[a]play .*{REMOTE_FIFO}\" | awk '{{print $1}}'); do "
-    "kill -9 \"$p\" 2>/dev/null; done; "
-    f"rm -f {REMOTE_NC_PID} {REMOTE_APLAY_PID} {REMOTE_FIFO}"
+PCM_RATE = 32000
+PCM_CHANNELS = 1
+PCM_SAMPLE_BYTES = 4
+CHUNK_SECONDS = 0.02
+CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
+SYNC_LEAD_SECONDS = 1.5
+SYNC_LEAD_CHUNKS = int(SYNC_LEAD_SECONDS / CHUNK_SECONDS)
+QUEUE_SECONDS = 1.0
+QUEUE_CHUNKS = int(QUEUE_SECONDS / CHUNK_SECONDS)
+RECONCILE_SECONDS = 3.0
+WRITER_DRAIN_TIMEOUT = 1.0
+WATCHDOG_RESTART_DELAY = 5.0
+WATCHDOG_MAX_RESTARTS = 3
+WATCHDOG_SLOW_RETRY_DELAY = 60.0
+WATCHDOG_STABLE_SECONDS = 30.0
+
+SILENCE_CHUNK = b"\x00" * CHUNK_BYTES
+
+GROUP_STOP_COMMAND = (
+    f"for f in {GROUP_NC_PID} {GROUP_APLAY_PID}; do "
+    '[ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; '
+    "done; "
+    f"for p in $(ps w | grep '[n]c -l -p {GROUP_PORT}' | awk '{{print $1}}'); do "
+    'kill -9 "$p" 2>/dev/null; done; '
+    f"for p in $(ps w | grep '[a]play .*{GROUP_FIFO}' | awk '{{print $1}}'); do "
+    'kill -9 "$p" 2>/dev/null; done; '
+    f"rm -f {GROUP_NC_PID} {GROUP_APLAY_PID} {GROUP_FIFO} {GROUP_OWNER}"
 )
 
-REMOTE_START_COMMAND = (
-    REMOTE_STOP_COMMAND
-    + f'; mkfifo {REMOTE_FIFO}; '
-    + f'nc -l -p {RADIO_PORT} </dev/null > {REMOTE_FIFO} '
-      '2>/tmp/aqara_m1s_radio_nc.log & '
-    + f'echo $! > {REMOTE_NC_PID}; '
-    + f'aplay -t raw -f S32_LE -c 1 -r 32000 {REMOTE_FIFO} </dev/null '
-      '>/tmp/aqara_m1s_radio_aplay.log 2>&1 & '
-    + f'echo $! > {REMOTE_APLAY_PID}'
+GROUP_START_COMMAND = (
+    GROUP_STOP_COMMAND
+    + f'; rm -f {GROUP_FIFO}; mkfifo {GROUP_FIFO}; '
+    + f'nc -l -p {GROUP_PORT} </dev/null > {GROUP_FIFO} '
+      '2>/tmp/aqara_m1s_group_nc.log & '
+    + f'echo $! > {GROUP_NC_PID}; '
+    + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} {GROUP_FIFO} </dev/null '
+      '>/tmp/aqara_m1s_group_aplay.log 2>&1 & '
+    + f'echo $! > {GROUP_APLAY_PID}; '
+    + f'echo group > {GROUP_OWNER}'
 )
+
+
+@dataclass
+class GroupMember:
+    entry_id: str
+    name: str
+    client: Any
+    coordinator: Any
+    selected: bool = True
+    state: str = "waiting"
+    writer: asyncio.StreamWriter | None = None
+    queue: asyncio.Queue[bytes | None] | None = None
+    writer_task: asyncio.Task | None = None
+    join_at_sequence: int | None = None
+    last_error: str | None = None
+    generation: int = 0
 
 
 class AqaraM1SMediaGroupManager:
-    """Dynamic membership plus one shared FFmpeg PCM broadcaster."""
+    """Own one FFmpeg timeline and fan the same timestamped PCM to many hubs."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self.selected: set[str] = set()
+        self.members: dict[str, GroupMember] = {}
+        self.individual_intent: set[str] = set()
         self.entity: AqaraM1SMediaGroup | None = None
-        self.writers: dict[str, asyncio.StreamWriter] = {}
+        self.media_entity_added = False
+        self.volume_entity_added = False
+
+        self.media_url: str | None = None
+        self.media_id: str | None = None
+        self.media_type: str = MediaType.MUSIC
+        self.media_title: str | None = None
+        self.volume = 0.05
+        self.muted = False
+        self.desired_playing = False
+
         self.ffmpeg: asyncio.subprocess.Process | None = None
         self.broadcast_task: asyncio.Task | None = None
         self.stderr_task: asyncio.Task | None = None
-        self.generation = 0
-        self.lock = asyncio.Lock()
-        self.media_url: str | None = None
-        self.volume = 0.05
-        self.muted = False
+        self.reconcile_task: asyncio.Task | None = None
+        self.watchdog_task: asyncio.Task | None = None
+        self.stable_task: asyncio.Task | None = None
+        self.slow_retry_task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+        self._generation = 0
+        self._sequence = 0
+        self._stream_started_monotonic: float | None = None
+        self._watchdog_attempts = 0
+        self._last_failure: str | None = None
+        self._shutting_down = False
+
+    def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
+        existing = self.members.get(entry_id)
+        selected = existing.selected if existing else True
+        self.members[entry_id] = GroupMember(
+            entry_id=entry_id,
+            name=name,
+            client=client,
+            coordinator=coordinator,
+            selected=selected,
+            state="waiting" if selected else "excluded",
+        )
+        self._signal_update()
+
+    async def unregister_member(self, entry_id: str) -> None:
+        member = self.members.get(entry_id)
+        await self._detach_member(
+            entry_id,
+            stop_remote=bool(member and member.writer is not None),
+            new_state="unloaded",
+        )
+        self.members.pop(entry_id, None)
+        self.individual_intent.discard(entry_id)
+        self._signal_update()
 
     def set_selected(self, entry_id: str, selected: bool) -> None:
-        if selected:
-            self.selected.add(entry_id)
+        member = self.members.get(entry_id)
+        if member is None:
+            return
+        member.selected = selected
+        if not selected:
+            member.state = "excluded"
+        elif entry_id in self.individual_intent:
+            member.state = "playing_individual"
         else:
-            self.selected.discard(entry_id)
+            member.state = "waiting_for_sync"
+        self._signal_update()
+        if self.desired_playing:
+            self._ensure_reconcile_task()
+
+    async def async_member_disabled(self, entry_id: str) -> None:
+        member = self.members.get(entry_id)
+        had_group_session = bool(member and member.writer is not None)
+        self.set_selected(entry_id, False)
+        await self._detach_member(
+            entry_id, stop_remote=had_group_session, new_state="excluded"
+        )
+
+    async def async_member_enabled(self, entry_id: str) -> None:
+        self.set_selected(entry_id, True)
+        if self.desired_playing:
+            self._ensure_reconcile_task()
+
+    async def async_claim_individual(self, entry_id: str) -> None:
+        """Give the individual player priority and remove only the group receiver."""
+        member = self.members.get(entry_id)
+        had_group_session = bool(
+            member
+            and (
+                member.writer is not None
+                or (self.desired_playing and member.state in ("playing_group", "waiting_for_sync"))
+            )
+        )
+        self.individual_intent.add(entry_id)
+        await self._detach_member(
+            entry_id,
+            stop_remote=had_group_session,
+            new_state="playing_individual",
+        )
+        self._signal_update()
+
+    def mark_individual_intent(self, entry_id: str, active: bool) -> None:
+        if active:
+            self.individual_intent.add(entry_id)
+            member = self.members.get(entry_id)
+            if member and member.writer is None:
+                member.state = "playing_individual"
+        else:
+            self.individual_intent.discard(entry_id)
+            member = self.members.get(entry_id)
+            if member and member.selected:
+                member.state = "waiting_for_sync"
+        self._signal_update()
+        if self.desired_playing:
+            self._ensure_reconcile_task()
+
+    async def async_release_individual(self, entry_id: str) -> None:
+        self.mark_individual_intent(entry_id, False)
+
+    def member_is_individual(self, entry_id: str) -> bool:
+        return entry_id in self.individual_intent
+
+    def _member_online(self, member: GroupMember) -> bool:
+        return bool(member.coordinator.last_update_success)
+
+    def _eligible(self, member: GroupMember) -> bool:
+        return (
+            member.selected
+            and member.entry_id not in self.individual_intent
+            and self._member_online(member)
+        )
+
+    def _signal_update(self) -> None:
         async_dispatcher_send(self.hass, media_group_signal())
 
-    def players(self) -> list[Any]:
-        players = self.hass.data.get(DOMAIN, {}).get(DATA_RADIO_PLAYERS, {})
-        return [players[eid] for eid in tuple(self.selected) if eid in players]
+    @property
+    def active_members(self) -> list[GroupMember]:
+        return [m for m in self.members.values() if m.writer is not None]
 
-    async def _run_remote(self, player: Any, command: str) -> None:
-        await self.hass.async_add_executor_job(player.client.run_command, command)
+    @property
+    def ffmpeg_running(self) -> bool:
+        return self.ffmpeg is not None and self.ffmpeg.returncode is None
 
-    async def _prepare_member(self, entry_id: str, player: Any) -> tuple[str, asyncio.StreamWriter] | None:
+    def group_state(self) -> MediaPlayerState:
+        if not self.desired_playing:
+            return MediaPlayerState.IDLE
+        if self.ffmpeg_running and self.active_members:
+            return MediaPlayerState.PLAYING
+        return MediaPlayerState.BUFFERING
+
+    def attributes(self) -> dict[str, Any]:
+        by_state: dict[str, list[str]] = {}
+        for member in self.members.values():
+            by_state.setdefault(member.state, []).append(member.name)
+        timestamp = None
+        if self._stream_started_monotonic is not None:
+            timestamp = round(self._sequence * CHUNK_SECONDS, 3)
+        return {
+            "transport": "single_ffmpeg_shared_pcm_timeline",
+            "stream_sequence": self._sequence,
+            "stream_timestamp_seconds": timestamp,
+            "sync_lead_seconds": SYNC_LEAD_SECONDS,
+            "selected_hubs": sorted(m.name for m in self.members.values() if m.selected),
+            "active_hubs": sorted(m.name for m in self.active_members),
+            "waiting_for_sync": sorted(by_state.get("waiting_for_sync", [])),
+            "join_at_timestamp_seconds": {
+                member.name: round(member.join_at_sequence * CHUNK_SECONDS, 3)
+                for member in self.members.values()
+                if member.join_at_sequence is not None
+            },
+            "offline_hubs": sorted(by_state.get("offline", [])),
+            "individual_hubs": sorted(by_state.get("playing_individual", [])),
+            "excluded_hubs": sorted(by_state.get("excluded", [])),
+            "last_failure": self._last_failure,
+            "watchdog_restart_attempts": self._watchdog_attempts,
+        }
+
+    async def async_start(
+        self,
+        media_url: str,
+        media_id: str,
+        media_type: str,
+        title: str | None,
+    ) -> None:
+        async with self._lock:
+            self.media_url = media_url
+            self.media_id = media_id
+            self.media_type = media_type or MediaType.MUSIC
+            self.media_title = title
+            self.desired_playing = True
+            self._watchdog_attempts = 0
+            await self._restart_stream_locked(reason="user_play")
+        self._ensure_reconcile_task()
+        self._signal_update()
+
+    async def async_resume(self) -> None:
+        if not self.media_url:
+            return
+        self.desired_playing = True
+        async with self._lock:
+            if not self.ffmpeg_running:
+                await self._restart_stream_locked(reason="resume")
+        self._ensure_reconcile_task()
+        self._signal_update()
+
+    async def async_stop(self, *, clear_intent: bool = True) -> None:
+        if clear_intent:
+            self.desired_playing = False
+        await self._cancel_background_recovery()
+        async with self._lock:
+            await self._stop_stream_locked(stop_members=True, reason="user_stop")
+        self._signal_update()
+
+    async def async_shutdown(self) -> None:
+        self._shutting_down = True
+        await self._cancel_background_recovery()
+        async with self._lock:
+            await self._stop_stream_locked(stop_members=True, reason="shutdown")
+
+    async def async_set_volume(self, volume: float) -> None:
+        self.volume = self.normalize_volume(volume)
+        async_dispatcher_send(self.hass, media_group_volume_signal())
+        if self.desired_playing and self.media_url:
+            async with self._lock:
+                await self._restart_stream_locked(reason="volume_change")
+        self._signal_update()
+
+    async def async_set_muted(self, muted: bool) -> None:
+        self.muted = bool(muted)
+        if self.desired_playing and self.media_url:
+            async with self._lock:
+                await self._restart_stream_locked(reason="mute_change")
+        self._signal_update()
+
+    @staticmethod
+    def normalize_volume(volume: float) -> float:
+        volume = max(0.0, min(1.0, float(volume)))
+        if volume <= 0.04:
+            return round(volume * 1000.0) / 1000.0
+        return round(volume * 100.0) / 100.0
+
+    async def _restart_stream_locked(self, reason: str) -> None:
+        await self._stop_stream_locked(stop_members=True, reason=reason)
+        if not self.desired_playing or not self.media_url:
+            return
+
+        eligible = [m for m in self.members.values() if self._eligible(m)]
+        if eligible:
+            await asyncio.gather(
+                *(self._prepare_member(member, initial=True) for member in eligible),
+                return_exceptions=True,
+            )
+
+        await self._start_ffmpeg_locked()
+
+    async def _start_ffmpeg_locked(self) -> None:
+        if not self.media_url or not self.desired_playing:
+            return
+        ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+        effective_volume = 0.0 if self.muted else self.volume
+        args = [
+            ffmpeg,
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-re",
+        ]
+        if urlsplit(self.media_url).scheme.lower() in ("http", "https"):
+            args.extend(
+                [
+                    "-reconnect",
+                    "1",
+                    "-reconnect_streamed",
+                    "1",
+                    "-reconnect_delay_max",
+                    "5",
+                ]
+            )
+        args.extend([
+            "-i",
+            self.media_url,
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            str(PCM_RATE),
+            "-filter:a",
+            f"volume={effective_volume:.4f}",
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "s32le",
+            "pipe:1",
+        ])
         try:
-            # Stop a possible individual stream first so port 12346 and aplay are free.
-            await player.async_media_stop()
-            await self._run_remote(player, REMOTE_START_COMMAND)
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as err:
+            self._last_failure = "ffmpeg_not_found"
+            raise RuntimeError("FFmpeg was not found") from err
+
+        self.ffmpeg = process
+        self._generation += 1
+        generation = self._generation
+        self._sequence = 0
+        self._stream_started_monotonic = time.monotonic()
+        for member in self.active_members:
+            member.join_at_sequence = SYNC_LEAD_CHUNKS
+            member.state = "waiting_for_sync"
+
+        self.broadcast_task = self.hass.async_create_background_task(
+            self._broadcast_loop(process, generation),
+            "aqara_m1s_group_pcm_broadcast",
+        )
+        self.stderr_task = self.hass.async_create_background_task(
+            self._stderr_loop(process, generation),
+            "aqara_m1s_group_ffmpeg_stderr",
+        )
+        self.stable_task = self.hass.async_create_background_task(
+            self._stable_watch(process, generation),
+            "aqara_m1s_group_stable_watch",
+        )
+        _LOGGER.info(
+            "M1S group FFmpeg started pid=%s source=%s members=%s",
+            process.pid,
+            self._safe_media_for_log(self.media_url),
+            [m.name for m in self.active_members],
+        )
+
+    async def _stop_stream_locked(self, *, stop_members: bool, reason: str) -> None:
+        self._generation += 1
+        current = asyncio.current_task()
+        for attr in ("broadcast_task", "stderr_task", "stable_task"):
+            task = getattr(self, attr)
+            setattr(self, attr, None)
+            if task and task is not current:
+                await self._cancel_task(task)
+
+        process = self.ffmpeg
+        self.ffmpeg = None
+        if process is not None and process.returncode is None:
+            process.terminate()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+        if stop_members:
+            await asyncio.gather(
+                *(
+                    self._detach_member(
+                        member.entry_id,
+                        stop_remote=member.writer is not None,
+                        new_state=self._idle_member_state(member),
+                    )
+                    for member in list(self.members.values())
+                ),
+                return_exceptions=True,
+            )
+        _LOGGER.info("M1S group stream stopped reason=%s", reason)
+
+    def _idle_member_state(self, member: GroupMember) -> str:
+        if not member.selected:
+            return "excluded"
+        if member.entry_id in self.individual_intent:
+            return "playing_individual"
+        if not self._member_online(member):
+            return "offline"
+        return "waiting_for_sync" if self.desired_playing else "idle"
+
+    async def _prepare_member(self, member: GroupMember, *, initial: bool) -> bool:
+        if not self._eligible(member) or member.writer is not None:
+            return False
+        member.generation += 1
+        generation = member.generation
+        try:
+            await self.hass.async_add_executor_job(
+                member.client.run_command, GROUP_START_COMMAND
+            )
+            writer: asyncio.StreamWriter | None = None
             last_error: Exception | None = None
-            for _ in range(8):
+            for _ in range(12):
                 try:
                     _, writer = await asyncio.wait_for(
-                        asyncio.open_connection(player.client.host, RADIO_PORT), timeout=1.5
+                        asyncio.open_connection(member.client.host, GROUP_PORT),
+                        timeout=1.0,
                     )
-                    sock = writer.get_extra_info("socket")
-                    if sock is not None:
-                        with suppress(OSError):
-                            sock.setsockopt(6, 1, 1)  # TCP_NODELAY
-                    return entry_id, writer
+                    break
                 except (OSError, asyncio.TimeoutError) as err:
                     last_error = err
                     await asyncio.sleep(0.15)
-            raise ConnectionError(f"receiver did not accept TCP: {last_error}")
-        except Exception as err:
-            _LOGGER.warning("Shared media skipped hub %s: %s", player.client.host, err)
-            return None
+            if writer is None:
+                raise ConnectionError(f"group receiver unavailable: {last_error}")
 
-    async def _close_writer(self, entry_id: str, *, stop_remote: bool = True) -> None:
-        writer = self.writers.pop(entry_id, None)
+            sock = writer.get_extra_info("socket")
+            if sock is not None:
+                with suppress(OSError):
+                    import socket
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+            member.writer = writer
+            member.queue = asyncio.Queue(maxsize=QUEUE_CHUNKS)
+            member.join_at_sequence = (
+                SYNC_LEAD_CHUNKS
+                if initial or self._sequence == 0
+                else self._sequence + SYNC_LEAD_CHUNKS
+            )
+            member.state = "waiting_for_sync"
+            member.last_error = None
+            member.writer_task = self.hass.async_create_background_task(
+                self._member_writer_loop(member, generation),
+                f"aqara_m1s_group_writer_{member.entry_id}",
+            )
+            _LOGGER.info(
+                "M1S group member prepared name=%s join_at_sequence=%s current=%s",
+                member.name,
+                member.join_at_sequence,
+                self._sequence,
+            )
+            self._signal_update()
+            return True
+        except Exception as err:
+            member.last_error = str(err)
+            member.state = "offline" if not self._member_online(member) else "waiting_for_sync"
+            _LOGGER.warning("M1S group skipped %s: %s", member.name, err)
+            with suppress(Exception):
+                await self.hass.async_add_executor_job(
+                    member.client.run_command, GROUP_STOP_COMMAND
+                )
+            self._signal_update()
+            return False
+
+    async def _member_writer_loop(self, member: GroupMember, generation: int) -> None:
+        queue = member.queue
+        writer = member.writer
+        if queue is None or writer is None:
+            return
+        try:
+            while member.generation == generation:
+                chunk = await queue.get()
+                if chunk is None:
+                    return
+                writer.write(chunk)
+                await asyncio.wait_for(writer.drain(), timeout=WRITER_DRAIN_TIMEOUT)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            member.last_error = str(err)
+            _LOGGER.warning("M1S group member writer failed %s: %s", member.name, err)
+        finally:
+            if member.generation == generation:
+                self.hass.async_create_task(
+                    self._detach_member(
+                        member.entry_id,
+                        stop_remote=True,
+                        new_state="offline" if not self._member_online(member) else "waiting_for_sync",
+                    )
+                )
+
+    async def _detach_member(
+        self, entry_id: str, *, stop_remote: bool, new_state: str
+    ) -> None:
+        member = self.members.get(entry_id)
+        if member is None:
+            return
+        member.generation += 1
+        task = member.writer_task
+        member.writer_task = None
+        queue = member.queue
+        member.queue = None
+        writer = member.writer
+        member.writer = None
+        member.join_at_sequence = None
+        if queue is not None:
+            with suppress(asyncio.QueueFull):
+                queue.put_nowait(None)
+        if task and task is not asyncio.current_task():
+            await self._cancel_task(task)
         if writer is not None:
             writer.close()
             with suppress(Exception):
                 await writer.wait_closed()
-        if stop_remote:
-            player = self.hass.data.get(DOMAIN, {}).get(DATA_RADIO_PLAYERS, {}).get(entry_id)
-            if player is not None:
-                with suppress(Exception):
-                    await self._run_remote(player, REMOTE_STOP_COMMAND)
-
-    async def stop(self, *, update_entity: bool = True) -> None:
-        async with self.lock:
-            self.generation += 1
-            current = asyncio.current_task()
-            for task_name in ("broadcast_task", "stderr_task"):
-                task = getattr(self, task_name)
-                setattr(self, task_name, None)
-                if task and task is not current and not task.done():
-                    task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
-            proc = self.ffmpeg
-            self.ffmpeg = None
-            if proc is not None and proc.returncode is None:
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=3)
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    await proc.wait()
-            entries = list(self.writers)
-            await asyncio.gather(
-                *(self._close_writer(eid, stop_remote=True) for eid in entries),
-                return_exceptions=True,
-            )
-            if update_entity and self.entity is not None:
-                self.entity._attr_state = MediaPlayerState.IDLE
-                self.entity.async_write_ha_state()
-
-    async def start(self, media_url: str, volume: float, muted: bool) -> int:
-        await self.stop(update_entity=False)
-        async with self.lock:
-            self.media_url = media_url
-            self.volume = volume
-            self.muted = muted
-            players = {p.entry.entry_id: p for p in self.players()}
-            if not players:
-                return 0
-
-            prepared = await asyncio.gather(
-                *(self._prepare_member(eid, player) for eid, player in players.items())
-            )
-            self.writers = {item[0]: item[1] for item in prepared if item is not None}
-            if not self.writers:
-                return 0
-
-            ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-            effective_volume = 0.0 if muted else volume
-            args = [
-                ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning",
-                "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
-                "-i", media_url, "-vn", "-ac", "1", "-ar", "32000",
-                "-filter:a", f"volume={effective_volume:.4f}",
-                "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1",
-            ]
-            try:
-                self.ffmpeg = await asyncio.create_subprocess_exec(
-                    *args,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+        if stop_remote and self._member_online(member):
+            with suppress(Exception):
+                await self.hass.async_add_executor_job(
+                    member.client.run_command, GROUP_STOP_COMMAND
                 )
-            except Exception:
-                entries = list(self.writers)
-                await asyncio.gather(*(self._close_writer(eid) for eid in entries), return_exceptions=True)
-                raise
+        member.state = new_state
+        self._signal_update()
 
-            self.generation += 1
-            generation = self.generation
-            self.broadcast_task = self.hass.async_create_background_task(
-                self._broadcast(generation), "aqara_m1s_shared_pcm_broadcast"
+    async def _remote_group_stop(self, member: GroupMember) -> None:
+        with suppress(Exception):
+            await self.hass.async_add_executor_job(
+                member.client.run_command, GROUP_STOP_COMMAND
             )
-            self.stderr_task = self.hass.async_create_background_task(
-                self._drain_stderr(generation), "aqara_m1s_shared_ffmpeg_stderr"
-            )
-            return len(self.writers)
 
-    async def _broadcast(self, generation: int) -> None:
-        proc = self.ffmpeg
-        if proc is None or proc.stdout is None:
+    async def _broadcast_loop(
+        self, process: asyncio.subprocess.Process, generation: int
+    ) -> None:
+        if process.stdout is None:
             return
+        buffer = bytearray()
         try:
-            while generation == self.generation:
-                chunk = await proc.stdout.read(32768)
-                if not chunk:
+            while generation == self._generation and self.desired_playing:
+                data = await process.stdout.read(32768)
+                if not data:
                     break
-                failed: list[str] = []
-                for entry_id, writer in tuple(self.writers.items()):
-                    try:
-                        writer.write(chunk)
-                    except (OSError, ConnectionError):
-                        failed.append(entry_id)
-                drain_results = await asyncio.gather(
-                    *(asyncio.wait_for(self.writers[eid].drain(), timeout=1.0)
-                      for eid in tuple(self.writers) if eid not in failed),
-                    return_exceptions=True,
-                )
-                for eid, result in zip(
-                    [eid for eid in tuple(self.writers) if eid not in failed], drain_results
-                ):
-                    if isinstance(result, Exception):
-                        failed.append(eid)
-                for eid in set(failed):
-                    player = self.hass.data.get(DOMAIN, {}).get(DATA_RADIO_PLAYERS, {}).get(eid)
-                    _LOGGER.warning(
-                        "Shared PCM removed slow/offline hub %s",
-                        player.client.host if player else eid,
-                    )
-                    await self._close_writer(eid)
-                if not self.writers:
-                    break
+                buffer.extend(data)
+                while len(buffer) >= CHUNK_BYTES:
+                    chunk = bytes(buffer[:CHUNK_BYTES])
+                    del buffer[:CHUNK_BYTES]
+                    sequence = self._sequence
+                    self._sequence += 1
+                    failed: list[str] = []
+                    for member in list(self.active_members):
+                        queue = member.queue
+                        if queue is None:
+                            continue
+                        outgoing = (
+                            SILENCE_CHUNK
+                            if member.join_at_sequence is not None
+                            and sequence < member.join_at_sequence
+                            else chunk
+                        )
+                        if (
+                            member.join_at_sequence is not None
+                            and sequence >= member.join_at_sequence
+                        ):
+                            member.join_at_sequence = None
+                            member.state = "playing_group"
+                            self._signal_update()
+                        try:
+                            queue.put_nowait(outgoing)
+                        except asyncio.QueueFull:
+                            failed.append(member.entry_id)
+                    for entry_id in failed:
+                        member = self.members.get(entry_id)
+                        if member:
+                            member.last_error = "PCM queue exceeded one second"
+                        await self._detach_member(
+                            entry_id,
+                            stop_remote=False,
+                            new_state="waiting_for_sync",
+                        )
+                        if member is not None and self._member_online(member):
+                            self.hass.async_create_background_task(
+                                self._remote_group_stop(member),
+                                f"aqara_m1s_group_cleanup_{entry_id}",
+                            )
         except asyncio.CancelledError:
             raise
         except Exception as err:
-            _LOGGER.warning("Shared PCM broadcaster failed: %s", err)
+            self._last_failure = str(err)
+            _LOGGER.warning("M1S group broadcaster failed: %s", err)
         finally:
-            if generation == self.generation and self.entity is not None:
-                self.entity._attr_state = MediaPlayerState.IDLE
-                self.entity.async_write_ha_state()
+            if generation == self._generation and self.desired_playing:
+                self._last_failure = self._last_failure or "ffmpeg_stream_ended"
+                self._schedule_watchdog_restart()
+                self._signal_update()
 
-    async def _drain_stderr(self, generation: int) -> None:
-        proc = self.ffmpeg
-        if proc is None or proc.stderr is None:
+    async def _stderr_loop(
+        self, process: asyncio.subprocess.Process, generation: int
+    ) -> None:
+        if process.stderr is None:
             return
+        lines: list[str] = []
         try:
-            while generation == self.generation:
-                line = await proc.stderr.readline()
+            while generation == self._generation:
+                line = await process.stderr.readline()
                 if not line:
+                    break
+                text = line.decode(errors="replace").strip()
+                if text:
+                    lines.append(text)
+                    lines = lines[-20:]
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if process.returncode not in (None, 0) and lines:
+                _LOGGER.warning("M1S group FFmpeg stderr: %s", " | ".join(lines))
+
+    def _ensure_reconcile_task(self) -> None:
+        if self._shutting_down:
+            return
+        if self.reconcile_task is None or self.reconcile_task.done():
+            self.reconcile_task = self.hass.async_create_background_task(
+                self._reconcile_loop(), "aqara_m1s_group_reconcile"
+            )
+
+    async def _reconcile_loop(self) -> None:
+        try:
+            while self.desired_playing and not self._shutting_down:
+                await asyncio.sleep(RECONCILE_SECONDS)
+                if not self.desired_playing:
                     return
-                _LOGGER.debug("Shared FFmpeg: %s", line.decode(errors="replace").strip())
+                if not self.ffmpeg_running and self.media_url:
+                    self._schedule_watchdog_restart()
+                    continue
+                for member in list(self.members.values()):
+                    if member.writer is not None:
+                        if not self._eligible(member):
+                            await self._detach_member(
+                                member.entry_id,
+                                stop_remote=True,
+                                new_state=self._idle_member_state(member),
+                            )
+                        continue
+                    if self._eligible(member) and self.ffmpeg_running:
+                        await self._prepare_member(member, initial=False)
+                    else:
+                        member.state = self._idle_member_state(member)
+                self._signal_update()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if self.reconcile_task is asyncio.current_task():
+                self.reconcile_task = None
+
+    def _schedule_watchdog_restart(self) -> None:
+        if self._shutting_down or not self.desired_playing or not self.media_url:
+            return
+        if self.watchdog_task and not self.watchdog_task.done():
+            return
+        if self._watchdog_attempts >= WATCHDOG_MAX_RESTARTS:
+            self._schedule_slow_retry()
+            return
+        self.watchdog_task = self.hass.async_create_background_task(
+            self._watchdog_restart(), "aqara_m1s_group_watchdog"
+        )
+
+    async def _watchdog_restart(self) -> None:
+        try:
+            await asyncio.sleep(WATCHDOG_RESTART_DELAY)
+            if not self.desired_playing or self.ffmpeg_running or not self.media_url:
+                return
+            self._watchdog_attempts += 1
+            _LOGGER.warning(
+                "M1S group watchdog restart %s/%s",
+                self._watchdog_attempts,
+                WATCHDOG_MAX_RESTARTS,
+            )
+            async with self._lock:
+                await self._restart_stream_locked(reason="watchdog")
+            self._ensure_reconcile_task()
+            await asyncio.sleep(0.5)
+            if self.desired_playing and not self.ffmpeg_running:
+                self.watchdog_task = None
+                self._schedule_watchdog_restart()
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._last_failure = str(err)
+            _LOGGER.warning("M1S group watchdog restart failed: %s", err)
+            self.watchdog_task = None
+            self._schedule_watchdog_restart()
+        finally:
+            if self.watchdog_task is asyncio.current_task():
+                self.watchdog_task = None
+
+    def _schedule_slow_retry(self) -> None:
+        if self.slow_retry_task and not self.slow_retry_task.done():
+            return
+        self.slow_retry_task = self.hass.async_create_background_task(
+            self._slow_retry(), "aqara_m1s_group_slow_retry"
+        )
+
+    async def _slow_retry(self) -> None:
+        try:
+            await asyncio.sleep(WATCHDOG_SLOW_RETRY_DELAY)
+            if not self.desired_playing or self.ffmpeg_running or not self.media_url:
+                return
+            self._watchdog_attempts = 0
+            async with self._lock:
+                await self._restart_stream_locked(reason="slow_retry")
+            self._ensure_reconcile_task()
+            await asyncio.sleep(0.5)
+            if self.desired_playing and not self.ffmpeg_running:
+                self.slow_retry_task = None
+                self._schedule_slow_retry()
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._last_failure = str(err)
+            self.slow_retry_task = None
+            self._schedule_slow_retry()
+        finally:
+            if self.slow_retry_task is asyncio.current_task():
+                self.slow_retry_task = None
+
+    async def _stable_watch(
+        self, process: asyncio.subprocess.Process, generation: int
+    ) -> None:
+        try:
+            await asyncio.sleep(WATCHDOG_STABLE_SECONDS)
+            if (
+                generation == self._generation
+                and self.ffmpeg is process
+                and process.returncode is None
+            ):
+                self._watchdog_attempts = 0
+                self._last_failure = None
+                if self.slow_retry_task:
+                    await self._cancel_task(self.slow_retry_task)
+                    self.slow_retry_task = None
+                self._signal_update()
         except asyncio.CancelledError:
             raise
 
-    async def add_live_member(self, entry_id: str) -> None:
-        """Add a member and resynchronise the whole playing group.
+    async def _cancel_background_recovery(self) -> None:
+        current = asyncio.current_task()
+        for attr in ("reconcile_task", "watchdog_task", "slow_retry_task"):
+            task = getattr(self, attr)
+            setattr(self, attr, None)
+            if task and task is not current:
+                await self._cancel_task(task)
 
-        Joining an already-running raw PCM stream creates a new FIFO/aplay buffer
-        at an arbitrary point in time.  That member can therefore be hundreds of
-        milliseconds or even seconds behind.  The only deterministic recovery is
-        to restart the shared source once all selected receivers are prepared.
-        """
-        self.set_selected(entry_id, True)
-        if self.entity is None or self.entity.state != MediaPlayerState.PLAYING:
+    @staticmethod
+    async def _cancel_task(task: asyncio.Task | None) -> None:
+        if task is None or task is asyncio.current_task():
             return
-        if not self.media_url:
-            return
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
-        media_url = self.media_url
-        volume = self.volume
-        muted = self.muted
-
-        active = await self.start(media_url, volume, muted)
-        if self.entity is not None:
-            self.entity._attr_state = (
-                MediaPlayerState.PLAYING if active else MediaPlayerState.IDLE
-            )
-            self.entity.async_write_ha_state()
-        async_dispatcher_send(self.hass, media_group_signal())
-
-    async def remove_member(self, entry_id: str) -> None:
-        self.set_selected(entry_id, False)
-        await self._close_writer(entry_id)
-        async_dispatcher_send(self.hass, media_group_signal())
-
-    async def async_member_enabled(self, entry_id: str) -> None:
-        await self.add_live_member(entry_id)
-
-    async def async_member_disabled(self, entry_id: str) -> None:
-        await self.remove_member(entry_id)
+    @staticmethod
+    def _safe_media_for_log(media_url: str | None) -> str:
+        if not media_url:
+            return "<none>"
+        try:
+            parts = urlsplit(media_url)
+            host = parts.hostname or ""
+            if parts.port:
+                host = f"{host}:{parts.port}"
+            return urlunsplit((parts.scheme, host, parts.path, "", ""))
+        except Exception:
+            return "<unparseable>"
 
 
 class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
-    """One player using one FFmpeg source and identical PCM for every hub."""
+    """Single group entity backed by one timestamped PCM timeline."""
 
     _attr_name = "M1S Media Group"
-    _attr_unique_id = MEDIA_GROUP_ID
+    _attr_unique_id = "aqara_m1s_media_group"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
     _attr_volume_step = 0.001
@@ -309,198 +860,172 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
     def __init__(self, hass: HomeAssistant, manager: AqaraM1SMediaGroupManager) -> None:
         self.hass = hass
         self.manager = manager
-        manager.entity = self
+        self.manager.entity = self
         self._attr_state = MediaPlayerState.IDLE
-        self._attr_volume_level = 0.05
-        self._attr_is_volume_muted = False
+        self._attr_volume_level = manager.volume
+        self._attr_is_volume_muted = manager.muted
         self._attr_media_content_type = MediaType.MUSIC
-        self._attr_media_title = None
-        self.last_media_id: str | None = None
-        self.last_media_type: str = MediaType.MUSIC
-        self._resolved_media_url: str | None = None
-        self._volume_restart_task: asyncio.Task | None = None
-        self._restore_playback_task: asyncio.Task | None = None
-        self._restore_playback_pending = False
+        self._resume_task: asyncio.Task | None = None
+
+    @property
+    def state(self) -> MediaPlayerState:
+        return self.manager.group_state()
+
+    @property
+    def volume_level(self) -> float:
+        return self.manager.volume
+
+    @property
+    def is_volume_muted(self) -> bool:
+        return self.manager.muted
+
+    @property
+    def media_content_id(self) -> str | None:
+        return self.manager.media_id
+
+    @property
+    def media_content_type(self) -> str:
+        return self.manager.media_type
+
+    @property
+    def media_title(self) -> str | None:
+        return self.manager.media_title
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            **self.manager.attributes(),
+            "last_media_id": self.manager.media_id,
+            "last_media_type": self.manager.media_type,
+            "last_media_title": self.manager.media_title,
+            "volume_level": self.manager.volume,
+            "is_volume_muted": self.manager.muted,
+            "resume_after_restart": self.manager.desired_playing,
+        }
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last = await self.async_get_last_state()
-        restore_playing = False
-        if last:
+        if last is not None:
             attrs = last.attributes
+            self.manager.media_id = attrs.get("last_media_id") or attrs.get("media_content_id")
+            self.manager.media_type = attrs.get("last_media_type") or MediaType.MUSIC
+            self.manager.media_title = attrs.get("last_media_title") or attrs.get("media_title")
             with suppress(TypeError, ValueError):
-                self._attr_volume_level = max(0.0, min(1.0, float(attrs.get("volume_level", 0.05))))
-            self._attr_is_volume_muted = bool(attrs.get("is_volume_muted", False))
-            self.last_media_id = attrs.get("last_media_id") or attrs.get("media_content_id")
-            self.last_media_type = attrs.get("last_media_type") or attrs.get("media_content_type") or MediaType.MUSIC
-            self._attr_media_content_id = self.last_media_id
-            self._attr_media_content_type = self.last_media_type
-            self._attr_media_title = attrs.get("last_media_title") or attrs.get("media_title")
-            restore_playing = (
-                last.state == MediaPlayerState.PLAYING
-                and bool(self.last_media_id)
+                self.manager.volume = self.manager.normalize_volume(
+                    float(attrs.get("volume_level", 0.05))
+                )
+            self.manager.muted = bool(attrs.get("is_volume_muted", False))
+            self.manager.desired_playing = bool(
+                attrs.get("resume_after_restart", last.state in (MediaPlayerState.PLAYING, MediaPlayerState.BUFFERING))
             )
-        self.async_on_remove(async_dispatcher_connect(self.hass, media_group_signal(), self._refresh))
-        if restore_playing:
-            self._restore_playback_pending = True
-            self._restore_playback_task = self.hass.async_create_background_task(
-                self._async_restore_playback(),
-                "aqara_m1s_media_group_restore_playback",
+            if self.manager.media_id and not media_source.is_media_source_id(self.manager.media_id):
+                self.manager.media_url = async_process_play_media_url(
+                    self.hass, self.manager.media_id, allow_relative_url=False
+                )
+            if self.manager.desired_playing and self.manager.media_id:
+                self._resume_task = self.hass.async_create_background_task(
+                    self._restore_after_startup(), "aqara_m1s_group_restore"
+                )
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, media_group_signal(), self._handle_group_update
             )
+        )
 
-    async def async_will_remove_from_hass(self) -> None:
-        for task in (self._volume_restart_task, self._restore_playback_task):
-            if task:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-        await self.manager.stop(update_entity=False)
-        await super().async_will_remove_from_hass()
+    def _handle_group_update(self) -> None:
+        self.schedule_update_ha_state()
 
-    async def _async_restore_playback(self) -> None:
-        """Resume the shared group after a Home Assistant restart.
-
-        Membership switches restore independently, so wait until their states and
-        hub players are available.  A missing hub never blocks the others.
-        """
+    async def _restore_after_startup(self) -> None:
         try:
-            # Allow all config entries, membership switches and hub coordinators
-            # to finish loading before the first attempt.
-            await asyncio.sleep(12)
-
-            for _ in range(12):
-                if not self._restore_playback_pending or not self.last_media_id:
-                    return
-                if self.manager.players():
-                    try:
-                        await self.async_play_media(
-                            self.last_media_type,
-                            self.last_media_id,
-                            extra={"title": self._attr_media_title},
-                        )
-                    except Exception as err:
-                        _LOGGER.warning(
-                            "Automatic M1S media-group resume failed; retrying: %s", err
-                        )
-                    else:
-                        if self._attr_state == MediaPlayerState.PLAYING:
-                            self._restore_playback_pending = False
-                            return
-                await asyncio.sleep(5)
-
-            _LOGGER.warning(
-                "Automatic M1S media-group resume gave up because no selected hub started"
-            )
+            await asyncio.sleep(15.0)
+            if not self.manager.desired_playing or not self.manager.media_id:
+                return
+            if media_source.is_media_source_id(self.manager.media_id):
+                resolved = await media_source.async_resolve_media(
+                    self.hass, self.manager.media_id, self.entity_id
+                )
+                self.manager.media_url = async_process_play_media_url(
+                    self.hass, resolved.url, allow_relative_url=False
+                )
+            if self.manager.media_url:
+                await self.manager.async_resume()
         except asyncio.CancelledError:
             raise
-        finally:
-            self._restore_playback_task = None
+        except Exception as err:
+            _LOGGER.warning("Could not restore M1S media group: %s", err)
+            self.manager._schedule_watchdog_restart()
 
-    def _refresh(self) -> None:
-        self.async_write_ha_state()
+    async def async_will_remove_from_hass(self) -> None:
+        if self._resume_task:
+            await self.manager._cancel_task(self._resume_task)
+            self._resume_task = None
+        self.manager.media_entity_added = False
+        if self.manager.entity is self:
+            self.manager.entity = None
+        await super().async_will_remove_from_hass()
 
-    @property
-    def available(self) -> bool:
-        return bool(self.manager.players())
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        players = self.hass.data.get(DOMAIN, {}).get(DATA_RADIO_PLAYERS, {})
-        coordinators = self.hass.data.get(DOMAIN, {}).get(DATA_COORDINATORS, {})
-        selected = [players[eid].client.host for eid in sorted(self.manager.selected) if eid in players]
-        active = [players[eid].client.host for eid in self.manager.writers if eid in players]
-        offline = [
-            players[eid].client.host for eid in sorted(self.manager.selected)
-            if eid in players and (eid not in coordinators or not coordinators[eid].last_update_success)
-        ]
-        return {
-            "transport": "single_ffmpeg_shared_pcm",
-            "selected_hubs": selected,
-            "active_hubs": active,
-            "offline_hubs": offline,
-            "last_media_id": self.last_media_id,
-            "last_media_type": self.last_media_type,
-            "last_media_title": self._attr_media_title,
-            "auto_resume_pending": self._restore_playback_pending,
-        }
-
-    async def async_browse_media(self, media_content_type=None, media_content_id=None):
+    async def async_browse_media(
+        self, media_content_type: str | None = None, media_content_id: str | None = None
+    ):
         return await media_source.async_browse_media(
-            self.hass, media_content_id,
+            self.hass,
+            media_content_id,
             content_filter=lambda item: item.media_content_type.startswith("audio/"),
         )
 
-    async def _resolve(self, media_id: str) -> str:
+    async def async_play_media(self, media_type: str, media_id: str, **kwargs: Any) -> None:
+        original = media_id
         resolved_id = media_id
         if media_source.is_media_source_id(media_id):
-            resolved = await media_source.async_resolve_media(self.hass, media_id, self.entity_id)
+            resolved = await media_source.async_resolve_media(
+                self.hass, media_id, self.entity_id
+            )
             resolved_id = resolved.url
-        return async_process_play_media_url(self.hass, resolved_id, allow_relative_url=False)
-
-    async def async_play_media(self, media_type: str, media_id: str, **kwargs: Any) -> None:
-        self._restore_playback_pending = False
-        self.last_media_id = media_id
-        self.last_media_type = media_type or MediaType.MUSIC
-        self._attr_media_content_id = media_id
-        self._attr_media_content_type = self.last_media_type
-        extra = kwargs.get("extra") or {}
-        if isinstance(extra, dict) and extra.get("title"):
-            self._attr_media_title = extra["title"]
-        self._resolved_media_url = await self._resolve(media_id)
-        count = await self.manager.start(
-            self._resolved_media_url, self._attr_volume_level or 0.0, self._attr_is_volume_muted
+        url = async_process_play_media_url(
+            self.hass, resolved_id, allow_relative_url=False
         )
-        self._attr_state = MediaPlayerState.PLAYING if count else MediaPlayerState.IDLE
+        extra = kwargs.get("extra") or {}
+        title = extra.get("title") if isinstance(extra, dict) else None
+        await self.manager.async_start(
+            url, original, media_type or MediaType.MUSIC, title or "M1S group stream"
+        )
         self.async_write_ha_state()
 
     async def async_media_play(self) -> None:
-        if not self.last_media_id:
+        if not self.manager.media_id:
             return
-        await self.async_play_media(
-            self.last_media_type, self.last_media_id, extra={"title": self._attr_media_title}
-        )
+        if media_source.is_media_source_id(self.manager.media_id):
+            resolved = await media_source.async_resolve_media(
+                self.hass, self.manager.media_id, self.entity_id
+            )
+            self.manager.media_url = async_process_play_media_url(
+                self.hass, resolved.url, allow_relative_url=False
+            )
+        await self.manager.async_resume()
+        self.async_write_ha_state()
 
     async def async_media_stop(self) -> None:
-        self._restore_playback_pending = False
-        if self._restore_playback_task and self._restore_playback_task is not asyncio.current_task():
-            self._restore_playback_task.cancel()
-        await self.manager.stop()
+        await self.manager.async_stop(clear_intent=True)
+        self.async_write_ha_state()
 
     async def async_turn_off(self) -> None:
         await self.async_media_stop()
 
-    @staticmethod
-    def _normalize_volume(volume: float) -> float:
-        volume = max(0.0, min(1.0, float(volume)))
-        return round(volume * (1000.0 if volume <= 0.04 else 100.0)) / (1000.0 if volume <= 0.04 else 100.0)
-
     async def async_set_volume_level(self, volume: float) -> None:
-        self._attr_volume_level = self._normalize_volume(volume)
-        self._attr_is_volume_muted = self._attr_volume_level == 0.0
+        await self.manager.async_set_volume(volume)
         self.async_write_ha_state()
-        async_dispatcher_send(self.hass, media_group_signal())
-        if self._attr_state == MediaPlayerState.PLAYING and self.last_media_id:
-            if self._volume_restart_task:
-                self._volume_restart_task.cancel()
-            self._volume_restart_task = self.hass.async_create_task(self._restart_after_volume())
-
-    async def _restart_after_volume(self) -> None:
-        try:
-            await asyncio.sleep(0.7)
-            await self.async_media_play()
-        except asyncio.CancelledError:
-            raise
 
     async def async_volume_up(self) -> None:
-        current = self._attr_volume_level or 0.0
-        await self.async_set_volume_level(current + (0.001 if current < 0.04 else 0.01))
+        current = self.manager.volume
+        step = 0.001 if current < 0.04 else 0.01
+        await self.async_set_volume_level(current + step)
 
     async def async_volume_down(self) -> None:
-        current = self._attr_volume_level or 0.0
-        await self.async_set_volume_level(current - (0.001 if current <= 0.04 else 0.01))
+        current = self.manager.volume
+        step = 0.001 if current <= 0.04 else 0.01
+        await self.async_set_volume_level(current - step)
 
     async def async_mute_volume(self, mute: bool) -> None:
-        self._attr_is_volume_muted = bool(mute)
+        await self.manager.async_set_muted(mute)
         self.async_write_ha_state()
-        if self._attr_state == MediaPlayerState.PLAYING and self.last_media_id:
-            await self.async_media_play()

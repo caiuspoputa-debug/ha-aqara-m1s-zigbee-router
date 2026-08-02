@@ -6,12 +6,28 @@ Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
 NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
 locală a hubului.
 
-Versiune curentă: **0.2.6 (test release)**
+Versiune curentă: **0.5.0 (test release)**
 
 > Proiectul este destinat modelului Aqara M1S Gen 1 `lumi.gateway.aeu01`.
 > Scrierea JN5189 este o operație avansată. Păstrează un backup verificat și nu
 > scrie niciodată EFUSE, ROM, Config sau PSECT.
 
+
+## Ce s-a schimbat în v0.5.0
+
+- media playerul individual original și watchdog-ul lui automat sunt păstrate
+- este reparată eroarea din ramura de reluare întârziată a watchdog-ului individual
+- un singur **M1S Media Group** opțional folosește un singur proces FFmpeg și o cronologie PCM comună
+- fiecare hub selectat primește aceeași secvență PCM de 20 ms; conținutul audibil începe după o poartă comună de sincronizare cu 1,5 secunde de tăcere
+- un hub revenit sau întârziat intră la o secvență viitoare comună, fără repornirea huburilor care redau deja
+- huburile offline sau lente sunt sărite individual și reîncercate automat
+- redarea individuală are prioritate strictă: un hub care redă individual nu este oprit și nu este preluat de grup
+- fiecare hub primește switch-ul **Include in M1S Media Group**
+- grupul are volum normal și un slider separat 0–4%, cu pas de 0,1%
+- acțiunile butonului fizic sunt expuse ca entitate event și trigger-e de dispozitiv: `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click` și `hold`
+- grupul folosește resurse audio dedicate pe portul TCP `12347`; playerul individual rămâne izolat pe `12346`
+
+> v0.5.0 este reconstruită din baza curată v0.3.7. A trecut testele statice, verificarea comenzilor shell, arbitrajul și testele de secvență PCM, dar necesită validare fizică pe cele patru huburi înainte de publicarea ca versiune stabilă.
 
 ## Ce s-a schimbat în v0.2.6
 
@@ -686,10 +702,14 @@ Repornește Home Assistant și adaugă integrarea. Domeniul este diferit de
 `aqara_m1s_local`, deci cele două integrări pot coexista, dar nu trebuie să
 concureze pentru același UART sau aceleași resurse audio ale hubului.
 
-## Entități în v0.2.6
+## Entități în v0.5.0
 
 - `Ring Light`: inel RGB cu luminozitate
 - `Media Player`: difuzor/media player general Home Assistant, cu pași de volum de 0,1%
+- `M1S Media Group`: player cu cronologie comună pentru toate huburile selectate
+- `M1S Media Group - Fine Volume 0-4%`: volum fin de grup, cu pas de 0,1%
+- `Include in M1S Media Group`: câte un switch de includere pentru fiecare hub
+- `Physical Button`: evenimente `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click` și `hold`
 - `Sound Playback Volume`: volumul redării sunetelor locale
 - `Illuminance`: lux direct din JN5189, cu atribute ADC raw și millivolts
 - `Hub Temperature`: numai din `persist.sys.temperature`

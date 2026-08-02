@@ -57,5 +57,18 @@
     "abort": {
       "no_managed_sounds": "Nu există fișiere WAV în /data/musics/music-ch."
     }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "button_action": "Buton fizic: {subtype}"
+    },
+    "trigger_subtype": {
+      "click": "Click",
+      "double_click": "Dublu click",
+      "triple_click": "Triplu click",
+      "quadruple_click": "Patru clickuri",
+      "five_click": "Cinci clickuri",
+      "hold": "Apăsare lungă"
+    }
   }
 }

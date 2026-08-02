@@ -57,5 +57,18 @@
     "abort": {
       "no_managed_sounds": "No WAV files were found in /data/musics/music-ch."
     }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "button_action": "Physical button: {subtype}"
+    },
+    "trigger_subtype": {
+      "click": "Click",
+      "double_click": "Double click",
+      "triple_click": "Triple click",
+      "quadruple_click": "Quadruple click",
+      "five_click": "Five clicks",
+      "hold": "Hold"
+    }
   }
 }

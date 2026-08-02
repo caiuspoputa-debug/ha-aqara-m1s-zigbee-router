@@ -6,11 +6,27 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.4.0 (test release)**
+Current version: **0.5.0 (test release)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
 > EFUSE, ROM, Config or PSECT.
+
+## What changed in v0.5.0
+
+- the original individual media player and its automatic watchdog are retained
+- the individual watchdog recovery bug in the delayed-resume path is fixed
+- one optional **M1S Media Group** uses a single FFmpeg process and one shared PCM timeline
+- every selected hub receives the same 20 ms PCM sequence; audible content begins after a common 1.5-second silent synchronization gate
+- a late or recovered hub joins at a future shared stream sequence, without restarting hubs that are already playing
+- offline or slow hubs are skipped individually and retried automatically
+- individual playback has strict priority: a hub playing individually is never stopped or taken over by the group
+- each hub has an **Include in M1S Media Group** switch
+- the group has normal volume plus a separate 0–4% fine-volume slider in 0.1% steps
+- physical-button actions are exposed as an event entity and device triggers: `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click`, and `hold`
+- group audio uses dedicated hub resources on TCP port `12347`; the individual player remains isolated on `12346`
+
+> v0.5.0 is rebuilt from the clean v0.3.7 codebase. It has passed static, shell-command, arbitration and PCM-sequence tests, but still requires physical validation on the four hubs before publication as a stable release.
 
 ## What changed in v0.2.6
 
@@ -686,10 +702,14 @@ Then restart Home Assistant and add the integration. The domain differs from
 `aqara_m1s_local`, so both integrations can coexist, although they must not
 compete for the same hub UART or audio resources.
 
-## Entities in v0.2.6
+## Entities in v0.5.0
 
 - `Ring Light`: RGB ring with brightness
 - `Media Player`: general Home Assistant speaker/media player with 0.1% volume steps
+- `M1S Media Group`: shared-timeline player for all selected hubs
+- `M1S Media Group - Fine Volume 0-4%`: 0.1% group-volume steps
+- `Include in M1S Media Group`: one membership switch per hub
+- `Physical Button`: `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click`, and `hold` events
 - `Sound Playback Volume`: local-sound playback volume
 - `Illuminance`: direct JN5189 lux value, with ADC raw and millivolts attributes
 - `Hub Temperature`: `persist.sys.temperature` only
@@ -883,11 +903,3 @@ Home Assistant color and brightness remain stored for the next manual turn-on.
 The old coordinator may retain a stale device entry that can be removed after
 the router appears on the new coordinator. The action does not erase the Linux
 hub, Wi-Fi, RGB/lux support or audio files
-
-## Test v0.4.3 shared media transport
-
-The `M1S Media Group` uses one FFmpeg process in Home Assistant. FFmpeg decodes
-the selected source once to mono, 32000 Hz, signed 32-bit little-endian PCM. The
-integration sends the same PCM chunks to every selected and connected hub. A
-slow or offline hub is removed individually while the other hubs continue.
-Individual media-player entities remain available and unchanged.

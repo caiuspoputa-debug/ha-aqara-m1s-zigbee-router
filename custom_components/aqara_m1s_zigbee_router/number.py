@@ -18,12 +18,11 @@ from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
     DATA_PLAYBACK_VOLUME,
-    DATA_MEDIA_GROUP,
-    DATA_MEDIA_GROUP_OWNER,
     DATA_RADIO_PLAYERS,
+    DATA_MEDIA_GROUP,
     DOMAIN,
     radio_volume_signal,
-    media_group_signal,
+    media_group_volume_signal,
 )
 
 
@@ -45,12 +44,23 @@ async def async_setup_entry(
     radio_player = hass.data[DOMAIN][DATA_RADIO_PLAYERS][entry.entry_id]
 
     entities = [
-        AqaraM1SSoundPlaybackVolume(hass, entry, client, coordinator),
-        AqaraM1SRadioFineVolume(entry, client, coordinator, radio_player),
+        AqaraM1SSoundPlaybackVolume(
+            hass,
+            entry,
+            client,
+            coordinator,
+        ),
+        AqaraM1SRadioFineVolume(
+            entry,
+            client,
+            coordinator,
+            radio_player,
+        ),
     ]
-    if hass.data[DOMAIN].get(DATA_MEDIA_GROUP_OWNER) == entry.entry_id:
-        manager = hass.data[DOMAIN][DATA_MEDIA_GROUP]
-        entities.append(AqaraM1SGroupFineVolume(hass, manager))
+    manager = hass.data[DOMAIN][DATA_MEDIA_GROUP]
+    if not manager.volume_entity_added:
+        manager.volume_entity_added = True
+        entities.append(AqaraM1SGroupFineVolume(manager))
     async_add_entities(entities)
 
 
@@ -215,7 +225,7 @@ class AqaraM1SRadioFineVolume(
 
 
 class AqaraM1SGroupFineVolume(NumberEntity):
-    """Fine volume slider for the shared media group."""
+    """Fine 0-4% slider for the shared media group."""
 
     _attr_name = "M1S Media Group - Fine Volume 0-4%"
     _attr_unique_id = "aqara_m1s_media_group_fine_volume"
@@ -227,25 +237,31 @@ class AqaraM1SGroupFineVolume(NumberEntity):
     _attr_mode = NumberMode.SLIDER
     _attr_should_poll = False
 
-    def __init__(self, hass: HomeAssistant, manager) -> None:
-        self.hass = hass
+    def __init__(self, manager) -> None:
         self.manager = manager
 
     @property
     def native_value(self) -> float:
-        entity = self.manager.entity
-        return round(min(4.0, max(0.0, (entity.volume_level if entity else 0.0) * 100.0)), 1)
+        return round(min(4.0, max(0.0, self.manager.volume * 100.0)), 1)
 
     async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
         self.async_on_remove(
-            async_dispatcher_connect(self.hass, media_group_signal(), self._handle_update)
+            async_dispatcher_connect(
+                self.hass,
+                media_group_volume_signal(),
+                self._handle_update,
+            )
         )
 
     def _handle_update(self) -> None:
         self.schedule_update_ha_state()
 
+    async def async_will_remove_from_hass(self) -> None:
+        self.manager.volume_entity_added = False
+        await super().async_will_remove_from_hass()
+
     async def async_set_native_value(self, value: float) -> None:
-        entity = self.manager.entity
-        if entity is not None:
-            await entity.async_set_volume_level(round(max(0.0, min(4.0, float(value))), 1) / 100.0)
+        safe_percent = round(max(0.0, min(4.0, float(value))), 1)
+        await self.manager.async_set_volume(safe_percent / 100.0)
         self.async_write_ha_state()

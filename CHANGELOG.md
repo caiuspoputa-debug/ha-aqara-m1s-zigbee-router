@@ -1,32 +1,17 @@
-## 0.4.3 - test
-
-- replaced media-group fan-out with one shared Home Assistant FFmpeg process
-- the same mono 32 kHz S32_LE PCM chunks are broadcast to every active M1S hub
-- slow or offline hubs are removed individually without stopping the remaining group
-- preserved individual media players, fine volume, dynamic membership and physical-button events
-- a hub enabled during playback joins the current common PCM stream
-
-## 0.4.1 - test
-
-- fixes media-group fan-out so a stale coordinator poll does not exclude a hub before the actual play attempt
-- creates individual media-player objects before concurrent platform setup, removing setup-order races
-- keeps every individual media player and fine-volume entity
-- exposes the physical hub button as an Event entity while retaining device triggers
-- fixes an undefined watchdog variable in remembered-media recovery
-
 # Changelog
 
-## 0.4.0
+## 0.5.0 - test
 
-- keeps every existing per-hub Media Player and fine-volume entity
-- adds one dynamic `M1S Media Group` media player
-- adds one per-hub `Include in M1S Media Group` switch
-- joining an active group starts the current source automatically
-- removing a hub stops only that hub
-- unavailable selected hubs are skipped while available hubs continue
-- adds shared 0-4% fine volume in 0.1% steps
-- adds Home Assistant device triggers for click, double, triple, quadruple, five-click and hold
-
+- Rebuilt from the clean v0.3.7 integration.
+- Preserved all individual media players, fine volume and automatic recovery.
+- Fixed the undefined delayed-resume watchdog failure variable.
+- Added one shared-timeline media group with a single FFmpeg PCM source.
+- Added 20 ms sequence framing and a 1.5 s common silent synchronization gate.
+- Added late-member synchronization at a future shared sequence.
+- Added per-hub skip/retry without stopping the rest of the group.
+- Added strict individual-player priority and dedicated group resources on TCP 12347.
+- Added per-hub group membership switches and group fine volume.
+- Added physical-button event entity and six MQTT device triggers.
 
 ## 0.1.0
 

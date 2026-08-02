@@ -5,22 +5,19 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components import mqtt
+from homeassistant.components.device_automation import DEVICE_TRIGGER_BASE_SCHEMA
 from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_PLATFORM, CONF_TYPE
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.trigger import TriggerActionType, TriggerInfo
 
 from .const import BUTTON_ACTIONS, DOMAIN, button_topic_for_host
 
 CONF_SUBTYPE = "subtype"
-ACTIONS = BUTTON_ACTIONS
-TRIGGER_SCHEMA = vol.Schema(
+TRIGGER_SCHEMA = DEVICE_TRIGGER_BASE_SCHEMA.extend(
     {
-        vol.Required(CONF_PLATFORM): "device",
-        vol.Required(CONF_DOMAIN): DOMAIN,
-        vol.Required(CONF_DEVICE_ID): str,
         vol.Required(CONF_TYPE): "button_action",
-        vol.Required(CONF_SUBTYPE): vol.In(ACTIONS),
+        vol.Required(CONF_SUBTYPE): vol.In(BUTTON_ACTIONS),
     }
 )
 
@@ -36,7 +33,9 @@ def _entry_for_device(hass: HomeAssistant, device_id: str):
     return None
 
 
-async def async_get_triggers(hass: HomeAssistant, device_id: str) -> list[dict[str, Any]]:
+async def async_get_triggers(
+    hass: HomeAssistant, device_id: str
+) -> list[dict[str, Any]]:
     if _entry_for_device(hass, device_id) is None:
         return []
     return [
@@ -47,11 +46,13 @@ async def async_get_triggers(hass: HomeAssistant, device_id: str) -> list[dict[s
             CONF_TYPE: "button_action",
             CONF_SUBTYPE: action,
         }
-        for action in ACTIONS
+        for action in BUTTON_ACTIONS
     ]
 
 
-async def async_get_trigger_capabilities(hass: HomeAssistant, config: dict[str, Any]) -> dict[str, vol.Schema]:
+async def async_get_trigger_capabilities(
+    hass: HomeAssistant, config: dict[str, Any]
+) -> dict[str, vol.Schema]:
     return {"extra_fields": vol.Schema({})}
 
 
@@ -61,15 +62,14 @@ async def async_attach_trigger(
     action: TriggerActionType,
     trigger_info: TriggerInfo,
 ) -> CALLBACK_TYPE:
-    config = TRIGGER_SCHEMA(config)
     entry = _entry_for_device(hass, config[CONF_DEVICE_ID])
     if entry is None:
         raise ValueError("Aqara M1S config entry not found for device")
-    host = str(entry.data["host"])
-    topic = button_topic_for_host(host)
+    topic = button_topic_for_host(str(entry.data["host"]))
     wanted = config[CONF_SUBTYPE]
 
-    async def _message_received(msg) -> None:
+    @callback
+    def _message_received(msg) -> None:
         payload = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
         if payload.strip() != wanted:
             return

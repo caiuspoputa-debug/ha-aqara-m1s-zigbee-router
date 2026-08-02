@@ -19,10 +19,6 @@ DATA_PLAYBACK_VOLUME = "playback_volume"
 
 DATA_RADIO_PLAYERS = "radio_players"
 DATA_SOUND_PLAYERS = "sound_players"
-DATA_MEDIA_GROUP = "media_group"
-DATA_MEDIA_GROUP_OWNER = "media_group_owner"
-
-MEDIA_GROUP_ID = "aqara_m1s_media_group"
 
 SERVICE_UPLOAD_SOUND = "upload_sound"
 SERVICE_DELETE_SOUND = "delete_sound"
@@ -41,10 +37,8 @@ def radio_volume_signal(entry_id: str) -> str:
     """Return dispatcher signal for radio volume changes."""
     return f"{DOMAIN}_{entry_id}_radio_volume_updated"
 
-
-def media_group_signal() -> str:
-    """Return dispatcher signal for group membership/state changes."""
-    return f"{DOMAIN}_media_group_updated"
+DATA_MEDIA_GROUP = "media_group"
+DATA_GROUP_ENTITY = "group_entity"
 
 BUTTON_ACTIONS = (
     "click",
@@ -57,6 +51,14 @@ BUTTON_ACTIONS = (
 
 
 def button_topic_for_host(host: str) -> str:
-    """Return the Home Assistant broker topic published by one hub."""
-    hub_id = str(host).rsplit(".", 1)[-1]
-    return f"m1s/{hub_id}/button/action"
+    """Return the central MQTT topic installed by the hub button bridge."""
+    suffix = str(host).strip().rsplit(".", 1)[-1]
+    return f"m1s/{suffix}/button/action"
+
+
+def media_group_signal() -> str:
+    return f"{DOMAIN}_media_group_updated"
+
+
+def media_group_volume_signal() -> str:
+    return f"{DOMAIN}_media_group_volume_updated"

@@ -31,9 +31,8 @@ from .media_group import AqaraM1SMediaGroup
 from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
-    DATA_MEDIA_GROUP,
-    DATA_MEDIA_GROUP_OWNER,
     DATA_RADIO_PLAYERS,
+    DATA_MEDIA_GROUP,
     DOMAIN,
     radio_volume_signal,
 )
@@ -78,34 +77,17 @@ REMOTE_START_COMMAND = (
 )
 
 
-def get_or_create_radio_player(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-) -> "AqaraM1SRadioPlayer":
-    """Create one stable player object before platforms are forwarded."""
-    players = hass.data[DOMAIN].setdefault(DATA_RADIO_PLAYERS, {})
-    player = players.get(entry.entry_id)
-    if player is None:
-        client: AqaraM1SClient = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
-        player = AqaraM1SRadioPlayer(
-            hass,
-            entry,
-            client,
-            hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id],
-        )
-        players[entry.entry_id] = player
-    return player
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    player = get_or_create_radio_player(hass, entry)
-    entities = [player]
-    if hass.data[DOMAIN].get(DATA_MEDIA_GROUP_OWNER) == entry.entry_id:
-        entities.append(AqaraM1SMediaGroup(hass, hass.data[DOMAIN][DATA_MEDIA_GROUP]))
+    player = hass.data[DOMAIN][DATA_RADIO_PLAYERS][entry.entry_id]
+    entities: list[MediaPlayerEntity] = [player]
+    manager = hass.data[DOMAIN][DATA_MEDIA_GROUP]
+    if not manager.media_entity_added:
+        manager.media_entity_added = True
+        entities.append(AqaraM1SMediaGroup(hass, manager))
     async_add_entities(entities)
 
 
@@ -167,12 +149,29 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._last_failure_detail: str | None = None
         self._recovery_pending = False
         self._shutting_down = False
+        self._group_manager = None
         self._attr_device_info = {
             "identifiers": {(DOMAIN, client.host)},
             "name": entry.data.get("name", f"Aqara M1S {client.host}"),
             "manufacturer": "Aqara",
             "model": "M1S Gen 1 / JN5189 Router",
         }
+
+    def set_group_manager(self, manager) -> None:
+        """Attach the shared group arbiter without changing individual behavior."""
+        self._group_manager = manager
+
+    @property
+    def playback_requested(self) -> bool:
+        return bool(self._resume_after_reconnect)
+
+    async def _claim_individual_audio(self) -> None:
+        if self._group_manager is not None:
+            await self._group_manager.async_claim_individual(self.entry.entry_id)
+
+    async def _release_individual_audio(self) -> None:
+        if self._group_manager is not None:
+            await self._group_manager.async_release_individual(self.entry.entry_id)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -223,6 +222,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 )
 
             self._attr_state = MediaPlayerState.IDLE
+
+        if self._group_manager is not None:
+            self._group_manager.mark_individual_intent(
+                self.entry.entry_id, self._resume_after_reconnect
+            )
 
         data = self.coordinator.data or {}
         self._last_online_generation = int(data.get("online_generation", 0) or 0)
@@ -385,6 +389,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._resume_task = None
         async with self._lock:
             await self._stop_locked(update_state=True, reason="user_stop")
+        await self._release_individual_audio()
 
     async def async_turn_off(self) -> None:
         await self.async_media_stop()
@@ -601,6 +606,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     async def _start_locked(self) -> None:
         if self._shutting_down or not self._media_url:
             return
+
+        # Individual playback has strict priority. The group arbiter detaches
+        # only this hub's dedicated group receiver and never touches the
+        # individual receiver/watchdog.
+        await self._claim_individual_audio()
 
         current_task = asyncio.current_task()
         if (

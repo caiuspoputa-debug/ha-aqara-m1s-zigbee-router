@@ -9,7 +9,11 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DATA_CLIENTS, DATA_MEDIA_GROUP, DOMAIN
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
     manager = hass.data[DOMAIN][DATA_MEDIA_GROUP]
     async_add_entities([AqaraM1SMediaGroupMemberSwitch(entry, client, manager)])
@@ -20,6 +24,7 @@ class AqaraM1SMediaGroupMemberSwitch(SwitchEntity, RestoreEntity):
 
     _attr_name = "Include in M1S Media Group"
     _attr_icon = "mdi:speaker-multiple"
+    _attr_should_poll = False
 
     def __init__(self, entry: ConfigEntry, client, manager) -> None:
         self.entry = entry
@@ -39,6 +44,7 @@ class AqaraM1SMediaGroupMemberSwitch(SwitchEntity, RestoreEntity):
         last = await self.async_get_last_state()
         self._attr_is_on = last is None or last.state == "on"
         self.manager.set_selected(self.entry.entry_id, self._attr_is_on)
+        self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs) -> None:
         self._attr_is_on = True

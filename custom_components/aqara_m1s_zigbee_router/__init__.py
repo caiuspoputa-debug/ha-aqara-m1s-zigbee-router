@@ -18,9 +18,8 @@ from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
     DATA_PLAYBACK_VOLUME,
-    DATA_MEDIA_GROUP,
-    DATA_MEDIA_GROUP_OWNER,
     DATA_RADIO_PLAYERS,
+    DATA_MEDIA_GROUP,
     DATA_SOUND_PLAYERS,
     DEFAULT_PASSWORD,
     DEFAULT_PORT,
@@ -36,6 +35,7 @@ from .const import (
 )
 from .coordinator import AqaraM1SRouterCoordinator
 from .media_group import AqaraM1SMediaGroupManager
+from .media_player import AqaraM1SRadioPlayer
 from .sound_player import AqaraM1SSoundPlayer
 from .sound_upload import destination_for_filename, read_uploaded_sound
 
@@ -94,7 +94,6 @@ async def async_setup_entry(
     )
     if DATA_MEDIA_GROUP not in hass.data[DOMAIN]:
         hass.data[DOMAIN][DATA_MEDIA_GROUP] = AqaraM1SMediaGroupManager(hass)
-    hass.data[DOMAIN].setdefault(DATA_MEDIA_GROUP_OWNER, entry.entry_id)
 
     hass.data[DOMAIN][DATA_CLIENTS][
         entry.entry_id
@@ -108,13 +107,18 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_SOUND_PLAYERS][entry.entry_id] = AqaraM1SSoundPlayer(
         hass, client
     )
-
-    # Create the individual player before platforms are loaded.  Home Assistant
-    # forwards platforms concurrently, so number/group entities must not depend
-    # on media_player.py winning the setup race.
-    from .media_player import get_or_create_radio_player
-
-    get_or_create_radio_player(hass, entry)
+    radio_player = AqaraM1SRadioPlayer(
+        hass, entry, client, coordinator
+    )
+    hass.data[DOMAIN][DATA_RADIO_PLAYERS][entry.entry_id] = radio_player
+    group_manager = hass.data[DOMAIN][DATA_MEDIA_GROUP]
+    group_manager.register_member(
+        entry.entry_id,
+        entry.data.get("name", f"Aqara M1S {host}"),
+        client,
+        coordinator,
+    )
+    radio_player.set_group_manager(group_manager)
 
     device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(
@@ -249,6 +253,13 @@ async def async_unload_entry(
     )
     if not unloaded:
         return False
+
+    group_manager = hass.data[DOMAIN].get(DATA_MEDIA_GROUP)
+    if group_manager is not None:
+        await group_manager.unregister_member(entry.entry_id)
+        if not group_manager.members:
+            await group_manager.async_shutdown()
+            hass.data[DOMAIN].pop(DATA_MEDIA_GROUP, None)
 
     hass.data[DOMAIN][DATA_COORDINATORS].pop(entry.entry_id, None)
     hass.data[DOMAIN][DATA_RADIO_PLAYERS].pop(entry.entry_id, None)
