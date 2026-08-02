@@ -2,6 +2,88 @@
 
 **Română** | [English](README.md)
 
+### Publicarea imediată a acțiunii `hold`
+
+Watcher-ul butonului fizic întârzie intenționat cu 1,2 secunde acțiunile de tip click, pentru ca la apăsările multiple să fie publicată doar acțiunea finală:
+
+* `click`
+* `double_click`
+* `triple_click`
+* `quadruple_click`
+* `five_click`
+
+Acțiunea `hold` nu trebuie să folosească această întârziere. Ea este publicată imediat când serviciul Aqara scrie mesajul `hold` în `/var/log/messages`.
+
+Ramura `hold` incrementează și tokenul de stare înainte de publicare. În acest fel este anulat orice `click` întârziat care ar fi putut fi detectat în timpul apăsării lungi.
+
+Logica necesară în watcher este:
+
+```sh
+*'mha_master'*'on_message:'*'"method":"basis.button"'*'"name":"hold"'*)
+    # Anuleaza orice click intarziat aflat in asteptare.
+    seq=$((seq + 1))
+    echo "$seq" > "$STATE"
+
+    # Publica hold imediat.
+    "$PUB" "hold"
+    continue
+    ;;
+```
+
+Toate celelalte acțiuni detectate continuă să treacă prin:
+
+```sh
+publish_later "$seq" "$action"
+```
+
+cu întârzierea existentă de 1,2 secunde.
+
+După instalarea sau actualizarea watcher-ului:
+
+```sh
+chmod 700 /data/m1s_button/button_watch.sh
+sh -n /data/m1s_button/button_watch.sh
+```
+
+Dacă `sh -n` nu afișează nimic, sintaxa este validă.
+
+Repornește doar watcher-ul, fără restartarea hubului:
+
+```sh
+for p in $(ps | awk '/[b]utton_watch.sh/{print $1}'); do
+    kill -9 "$p" 2>/dev/null
+done
+
+rm -f /tmp/button_state
+
+/data/m1s_button/button_watch.sh >> /tmp/m1s_button.log 2>&1 &
+```
+
+În rezultatul comenzii `ps` pot apărea mai multe procese `button_watch.sh`. Acest lucru este normal, deoarece scriptul folosește o conductă și subshell-uri. Procesele trebuie să facă parte dintr-un singur lanț, nu din mai multe instanțe principale pornite separat.
+
+Verificare:
+
+```sh
+ps | grep '[b]utton_watch.sh'
+
+for p in $(ps | awk '/[b]utton_watch.sh/{print $1}'); do
+    echo "PID=$p"
+    grep '^PPid:' /proc/$p/status
+done
+```
+
+Comportamentul corect este:
+
+* acțiunile de tip click sunt publicate după filtrarea de 1,2 secunde;
+* `hold` este publicat imediat când este detectat;
+* la eliberarea butonului nu se mai publică suplimentar un `click` întârziat;
+* topicul MQTT rămâne specific fiecărui hub:
+
+```text
+m1s/HUB_ID/button/action
+```
+
+
 Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
 NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
 locală a hubului.
