@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from homeassistant.components import button, event, light, media_player, number, sensor, switch
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_HOST,
@@ -40,13 +39,13 @@ from .sound_player import AqaraM1SSoundPlayer
 from .sound_upload import destination_for_filename, read_uploaded_sound
 
 PLATFORMS = [
-    button.DOMAIN,
-    event.DOMAIN,
-    light.DOMAIN,
-    media_player.DOMAIN,
-    number.DOMAIN,
-    sensor.DOMAIN,
-    switch.DOMAIN,
+    "button",
+    "event",
+    "light",
+    "media_player",
+    "number",
+    "sensor",
+    "switch",
 ]
 
 

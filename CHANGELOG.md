@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1
+
+- fix Home Assistant platform forwarding by using explicit platform names
+- no audio, synchronization, watchdog or entity behavior changes
+
 ## 0.5.0 - test
 
 - Rebuilt from the clean v0.3.7 integration.

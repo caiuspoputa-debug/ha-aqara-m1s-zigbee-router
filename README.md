@@ -6,7 +6,7 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.0 (test release)**
+Current version: **0.5.1 (test release)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
