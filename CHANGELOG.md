@@ -1,4 +1,4 @@
-## 0.4.2 - test
+## 0.4.3 - test
 
 - replaced media-group fan-out with one shared Home Assistant FFmpeg process
 - the same mono 32 kHz S32_LE PCM chunks are broadcast to every active M1S hub

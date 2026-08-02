@@ -884,7 +884,7 @@ The old coordinator may retain a stale device entry that can be removed after
 the router appears on the new coordinator. The action does not erase the Linux
 hub, Wi-Fi, RGB/lux support or audio files
 
-## Test v0.4.2 shared media transport
+## Test v0.4.3 shared media transport
 
 The `M1S Media Group` uses one FFmpeg process in Home Assistant. FFmpeg decodes
 the selected source once to mono, 32000 Hz, signed 32-bit little-endian PCM. The

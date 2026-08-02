@@ -250,16 +250,30 @@ class AqaraM1SMediaGroupManager:
             raise
 
     async def add_live_member(self, entry_id: str) -> None:
+        """Add a member and resynchronise the whole playing group.
+
+        Joining an already-running raw PCM stream creates a new FIFO/aplay buffer
+        at an arbitrary point in time.  That member can therefore be hundreds of
+        milliseconds or even seconds behind.  The only deterministic recovery is
+        to restart the shared source once all selected receivers are prepared.
+        """
         self.set_selected(entry_id, True)
         if self.entity is None or self.entity.state != MediaPlayerState.PLAYING:
             return
-        player = self.hass.data.get(DOMAIN, {}).get(DATA_RADIO_PLAYERS, {}).get(entry_id)
-        if player is None or entry_id in self.writers:
+        if not self.media_url:
             return
-        item = await self._prepare_member(entry_id, player)
-        if item is not None:
-            self.writers[item[0]] = item[1]
-            async_dispatcher_send(self.hass, media_group_signal())
+
+        media_url = self.media_url
+        volume = self.volume
+        muted = self.muted
+
+        active = await self.start(media_url, volume, muted)
+        if self.entity is not None:
+            self.entity._attr_state = (
+                MediaPlayerState.PLAYING if active else MediaPlayerState.IDLE
+            )
+            self.entity.async_write_ha_state()
+        async_dispatcher_send(self.hass, media_group_signal())
 
     async def remove_member(self, entry_id: str) -> None:
         self.set_selected(entry_id, False)
