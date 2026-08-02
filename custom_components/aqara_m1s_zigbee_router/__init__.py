@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from homeassistant.components import button, light, media_player, number, sensor, switch
+from homeassistant.components import button, event, light, media_player, number, sensor, switch
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_HOST,
@@ -41,6 +41,7 @@ from .sound_upload import destination_for_filename, read_uploaded_sound
 
 PLATFORMS = [
     button.DOMAIN,
+    event.DOMAIN,
     light.DOMAIN,
     media_player.DOMAIN,
     number.DOMAIN,
@@ -107,6 +108,13 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_SOUND_PLAYERS][entry.entry_id] = AqaraM1SSoundPlayer(
         hass, client
     )
+
+    # Create the individual player before platforms are loaded.  Home Assistant
+    # forwards platforms concurrently, so number/group entities must not depend
+    # on media_player.py winning the setup race.
+    from .media_player import get_or_create_radio_player
+
+    get_or_create_radio_player(hass, entry)
 
     device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(

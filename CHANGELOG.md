@@ -1,3 +1,11 @@
+## 0.4.1 - test
+
+- fixes media-group fan-out so a stale coordinator poll does not exclude a hub before the actual play attempt
+- creates individual media-player objects before concurrent platform setup, removing setup-order races
+- keeps every individual media player and fine-volume entity
+- exposes the physical hub button as an Event entity while retaining device triggers
+- fixes an undefined watchdog variable in remembered-media recovery
+
 # Changelog
 
 ## 0.4.0

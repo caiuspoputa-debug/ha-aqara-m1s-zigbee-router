@@ -47,7 +47,10 @@ class AqaraM1SMediaGroupManager:
                 continue
             if available_only:
                 coordinator = coordinators.get(entry_id)
-                if coordinator is None or not coordinator.last_update_success:
+                # Do not exclude a configured hub solely because the last poll
+                # failed.  A Telnet/audio command may still work, and gather()
+                # already isolates a real per-hub failure without stopping peers.
+                if coordinator is None:
                     continue
             result.append(player)
         return result
@@ -80,7 +83,7 @@ class AqaraM1SMediaGroupManager:
             return
         player = self.hass.data.get(DOMAIN, {}).get(DATA_RADIO_PLAYERS, {}).get(entry_id)
         coordinator = self.hass.data.get(DOMAIN, {}).get(DATA_COORDINATORS, {}).get(entry_id)
-        if player is None or coordinator is None or not coordinator.last_update_success:
+        if player is None or coordinator is None:
             return
         try:
             await player.async_set_volume_level(entity.volume_level or 0.0)
@@ -184,7 +187,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
 
     @property
     def available(self) -> bool:
-        return bool(self.manager.players(available_only=True))
+        return bool(self.manager.players(available_only=False))
 
     async def async_browse_media(
         self,
@@ -198,7 +201,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
         )
 
     async def async_update(self) -> None:
-        players = self.manager.players(available_only=True)
+        players = self.manager.players(available_only=False)
         if any(player.state == MediaPlayerState.PLAYING for player in players):
             self._attr_state = MediaPlayerState.PLAYING
         elif players:
@@ -218,7 +221,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
             "async_play_media",
             self.last_media_type,
             media_id,
-            available_only=True,
+            available_only=False,
             **kwargs,
         )
         self._attr_state = MediaPlayerState.PLAYING if ok else MediaPlayerState.IDLE
@@ -232,7 +235,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
                 extra={"title": self._attr_media_title},
             )
             return
-        ok = await self.manager.run_selected("async_media_play", available_only=True)
+        ok = await self.manager.run_selected("async_media_play", available_only=False)
         self._attr_state = MediaPlayerState.PLAYING if ok else MediaPlayerState.IDLE
         self.async_write_ha_state()
 
@@ -255,7 +258,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
         volume = self._normalize_volume(volume)
         self._attr_volume_level = volume
         self._attr_is_volume_muted = volume == 0.0
-        await self.manager.run_selected("async_set_volume_level", volume, available_only=True)
+        await self.manager.run_selected("async_set_volume_level", volume, available_only=False)
         self.async_write_ha_state()
         async_dispatcher_send(self.hass, media_group_signal())
 

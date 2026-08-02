@@ -10,10 +10,10 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.trigger import TriggerActionType, TriggerInfo
 
-from .const import DOMAIN
+from .const import BUTTON_ACTIONS, DOMAIN, button_topic_for_host
 
 CONF_SUBTYPE = "subtype"
-ACTIONS = ("click", "double_click", "triple_click", "quadruple_click", "five_click", "hold")
+ACTIONS = BUTTON_ACTIONS
 TRIGGER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_PLATFORM): "device",
@@ -66,8 +66,7 @@ async def async_attach_trigger(
     if entry is None:
         raise ValueError("Aqara M1S config entry not found for device")
     host = str(entry.data["host"])
-    hub_id = host.rsplit(".", 1)[-1]
-    topic = f"m1s/{hub_id}/button/action"
+    topic = button_topic_for_host(host)
     wanted = config[CONF_SUBTYPE]
 
     async def _message_received(msg) -> None:

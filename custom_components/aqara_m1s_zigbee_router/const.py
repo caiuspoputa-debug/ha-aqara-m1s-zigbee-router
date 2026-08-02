@@ -45,3 +45,18 @@ def radio_volume_signal(entry_id: str) -> str:
 def media_group_signal() -> str:
     """Return dispatcher signal for group membership/state changes."""
     return f"{DOMAIN}_media_group_updated"
+
+BUTTON_ACTIONS = (
+    "click",
+    "double_click",
+    "triple_click",
+    "quadruple_click",
+    "five_click",
+    "hold",
+)
+
+
+def button_topic_for_host(host: str) -> str:
+    """Return the Home Assistant broker topic published by one hub."""
+    hub_id = str(host).rsplit(".", 1)[-1]
+    return f"m1s/{hub_id}/button/action"

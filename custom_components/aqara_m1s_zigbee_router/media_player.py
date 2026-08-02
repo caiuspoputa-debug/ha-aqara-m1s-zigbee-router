@@ -78,16 +78,31 @@ REMOTE_START_COMMAND = (
 )
 
 
+def get_or_create_radio_player(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> "AqaraM1SRadioPlayer":
+    """Create one stable player object before platforms are forwarded."""
+    players = hass.data[DOMAIN].setdefault(DATA_RADIO_PLAYERS, {})
+    player = players.get(entry.entry_id)
+    if player is None:
+        client: AqaraM1SClient = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
+        player = AqaraM1SRadioPlayer(
+            hass,
+            entry,
+            client,
+            hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id],
+        )
+        players[entry.entry_id] = player
+    return player
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    client: AqaraM1SClient = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
-    player = AqaraM1SRadioPlayer(
-        hass, entry, client, hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
-    )
-    hass.data[DOMAIN].setdefault(DATA_RADIO_PLAYERS, {})[entry.entry_id] = player
+    player = get_or_create_radio_player(hass, entry)
     entities = [player]
     if hass.data[DOMAIN].get(DATA_MEDIA_GROUP_OWNER) == entry.entry_id:
         entities.append(AqaraM1SMediaGroup(hass, hass.data[DOMAIN][DATA_MEDIA_GROUP]))
@@ -468,7 +483,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 and self._attr_state != MediaPlayerState.PLAYING
                 and self.coordinator.last_update_success
             ):
-                next_kind = self._last_failure_kind or failure_kind
+                next_kind = self._last_failure_kind or "unknown"
                 self._watchdog_restart_task = None
                 self._schedule_watchdog_restart(next_kind)
                 return
