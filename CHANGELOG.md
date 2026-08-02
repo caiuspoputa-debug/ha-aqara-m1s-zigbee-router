@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0
+
+- keeps every existing per-hub Media Player and fine-volume entity
+- adds one dynamic `M1S Media Group` media player
+- adds one per-hub `Include in M1S Media Group` switch
+- joining an active group starts the current source automatically
+- removing a hub stops only that hub
+- unavailable selected hubs are skipped while available hubs continue
+- adds shared 0-4% fine volume in 0.1% steps
+- adds Home Assistant device triggers for click, double, triple, quadruple, five-click and hold
+
+
 ## 0.1.0
 
 - New integration domain: `aqara_m1s_zigbee_router`.

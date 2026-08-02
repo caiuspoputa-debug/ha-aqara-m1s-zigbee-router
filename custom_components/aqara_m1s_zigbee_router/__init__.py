@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from homeassistant.components import button, light, media_player, number, sensor
+from homeassistant.components import button, light, media_player, number, sensor, switch
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_HOST,
@@ -18,6 +18,8 @@ from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
     DATA_PLAYBACK_VOLUME,
+    DATA_MEDIA_GROUP,
+    DATA_MEDIA_GROUP_OWNER,
     DATA_RADIO_PLAYERS,
     DATA_SOUND_PLAYERS,
     DEFAULT_PASSWORD,
@@ -33,6 +35,7 @@ from .const import (
     sound_list_signal,
 )
 from .coordinator import AqaraM1SRouterCoordinator
+from .media_group import AqaraM1SMediaGroupManager
 from .sound_player import AqaraM1SSoundPlayer
 from .sound_upload import destination_for_filename, read_uploaded_sound
 
@@ -42,6 +45,7 @@ PLATFORMS = [
     media_player.DOMAIN,
     number.DOMAIN,
     sensor.DOMAIN,
+    switch.DOMAIN,
 ]
 
 
@@ -87,6 +91,9 @@ async def async_setup_entry(
         DATA_SOUND_PLAYERS,
         {},
     )
+    if DATA_MEDIA_GROUP not in hass.data[DOMAIN]:
+        hass.data[DOMAIN][DATA_MEDIA_GROUP] = AqaraM1SMediaGroupManager(hass)
+    hass.data[DOMAIN].setdefault(DATA_MEDIA_GROUP_OWNER, entry.entry_id)
 
     hass.data[DOMAIN][DATA_CLIENTS][
         entry.entry_id

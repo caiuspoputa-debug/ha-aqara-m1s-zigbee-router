@@ -27,9 +27,12 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .client import AqaraM1SClient
+from .media_group import AqaraM1SMediaGroup
 from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
+    DATA_MEDIA_GROUP,
+    DATA_MEDIA_GROUP_OWNER,
     DATA_RADIO_PLAYERS,
     DOMAIN,
     radio_volume_signal,
@@ -85,7 +88,10 @@ async def async_setup_entry(
         hass, entry, client, hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
     )
     hass.data[DOMAIN].setdefault(DATA_RADIO_PLAYERS, {})[entry.entry_id] = player
-    async_add_entities([player])
+    entities = [player]
+    if hass.data[DOMAIN].get(DATA_MEDIA_GROUP_OWNER) == entry.entry_id:
+        entities.append(AqaraM1SMediaGroup(hass, hass.data[DOMAIN][DATA_MEDIA_GROUP]))
+    async_add_entities(entities)
 
 
 class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):

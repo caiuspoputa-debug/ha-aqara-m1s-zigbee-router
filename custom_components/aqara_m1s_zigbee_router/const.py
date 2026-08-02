@@ -19,6 +19,10 @@ DATA_PLAYBACK_VOLUME = "playback_volume"
 
 DATA_RADIO_PLAYERS = "radio_players"
 DATA_SOUND_PLAYERS = "sound_players"
+DATA_MEDIA_GROUP = "media_group"
+DATA_MEDIA_GROUP_OWNER = "media_group_owner"
+
+MEDIA_GROUP_ID = "aqara_m1s_media_group"
 
 SERVICE_UPLOAD_SOUND = "upload_sound"
 SERVICE_DELETE_SOUND = "delete_sound"
@@ -36,3 +40,8 @@ def sound_list_signal(entry_id: str) -> str:
 def radio_volume_signal(entry_id: str) -> str:
     """Return dispatcher signal for radio volume changes."""
     return f"{DOMAIN}_{entry_id}_radio_volume_updated"
+
+
+def media_group_signal() -> str:
+    """Return dispatcher signal for group membership/state changes."""
+    return f"{DOMAIN}_media_group_updated"
