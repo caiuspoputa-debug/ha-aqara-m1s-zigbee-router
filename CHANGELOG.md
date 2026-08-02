@@ -1,3 +1,11 @@
+## 0.4.2 - test
+
+- replaced media-group fan-out with one shared Home Assistant FFmpeg process
+- the same mono 32 kHz S32_LE PCM chunks are broadcast to every active M1S hub
+- slow or offline hubs are removed individually without stopping the remaining group
+- preserved individual media players, fine volume, dynamic membership and physical-button events
+- a hub enabled during playback joins the current common PCM stream
+
 ## 0.4.1 - test
 
 - fixes media-group fan-out so a stale coordinator poll does not exclude a hub before the actual play attempt
