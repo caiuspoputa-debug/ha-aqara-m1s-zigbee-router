@@ -2,6 +2,21 @@
 
 **Română** | [English](README.md)
 
+## Recuperarea hubului după pierderea configurației Wi-Fi
+
+Dacă hubul anunță vocal **„Ready to connect Mi Home app”**, nu înseamnă neapărat că este brickuit. Înseamnă că a intrat în modul de configurare Wi-Fi și pornește propriul punct de acces.
+
+Procedura de mai jos a fost folosită pentru recuperarea unui Aqara M1S Gen 1 care nu mai răspundea la ping sau Telnet și nu mai era conectat la rețeaua Wi-Fi normală.
+
+### 1. Conectarea la punctul de acces al hubului
+
+Conectează calculatorul la rețeaua Wi-Fi emisă de hub.
+
+Dacă Windows nu primește automat o adresă compatibilă, deschide **Command Prompt sau PowerShell ca Administrator** și configurează temporar placa Wi-Fi:
+
+```powershell
+netsh interface ip set address name="Wi-Fi" static 192.168.49.2 255.255.255.0 192.168.49.1
+
 ### Publicarea imediată a acțiunii `hold`
 
 Watcher-ul butonului fizic întârzie intenționat cu 1,2 secunde acțiunile de tip click, pentru ca la apăsările multiple să fie publicată doar acțiunea finală:
