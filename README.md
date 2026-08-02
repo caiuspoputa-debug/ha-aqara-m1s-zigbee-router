@@ -2,6 +2,91 @@
 
 [Română](README_RO.md) | **English**
 
+### Immediate `hold` publication
+
+The physical-button watcher intentionally delays click actions by 1.2 seconds so
+that multi-click sequences publish only their final result:
+
+* `click`
+* `double_click`
+* `triple_click`
+* `quadruple_click`
+* `five_click`
+
+The `hold` action must not use this delay. It is published immediately when the
+stock Aqara service writes the `hold` message to `/var/log/messages`.
+
+The `hold` branch also increments the state token before publishing. This
+cancels any pending `click` that may have been generated while the button was
+being held.
+
+The required watcher logic is:
+
+```sh
+*'mha_master'*'on_message:'*'"method":"basis.button"'*'"name":"hold"'*)
+    # Cancel any pending delayed click.
+    seq=$((seq + 1))
+    echo "$seq" > "$STATE"
+
+    # Publish hold immediately.
+    "$PUB" "hold"
+    continue
+    ;;
+```
+
+All other detected actions continue through:
+
+```sh
+publish_later "$seq" "$action"
+```
+
+with the existing 1.2-second delay.
+
+After installing or updating the watcher:
+
+```sh
+chmod 700 /data/m1s_button/button_watch.sh
+sh -n /data/m1s_button/button_watch.sh
+```
+
+No output from `sh -n` means the syntax is valid.
+
+Restart only the watcher:
+
+```sh
+for p in $(ps | awk '/[b]utton_watch.sh/{print $1}'); do
+    kill -9 "$p" 2>/dev/null
+done
+
+rm -f /tmp/button_state
+
+/data/m1s_button/button_watch.sh >> /tmp/m1s_button.log 2>&1 &
+```
+
+Several `button_watch.sh` processes may appear in `ps`. This is normal because
+the script uses a pipeline and subshells. They must belong to one process chain,
+not to several separately launched watcher instances.
+
+Verification:
+
+```sh
+ps | grep '[b]utton_watch.sh'
+
+for p in $(ps | awk '/[b]utton_watch.sh/{print $1}'); do
+    echo "PID=$p"
+    grep '^PPid:' /proc/$p/status
+done
+```
+
+Expected behavior:
+
+* click actions are published after the 1.2-second final-action filter;
+* `hold` is published immediately when detected;
+* releasing the button does not generate an additional delayed `click`;
+* MQTT topic remains hub-specific:
+  `m1s/HUB_ID/button/action`.
+
+
 Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
