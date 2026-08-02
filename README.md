@@ -2,6 +2,21 @@
 
 [Română](README_RO.md) | **English**
 
+## Recovering the hub after losing its Wi-Fi configuration
+
+If the hub announces **“Ready to connect Mi Home app”**, this does not necessarily mean that it is bricked. It usually means that the hub has entered Wi-Fi setup mode and started its own access point.
+
+The procedure below was used to recover an Aqara M1S Gen 1 that no longer responded to ping or Telnet and was no longer connected to the normal Wi-Fi network.
+
+### 1. Connect to the hub access point
+
+Connect the computer to the Wi-Fi network broadcast by the hub.
+
+If Windows does not automatically receive a compatible IP address, open **Command Prompt or PowerShell as Administrator** and temporarily configure the Wi-Fi adapter:
+
+```powershell
+netsh interface ip set address name="Wi-Fi" static 192.168.49.2 255.255.255.0 192.168.49.1
+
 ### Immediate `hold` publication
 
 The physical-button watcher intentionally delays click actions by 1.2 seconds so
