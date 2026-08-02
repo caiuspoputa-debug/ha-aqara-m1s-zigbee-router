@@ -319,10 +319,13 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
         self.last_media_type: str = MediaType.MUSIC
         self._resolved_media_url: str | None = None
         self._volume_restart_task: asyncio.Task | None = None
+        self._restore_playback_task: asyncio.Task | None = None
+        self._restore_playback_pending = False
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last = await self.async_get_last_state()
+        restore_playing = False
         if last:
             attrs = last.attributes
             with suppress(TypeError, ValueError):
@@ -333,13 +336,65 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
             self._attr_media_content_id = self.last_media_id
             self._attr_media_content_type = self.last_media_type
             self._attr_media_title = attrs.get("last_media_title") or attrs.get("media_title")
+            restore_playing = (
+                last.state == MediaPlayerState.PLAYING
+                and bool(self.last_media_id)
+            )
         self.async_on_remove(async_dispatcher_connect(self.hass, media_group_signal(), self._refresh))
+        if restore_playing:
+            self._restore_playback_pending = True
+            self._restore_playback_task = self.hass.async_create_background_task(
+                self._async_restore_playback(),
+                "aqara_m1s_media_group_restore_playback",
+            )
 
     async def async_will_remove_from_hass(self) -> None:
-        if self._volume_restart_task:
-            self._volume_restart_task.cancel()
+        for task in (self._volume_restart_task, self._restore_playback_task):
+            if task:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
         await self.manager.stop(update_entity=False)
         await super().async_will_remove_from_hass()
+
+    async def _async_restore_playback(self) -> None:
+        """Resume the shared group after a Home Assistant restart.
+
+        Membership switches restore independently, so wait until their states and
+        hub players are available.  A missing hub never blocks the others.
+        """
+        try:
+            # Allow all config entries, membership switches and hub coordinators
+            # to finish loading before the first attempt.
+            await asyncio.sleep(12)
+
+            for _ in range(12):
+                if not self._restore_playback_pending or not self.last_media_id:
+                    return
+                if self.manager.players():
+                    try:
+                        await self.async_play_media(
+                            self.last_media_type,
+                            self.last_media_id,
+                            extra={"title": self._attr_media_title},
+                        )
+                    except Exception as err:
+                        _LOGGER.warning(
+                            "Automatic M1S media-group resume failed; retrying: %s", err
+                        )
+                    else:
+                        if self._attr_state == MediaPlayerState.PLAYING:
+                            self._restore_playback_pending = False
+                            return
+                await asyncio.sleep(5)
+
+            _LOGGER.warning(
+                "Automatic M1S media-group resume gave up because no selected hub started"
+            )
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._restore_playback_task = None
 
     def _refresh(self) -> None:
         self.async_write_ha_state()
@@ -366,6 +421,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
             "last_media_id": self.last_media_id,
             "last_media_type": self.last_media_type,
             "last_media_title": self._attr_media_title,
+            "auto_resume_pending": self._restore_playback_pending,
         }
 
     async def async_browse_media(self, media_content_type=None, media_content_id=None):
@@ -382,6 +438,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
         return async_process_play_media_url(self.hass, resolved_id, allow_relative_url=False)
 
     async def async_play_media(self, media_type: str, media_id: str, **kwargs: Any) -> None:
+        self._restore_playback_pending = False
         self.last_media_id = media_id
         self.last_media_type = media_type or MediaType.MUSIC
         self._attr_media_content_id = media_id
@@ -404,6 +461,9 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
         )
 
     async def async_media_stop(self) -> None:
+        self._restore_playback_pending = False
+        if self._restore_playback_task and self._restore_playback_task is not asyncio.current_task():
+            self._restore_playback_task.cancel()
         await self.manager.stop()
 
     async def async_turn_off(self) -> None:
