@@ -2,111 +2,11 @@
 
 [Română](README_RO.md) | **English**
 
-## Recovering the hub after losing its Wi-Fi configuration
-
-If the hub announces **“Ready to connect Mi Home app”**, this does not necessarily mean that it is bricked. It usually means that the hub has entered Wi-Fi setup mode and started its own access point.
-
-The procedure below was used to recover an Aqara M1S Gen 1 that no longer responded to ping or Telnet and was no longer connected to the normal Wi-Fi network.
-
-### 1. Connect to the hub access point
-
-Connect the computer to the Wi-Fi network broadcast by the hub.
-
-If Windows does not automatically receive a compatible IP address, open **Command Prompt or PowerShell as Administrator** and temporarily configure the Wi-Fi adapter:
-
-```powershell
-netsh interface ip set address name="Wi-Fi" static 192.168.49.2 255.255.255.0 192.168.49.1
-
-### Immediate `hold` publication
-
-The physical-button watcher intentionally delays click actions by 1.2 seconds so
-that multi-click sequences publish only their final result:
-
-* `click`
-* `double_click`
-* `triple_click`
-* `quadruple_click`
-* `five_click`
-
-The `hold` action must not use this delay. It is published immediately when the
-stock Aqara service writes the `hold` message to `/var/log/messages`.
-
-The `hold` branch also increments the state token before publishing. This
-cancels any pending `click` that may have been generated while the button was
-being held.
-
-The required watcher logic is:
-
-```sh
-*'mha_master'*'on_message:'*'"method":"basis.button"'*'"name":"hold"'*)
-    # Cancel any pending delayed click.
-    seq=$((seq + 1))
-    echo "$seq" > "$STATE"
-
-    # Publish hold immediately.
-    "$PUB" "hold"
-    continue
-    ;;
-```
-
-All other detected actions continue through:
-
-```sh
-publish_later "$seq" "$action"
-```
-
-with the existing 1.2-second delay.
-
-After installing or updating the watcher:
-
-```sh
-chmod 700 /data/m1s_button/button_watch.sh
-sh -n /data/m1s_button/button_watch.sh
-```
-
-No output from `sh -n` means the syntax is valid.
-
-Restart only the watcher:
-
-```sh
-for p in $(ps | awk '/[b]utton_watch.sh/{print $1}'); do
-    kill -9 "$p" 2>/dev/null
-done
-
-rm -f /tmp/button_state
-
-/data/m1s_button/button_watch.sh >> /tmp/m1s_button.log 2>&1 &
-```
-
-Several `button_watch.sh` processes may appear in `ps`. This is normal because
-the script uses a pipeline and subshells. They must belong to one process chain,
-not to several separately launched watcher instances.
-
-Verification:
-
-```sh
-ps | grep '[b]utton_watch.sh'
-
-for p in $(ps | awk '/[b]utton_watch.sh/{print $1}'); do
-    echo "PID=$p"
-    grep '^PPid:' /proc/$p/status
-done
-```
-
-Expected behavior:
-
-* click actions are published after the 1.2-second final-action filter;
-* `hold` is published immediately when detected;
-* releasing the button does not generate an additional delayed `click`;
-* MQTT topic remains hub-specific:
-  `m1s/HUB_ID/button/action`.
-
-
 Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.1 (test release)**
+Current version: **0.5.2 (test release)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
@@ -122,7 +22,7 @@ Current version: **0.5.1 (test release)**
 - offline or slow hubs are skipped individually and retried automatically
 - individual playback has strict priority: a hub playing individually is never stopped or taken over by the group
 - each hub has an **Include in M1S Media Group** switch
-- the group has normal volume plus a separate 0–4% fine-volume slider in 0.1% steps
+- the group has normal volume plus a separate precise 0–100% slider in 0.2% steps
 - physical-button actions are exposed as an event entity and device triggers: `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click`, and `hold`
 - group audio uses dedicated hub resources on TCP port `12347`; the individual player remains isolated on `12346`
 
@@ -131,7 +31,7 @@ Current version: **0.5.1 (test release)**
 ## What changed in v0.2.6
 
 - media-player display name changed from **Radio** to **Media Player**
-- media-player volume control supports 0.1% steps
+- media-player volume is uniformly quantized in 0.2% steps across 0–100%
 - bilingual Configure labels, with Romanian displayed first
 - immediate sound-catalogue refresh after WAV upload or deletion
 - controlled full integration reload through **Finalizare și închidere / Finish and close**
@@ -805,11 +705,12 @@ compete for the same hub UART or audio resources.
 ## Entities in v0.5.0
 
 - `Ring Light`: RGB ring with brightness
-- `Media Player`: general Home Assistant speaker/media player with 0.1% volume steps
+- `Media Player`: general Home Assistant speaker/media player quantized in 0.2% volume steps
 - `M1S Media Group`: shared-timeline player for all selected hubs
-- `M1S Media Group - Fine Volume 0-4%`: 0.1% group-volume steps
+- `M1S Media Group Volume 0-100% - Step 0.2%`: precise 0–100% group slider in 0.2% steps
 - `Include in M1S Media Group`: one membership switch per hub
 - `Physical Button`: `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click`, and `hold` events
+- `Media Player Volume 0-100% - Step 0.2%`: precise individual-player slider
 - `Sound Playback Volume`: local-sound playback volume
 - `Illuminance`: direct JN5189 lux value, with ADC raw and millivolts attributes
 - `Hub Temperature`: `persist.sys.temperature` only

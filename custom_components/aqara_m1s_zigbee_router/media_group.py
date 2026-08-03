@@ -329,10 +329,10 @@ class AqaraM1SMediaGroupManager:
 
     @staticmethod
     def normalize_volume(volume: float) -> float:
+        """Quantize the complete 0-100% range in uniform 0.2% steps."""
         volume = max(0.0, min(1.0, float(volume)))
-        if volume <= 0.04:
-            return round(volume * 1000.0) / 1000.0
-        return round(volume * 100.0) / 100.0
+        quantized = round(volume / 0.002) * 0.002
+        return max(0.0, min(1.0, round(quantized, 3)))
 
     async def _restart_stream_locked(self, reason: str) -> None:
         await self._stop_stream_locked(stop_members=True, reason=reason)
@@ -845,7 +845,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
     _attr_unique_id = "aqara_m1s_media_group"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    _attr_volume_step = 0.001
+    _attr_volume_step = 0.002
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
@@ -1018,13 +1018,11 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
 
     async def async_volume_up(self) -> None:
         current = self.manager.volume
-        step = 0.001 if current < 0.04 else 0.01
-        await self.async_set_volume_level(current + step)
+        await self.async_set_volume_level(current + 0.002)
 
     async def async_volume_down(self) -> None:
         current = self.manager.volume
-        step = 0.001 if current <= 0.04 else 0.01
-        await self.async_set_volume_level(current - step)
+        await self.async_set_volume_level(current - 0.002)
 
     async def async_mute_volume(self, mute: bool) -> None:
         await self.manager.async_set_muted(mute)

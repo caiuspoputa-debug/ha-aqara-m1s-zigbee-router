@@ -97,10 +97,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_name = "Media Player"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    # Home Assistant exposes one fixed slider step. Use 0.1% so low-volume
-    # values are selectable everywhere the media player is shown; values above
-    # 4% are normalized to whole percentages by async_set_volume_level().
-    _attr_volume_step = 0.001
+    # Use one uniform 0.2% volume increment across the complete 0-100% range.
+    # Home Assistant stores media-player volume as a normalized 0.0-1.0 value,
+    # therefore 0.2% is represented by 0.002.
+    _attr_volume_step = 0.002
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
@@ -183,8 +183,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             restored_volume = attrs.get("volume_level")
             if restored_volume is not None:
                 try:
-                    self._attr_volume_level = max(
-                        0.0, min(1.0, float(restored_volume))
+                    self._attr_volume_level = self._normalize_volume(
+                        float(restored_volume)
                     )
                 except (TypeError, ValueError):
                     pass
@@ -421,23 +421,20 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     @staticmethod
     def _normalize_volume(volume: float) -> float:
-        """Use 0.1% steps through 4%, then whole 1% steps."""
+        """Quantize the complete 0-100% range in uniform 0.2% steps."""
         volume = max(0.0, min(1.0, volume))
-        if volume <= 0.04:
-            return round(volume * 1000.0) / 1000.0
-        return round(volume * 100.0) / 100.0
+        quantized = round(volume / 0.002) * 0.002
+        return max(0.0, min(1.0, round(quantized, 3)))
 
     async def async_volume_up(self) -> None:
-        """Increase by 0.1% at low volume and by 1% above 4%."""
+        """Increase volume by 0.2%."""
         current = self._attr_volume_level or 0.0
-        step = 0.001 if current < 0.04 else 0.01
-        await self.async_set_volume_level(current + step)
+        await self.async_set_volume_level(current + 0.002)
 
     async def async_volume_down(self) -> None:
-        """Decrease by 0.1% through 4% and by 1% above it."""
+        """Decrease volume by 0.2%."""
         current = self._attr_volume_level or 0.0
-        step = 0.001 if current <= 0.04 else 0.01
-        await self.async_set_volume_level(current - step)
+        await self.async_set_volume_level(current - 0.002)
 
     def _handle_coordinator_update(self) -> None:
         """Resume the remembered media after a real hub reconnect."""

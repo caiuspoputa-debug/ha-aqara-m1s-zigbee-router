@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2
+
+- changed individual and group media-player volume normalization to one uniform 0.2% step across 0-100%
+- changed volume up/down actions to 0.2% per press for individual and group players
+- expanded the precise individual and group number sliders to 0-100% with a 0.2% step
+- retained the precise number sliders because Home Assistant documents `volume_step` for volume up/down actions, not as a guarantee for every frontend slider drag
+
 ## 0.5.1
 
 - fix Home Assistant platform forwarding by using explicit platform names

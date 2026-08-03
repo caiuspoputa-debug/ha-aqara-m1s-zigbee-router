@@ -161,13 +161,13 @@ class AqaraM1SRadioFineVolume(
     CoordinatorEntity,
     NumberEntity,
 ):
-    """Fine radio-volume slider from 0% to 4% in 0.1% steps."""
+    """Precise individual-player volume slider from 0% to 100% in 0.2% steps."""
 
-    _attr_name = "Media Player - Fine Volume 0-4%"
+    _attr_name = "Media Player Volume 0-100% - Step 0.2%"
     _attr_icon = "mdi:volume-low"
     _attr_native_min_value = 0.0
-    _attr_native_max_value = 4.0
-    _attr_native_step = 0.1
+    _attr_native_max_value = 100.0
+    _attr_native_step = 0.2
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_mode = NumberMode.SLIDER
     _attr_should_poll = False
@@ -196,9 +196,9 @@ class AqaraM1SRadioFineVolume(
 
     @property
     def native_value(self) -> float:
-        """Return current radio volume, limited to the fine 0-4% range."""
+        """Return current individual-player volume as a 0-100 percentage."""
         volume_level = self.radio_player.volume_level or 0.0
-        return round(min(4.0, max(0.0, volume_level * 100.0)), 1)
+        return round(min(100.0, max(0.0, volume_level * 100.0)), 1)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -218,21 +218,21 @@ class AqaraM1SRadioFineVolume(
         self.schedule_update_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set actual radio volume between 0% and 4%."""
-        safe_percent = round(max(0.0, min(4.0, float(value))), 1)
+        """Set individual-player volume between 0% and 100% in 0.2% steps."""
+        safe_percent = round(round(max(0.0, min(100.0, float(value))) / 0.2) * 0.2, 1)
         await self.radio_player.async_set_volume_level(safe_percent / 100.0)
         self.async_write_ha_state()
 
 
 class AqaraM1SGroupFineVolume(NumberEntity):
-    """Fine 0-4% slider for the shared media group."""
+    """Precise shared-group volume slider from 0% to 100% in 0.2% steps."""
 
-    _attr_name = "M1S Media Group - Fine Volume 0-4%"
+    _attr_name = "M1S Media Group Volume 0-100% - Step 0.2%"
     _attr_unique_id = "aqara_m1s_media_group_fine_volume"
     _attr_icon = "mdi:volume-low"
     _attr_native_min_value = 0.0
-    _attr_native_max_value = 4.0
-    _attr_native_step = 0.1
+    _attr_native_max_value = 100.0
+    _attr_native_step = 0.2
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_mode = NumberMode.SLIDER
     _attr_should_poll = False
@@ -242,7 +242,7 @@ class AqaraM1SGroupFineVolume(NumberEntity):
 
     @property
     def native_value(self) -> float:
-        return round(min(4.0, max(0.0, self.manager.volume * 100.0)), 1)
+        return round(min(100.0, max(0.0, self.manager.volume * 100.0)), 1)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -262,6 +262,6 @@ class AqaraM1SGroupFineVolume(NumberEntity):
         await super().async_will_remove_from_hass()
 
     async def async_set_native_value(self, value: float) -> None:
-        safe_percent = round(max(0.0, min(4.0, float(value))), 1)
+        safe_percent = round(round(max(0.0, min(100.0, float(value))) / 0.2) * 0.2, 1)
         await self.manager.async_set_volume(safe_percent / 100.0)
         self.async_write_ha_state()

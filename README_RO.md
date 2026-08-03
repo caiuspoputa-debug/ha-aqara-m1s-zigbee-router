@@ -2,108 +2,11 @@
 
 **Română** | [English](README.md)
 
-## Recuperarea hubului după pierderea configurației Wi-Fi
-
-Dacă hubul anunță vocal **„Ready to connect Mi Home app”**, nu înseamnă neapărat că este brickuit. Înseamnă că a intrat în modul de configurare Wi-Fi și pornește propriul punct de acces.
-
-Procedura de mai jos a fost folosită pentru recuperarea unui Aqara M1S Gen 1 care nu mai răspundea la ping sau Telnet și nu mai era conectat la rețeaua Wi-Fi normală.
-
-### 1. Conectarea la punctul de acces al hubului
-
-Conectează calculatorul la rețeaua Wi-Fi emisă de hub.
-
-Dacă Windows nu primește automat o adresă compatibilă, deschide **Command Prompt sau PowerShell ca Administrator** și configurează temporar placa Wi-Fi:
-
-```powershell
-netsh interface ip set address name="Wi-Fi" static 192.168.49.2 255.255.255.0 192.168.49.1
-
-### Publicarea imediată a acțiunii `hold`
-
-Watcher-ul butonului fizic întârzie intenționat cu 1,2 secunde acțiunile de tip click, pentru ca la apăsările multiple să fie publicată doar acțiunea finală:
-
-* `click`
-* `double_click`
-* `triple_click`
-* `quadruple_click`
-* `five_click`
-
-Acțiunea `hold` nu trebuie să folosească această întârziere. Ea este publicată imediat când serviciul Aqara scrie mesajul `hold` în `/var/log/messages`.
-
-Ramura `hold` incrementează și tokenul de stare înainte de publicare. În acest fel este anulat orice `click` întârziat care ar fi putut fi detectat în timpul apăsării lungi.
-
-Logica necesară în watcher este:
-
-```sh
-*'mha_master'*'on_message:'*'"method":"basis.button"'*'"name":"hold"'*)
-    # Anuleaza orice click intarziat aflat in asteptare.
-    seq=$((seq + 1))
-    echo "$seq" > "$STATE"
-
-    # Publica hold imediat.
-    "$PUB" "hold"
-    continue
-    ;;
-```
-
-Toate celelalte acțiuni detectate continuă să treacă prin:
-
-```sh
-publish_later "$seq" "$action"
-```
-
-cu întârzierea existentă de 1,2 secunde.
-
-După instalarea sau actualizarea watcher-ului:
-
-```sh
-chmod 700 /data/m1s_button/button_watch.sh
-sh -n /data/m1s_button/button_watch.sh
-```
-
-Dacă `sh -n` nu afișează nimic, sintaxa este validă.
-
-Repornește doar watcher-ul, fără restartarea hubului:
-
-```sh
-for p in $(ps | awk '/[b]utton_watch.sh/{print $1}'); do
-    kill -9 "$p" 2>/dev/null
-done
-
-rm -f /tmp/button_state
-
-/data/m1s_button/button_watch.sh >> /tmp/m1s_button.log 2>&1 &
-```
-
-În rezultatul comenzii `ps` pot apărea mai multe procese `button_watch.sh`. Acest lucru este normal, deoarece scriptul folosește o conductă și subshell-uri. Procesele trebuie să facă parte dintr-un singur lanț, nu din mai multe instanțe principale pornite separat.
-
-Verificare:
-
-```sh
-ps | grep '[b]utton_watch.sh'
-
-for p in $(ps | awk '/[b]utton_watch.sh/{print $1}'); do
-    echo "PID=$p"
-    grep '^PPid:' /proc/$p/status
-done
-```
-
-Comportamentul corect este:
-
-* acțiunile de tip click sunt publicate după filtrarea de 1,2 secunde;
-* `hold` este publicat imediat când este detectat;
-* la eliberarea butonului nu se mai publică suplimentar un `click` întârziat;
-* topicul MQTT rămâne specific fiecărui hub:
-
-```text
-m1s/HUB_ID/button/action
-```
-
-
 Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
 NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
 locală a hubului.
 
-Versiune curentă: **0.5.0 (test release)**
+Versiune curentă: **0.5.2 (test release)**
 
 > Proiectul este destinat modelului Aqara M1S Gen 1 `lumi.gateway.aeu01`.
 > Scrierea JN5189 este o operație avansată. Păstrează un backup verificat și nu
@@ -120,7 +23,7 @@ Versiune curentă: **0.5.0 (test release)**
 - huburile offline sau lente sunt sărite individual și reîncercate automat
 - redarea individuală are prioritate strictă: un hub care redă individual nu este oprit și nu este preluat de grup
 - fiecare hub primește switch-ul **Include in M1S Media Group**
-- grupul are volum normal și un slider separat 0–4%, cu pas de 0,1%
+- grupul are volum normal și un slider precis separat 0–100%, cu pas de 0,2%
 - acțiunile butonului fizic sunt expuse ca entitate event și trigger-e de dispozitiv: `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click` și `hold`
 - grupul folosește resurse audio dedicate pe portul TCP `12347`; playerul individual rămâne izolat pe `12346`
 
@@ -129,7 +32,7 @@ Versiune curentă: **0.5.0 (test release)**
 ## Ce s-a schimbat în v0.2.6
 
 - numele afișat al entității a fost schimbat din **Radio** în **Media Player**
-- volumul media playerului permite pași de 0,1%
+- volumul media playerului este cuantizat uniform în pași de 0,2% pe intervalul 0–100%
 - etichete bilingve în meniul Configure, cu româna afișată prima
 - actualizarea imediată a catalogului de sunete după încărcarea sau ștergerea unui WAV
 - reîncărcarea completă și controlată a integrării prin
@@ -802,11 +705,12 @@ concureze pentru același UART sau aceleași resurse audio ale hubului.
 ## Entități în v0.5.0
 
 - `Ring Light`: inel RGB cu luminozitate
-- `Media Player`: difuzor/media player general Home Assistant, cu pași de volum de 0,1%
+- `Media Player`: difuzor/media player general Home Assistant, cuantizat în pași de volum de 0,2%
 - `M1S Media Group`: player cu cronologie comună pentru toate huburile selectate
-- `M1S Media Group - Fine Volume 0-4%`: volum fin de grup, cu pas de 0,1%
+- `M1S Media Group Volume 0-100% - Step 0.2%`: slider precis de grup, 0–100%, cu pas de 0,2%
 - `Include in M1S Media Group`: câte un switch de includere pentru fiecare hub
 - `Physical Button`: evenimente `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click` și `hold`
+- `Media Player Volume 0-100% - Step 0.2%`: slider precis pentru playerul individual
 - `Sound Playback Volume`: volumul redării sunetelor locale
 - `Illuminance`: lux direct din JN5189, cu atribute ADC raw și millivolts
 - `Hub Temperature`: numai din `persist.sys.temperature`
