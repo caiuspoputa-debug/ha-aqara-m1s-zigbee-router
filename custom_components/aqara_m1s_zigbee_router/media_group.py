@@ -47,6 +47,7 @@ WATCHDOG_RESTART_DELAY = 5.0
 WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
 WATCHDOG_STABLE_SECONDS = 30.0
+FULL_RESYNC_RETRY_SECONDS = 30.0
 
 SILENCE_CHUNK = b"\x00" * CHUNK_BYTES
 
@@ -88,6 +89,7 @@ class GroupMember:
     join_at_sequence: int | None = None
     last_error: str | None = None
     generation: int = 0
+    last_prepare_attempt_monotonic: float = 0.0
 
 
 class AqaraM1SMediaGroupManager:
@@ -122,6 +124,8 @@ class AqaraM1SMediaGroupManager:
         self._stream_started_monotonic: float | None = None
         self._watchdog_attempts = 0
         self._last_failure: str | None = None
+        self._full_resync_count = 0
+        self._last_full_resync_reason: str | None = None
         self._shutting_down = False
 
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
@@ -159,6 +163,7 @@ class AqaraM1SMediaGroupManager:
             member.state = "playing_individual"
         else:
             member.state = "waiting_for_sync"
+            member.last_prepare_attempt_monotonic = 0.0
         self._signal_update()
         if self.desired_playing:
             self._ensure_reconcile_task()
@@ -205,6 +210,7 @@ class AqaraM1SMediaGroupManager:
             member = self.members.get(entry_id)
             if member and member.selected:
                 member.state = "waiting_for_sync"
+                member.last_prepare_attempt_monotonic = 0.0
         self._signal_update()
         if self.desired_playing:
             self._ensure_reconcile_task()
@@ -268,6 +274,10 @@ class AqaraM1SMediaGroupManager:
             "excluded_hubs": sorted(by_state.get("excluded", [])),
             "last_failure": self._last_failure,
             "watchdog_restart_attempts": self._watchdog_attempts,
+            "rejoin_sync_mode": "full_group_restart",
+            "full_resync_count": self._full_resync_count,
+            "last_full_resync_reason": self._last_full_resync_reason,
+            "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
         }
 
     async def async_start(
@@ -335,6 +345,9 @@ class AqaraM1SMediaGroupManager:
         return max(0.0, min(1.0, round(quantized, 3)))
 
     async def _restart_stream_locked(self, reason: str) -> None:
+        if reason.startswith("member_rejoin:"):
+            self._full_resync_count += 1
+            self._last_full_resync_reason = reason
         await self._stop_stream_locked(stop_members=True, reason=reason)
         if not self.desired_playing or not self.media_url:
             return
@@ -470,6 +483,7 @@ class AqaraM1SMediaGroupManager:
     async def _prepare_member(self, member: GroupMember, *, initial: bool) -> bool:
         if not self._eligible(member) or member.writer is not None:
             return False
+        member.last_prepare_attempt_monotonic = time.monotonic()
         member.generation += 1
         generation = member.generation
         try:
@@ -585,6 +599,10 @@ class AqaraM1SMediaGroupManager:
                     member.client.run_command, GROUP_STOP_COMMAND
                 )
         member.state = new_state
+        if new_state == "offline":
+            # A real offline -> online transition must trigger an immediate full
+            # resynchronisation, even when the previous preparation was recent.
+            member.last_prepare_attempt_monotonic = 0.0
         self._signal_update()
 
     async def _remote_group_stop(self, member: GroupMember) -> None:
@@ -695,18 +713,49 @@ class AqaraM1SMediaGroupManager:
                 if not self.ffmpeg_running and self.media_url:
                     self._schedule_watchdog_restart()
                     continue
+
+                # Remove members that are no longer eligible without disturbing
+                # the hubs that are still playing.  When such a hub becomes
+                # eligible again, the block below performs a deterministic full
+                # restart of every selected receiver and the shared FFmpeg source.
                 for member in list(self.members.values()):
-                    if member.writer is not None:
-                        if not self._eligible(member):
-                            await self._detach_member(
-                                member.entry_id,
-                                stop_remote=True,
-                                new_state=self._idle_member_state(member),
-                            )
+                    if member.writer is not None and not self._eligible(member):
+                        await self._detach_member(
+                            member.entry_id,
+                            stop_remote=True,
+                            new_state=self._idle_member_state(member),
+                        )
+
+                if self.ffmpeg_running:
+                    now = time.monotonic()
+                    missing = [
+                        member
+                        for member in self.members.values()
+                        if member.writer is None and self._eligible(member)
+                    ]
+                    due = [
+                        member
+                        for member in missing
+                        if now - member.last_prepare_attempt_monotonic
+                        >= FULL_RESYNC_RETRY_SECONDS
+                    ]
+                    if due:
+                        names = ",".join(sorted(member.name for member in due))
+                        _LOGGER.info(
+                            "M1S group member rejoin detected; restarting all "
+                            "receivers for deterministic synchronization: %s",
+                            names,
+                        )
+                        async with self._lock:
+                            if self.desired_playing and self.ffmpeg_running:
+                                await self._restart_stream_locked(
+                                    reason=f"member_rejoin:{names}"
+                                )
+                        self._signal_update()
                         continue
-                    if self._eligible(member) and self.ffmpeg_running:
-                        await self._prepare_member(member, initial=False)
-                    else:
+
+                for member in self.members.values():
+                    if member.writer is None:
                         member.state = self._idle_member_state(member)
                 self._signal_update()
         except asyncio.CancelledError:

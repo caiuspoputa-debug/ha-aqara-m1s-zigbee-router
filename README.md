@@ -6,7 +6,7 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.2 (test release)**
+Current version: **0.5.3 (test release)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
@@ -18,8 +18,8 @@ Current version: **0.5.2 (test release)**
 - the individual watchdog recovery bug in the delayed-resume path is fixed
 - one optional **M1S Media Group** uses a single FFmpeg process and one shared PCM timeline
 - every selected hub receives the same 20 ms PCM sequence; audible content begins after a common 1.5-second silent synchronization gate
-- a late or recovered hub joins at a future shared stream sequence, without restarting hubs that are already playing
-- offline or slow hubs are skipped individually and retried automatically
+- an offline hub is removed without interrupting the remaining hubs; when it returns, the integration restarts every group receiver and the single shared FFmpeg process for a uniform start
+- a failed receiver preparation is retried behind a 30-second guard to avoid rapid repeated full-group interruptions
 - individual playback has strict priority: a hub playing individually is never stopped or taken over by the group
 - each hub has an **Include in M1S Media Group** switch
 - the group has normal volume plus a separate precise 0–100% slider in 0.2% steps

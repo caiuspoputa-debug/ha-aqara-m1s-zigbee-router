@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.3
+
+- changed late/recovered group-member handling from live insertion to a full group restart
+- when a selected online hub returns while the group is playing, all group receivers and the single shared FFmpeg process are restarted together
+- retained removal of an offline or individually claimed hub without interrupting the remaining group
+- added a 30-second retry guard after a failed receiver preparation to prevent repeated rapid full-group interruptions
+- added group diagnostics: `rejoin_sync_mode`, `full_resync_count`, `last_full_resync_reason`, and `full_resync_retry_seconds`
+
 ## 0.5.2
 
 - changed individual and group media-player volume normalization to one uniform 0.2% step across 0-100%

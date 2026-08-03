@@ -6,7 +6,7 @@ Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
 NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
 locală a hubului.
 
-Versiune curentă: **0.5.2 (test release)**
+Versiune curentă: **0.5.3 (test release)**
 
 > Proiectul este destinat modelului Aqara M1S Gen 1 `lumi.gateway.aeu01`.
 > Scrierea JN5189 este o operație avansată. Păstrează un backup verificat și nu
@@ -19,8 +19,8 @@ Versiune curentă: **0.5.2 (test release)**
 - este reparată eroarea din ramura de reluare întârziată a watchdog-ului individual
 - un singur **M1S Media Group** opțional folosește un singur proces FFmpeg și o cronologie PCM comună
 - fiecare hub selectat primește aceeași secvență PCM de 20 ms; conținutul audibil începe după o poartă comună de sincronizare cu 1,5 secunde de tăcere
-- un hub revenit sau întârziat intră la o secvență viitoare comună, fără repornirea huburilor care redau deja
-- huburile offline sau lente sunt sărite individual și reîncercate automat
+- un hub offline este eliminat fără să întrerupă huburile rămase; când revine, integrarea repornește toate receptoarele de grup și procesul FFmpeg comun pentru o pornire uniformă
+- o pregătire eșuată este reîncercată cu protecție de 30 de secunde, pentru a evita întreruperile repetate rapide ale întregului grup
 - redarea individuală are prioritate strictă: un hub care redă individual nu este oprit și nu este preluat de grup
 - fiecare hub primește switch-ul **Include in M1S Media Group**
 - grupul are volum normal și un slider precis separat 0–100%, cu pas de 0,2%
