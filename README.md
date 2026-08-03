@@ -904,3 +904,7 @@ Home Assistant color and brightness remain stored for the next manual turn-on.
 The old coordinator may retain a stale device entry that can be removed after
 the router appears on the new coordinator. The action does not erase the Linux
 hub, Wi-Fi, RGB/lux support or audio files
+
+### Group volume final-value apply (v0.5.4)
+
+The group volume slider is debounced. Intermediate positions update the displayed pending value, but the shared FFmpeg timeline is restarted only once, 0.8 seconds after the final volume service call. This avoids repeated audio interruptions while dragging the slider.

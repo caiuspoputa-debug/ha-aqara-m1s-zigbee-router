@@ -912,3 +912,7 @@ pornire manuală.
 Vechiul coordonator poate păstra o intrare învechită, care poate fi ștearsă după
 apariția routerului în noul coordonator. Acțiunea nu șterge Linux, Wi-Fi,
 RGB/lux sau fișierele audio.
+
+### Aplicarea valorii finale a volumului de grup (v0.5.4)
+
+Bara de volum a grupului folosește temporizare de stabilizare. Pozițiile intermediare actualizează valoarea afișată, însă cronologia FFmpeg comună este repornită o singură dată, la 0,8 secunde după ultima comandă de volum. Astfel sunt evitate întreruperile repetate în timpul deplasării barei.

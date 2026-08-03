@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.4
+
+- changed M1S media-group volume handling to debounce slider updates
+- intermediate slider positions now only update the pending Home Assistant state
+- the shared FFmpeg timeline restarts once, 0.8 seconds after the last volume call
+- added group diagnostics: `volume_apply_mode`, `volume_settle_seconds`, `volume_apply_pending`, `applied_volume_level`, and `applied_is_volume_muted`
+- retained the 0.2% volume scale and full-group resynchronisation behavior
+
 ## 0.5.3
 
 - changed late/recovered group-member handling from live insertion to a full group restart

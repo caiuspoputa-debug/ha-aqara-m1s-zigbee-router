@@ -48,6 +48,7 @@ WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
 WATCHDOG_STABLE_SECONDS = 30.0
 FULL_RESYNC_RETRY_SECONDS = 30.0
+GROUP_VOLUME_SETTLE_SECONDS = 0.8
 
 SILENCE_CHUNK = b"\x00" * CHUNK_BYTES
 
@@ -126,6 +127,9 @@ class AqaraM1SMediaGroupManager:
         self._last_failure: str | None = None
         self._full_resync_count = 0
         self._last_full_resync_reason: str | None = None
+        self._volume_restart_task: asyncio.Task | None = None
+        self._applied_volume = self.volume
+        self._applied_muted = self.muted
         self._shutting_down = False
 
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
@@ -278,6 +282,13 @@ class AqaraM1SMediaGroupManager:
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
+            "volume_apply_mode": "debounced_final_value",
+            "volume_settle_seconds": GROUP_VOLUME_SETTLE_SECONDS,
+            "volume_apply_pending": bool(
+                self._volume_restart_task and not self._volume_restart_task.done()
+            ),
+            "applied_volume_level": self._applied_volume,
+            "applied_is_volume_muted": self._applied_muted,
         }
 
     async def async_start(
@@ -311,6 +322,7 @@ class AqaraM1SMediaGroupManager:
     async def async_stop(self, *, clear_intent: bool = True) -> None:
         if clear_intent:
             self.desired_playing = False
+        await self._cancel_pending_volume_apply()
         await self._cancel_background_recovery()
         async with self._lock:
             await self._stop_stream_locked(stop_members=True, reason="user_stop")
@@ -318,20 +330,78 @@ class AqaraM1SMediaGroupManager:
 
     async def async_shutdown(self) -> None:
         self._shutting_down = True
+        await self._cancel_pending_volume_apply()
         await self._cancel_background_recovery()
         async with self._lock:
             await self._stop_stream_locked(stop_members=True, reason="shutdown")
 
     async def async_set_volume(self, volume: float) -> None:
+        """Store every slider position but apply only the final settled value.
+
+        Home Assistant may issue several volume service calls while a slider is
+        being dragged. Restarting the shared FFmpeg timeline for every intermediate
+        value causes repeated interruptions. Each new value therefore replaces the
+        pending value and resets a short quiet-period timer. Only one full group
+        restart is performed after the calls stop.
+        """
         self.volume = self.normalize_volume(volume)
         async_dispatcher_send(self.hass, media_group_volume_signal())
-        if self.desired_playing and self.media_url:
-            async with self._lock:
-                await self._restart_stream_locked(reason="volume_change")
         self._signal_update()
 
+        previous = self._volume_restart_task
+        self._volume_restart_task = None
+        if previous and previous is not asyncio.current_task():
+            previous.cancel()
+
+        if (
+            self.desired_playing
+            and self.media_url
+            and (
+                self.volume != self._applied_volume
+                or self.muted != self._applied_muted
+            )
+        ):
+            self._volume_restart_task = self.hass.async_create_background_task(
+                self._apply_volume_after_settle(),
+                "aqara_m1s_group_final_volume_apply",
+            )
+
+    async def _apply_volume_after_settle(self) -> None:
+        """Restart the shared timeline once, using the last requested volume."""
+        try:
+            await asyncio.sleep(GROUP_VOLUME_SETTLE_SECONDS)
+            async with self._lock:
+                if (
+                    self.desired_playing
+                    and self.media_url
+                    and (
+                        self.volume != self._applied_volume
+                        or self.muted != self._applied_muted
+                    )
+                ):
+                    await self._restart_stream_locked(
+                        reason="volume_change_final"
+                    )
+        except asyncio.CancelledError:
+            return
+        finally:
+            if self._volume_restart_task is asyncio.current_task():
+                self._volume_restart_task = None
+            self._signal_update()
+
+    async def _cancel_pending_volume_apply(self) -> None:
+        task = self._volume_restart_task
+        self._volume_restart_task = None
+        if task and task is not asyncio.current_task():
+            await self._cancel_task(task)
+
     async def async_set_muted(self, muted: bool) -> None:
-        self.muted = bool(muted)
+        muted = bool(muted)
+        if muted == self.muted and muted == self._applied_muted:
+            self._signal_update()
+            return
+        await self._cancel_pending_volume_apply()
+        self.muted = muted
         if self.desired_playing and self.media_url:
             async with self._lock:
                 await self._restart_stream_locked(reason="mute_change")
@@ -412,6 +482,8 @@ class AqaraM1SMediaGroupManager:
             raise RuntimeError("FFmpeg was not found") from err
 
         self.ffmpeg = process
+        self._applied_volume = self.volume
+        self._applied_muted = self.muted
         self._generation += 1
         generation = self._generation
         self._sequence = 0
