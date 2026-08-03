@@ -6,11 +6,20 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.3 (test release)**
+Current version: **0.5.6 (test release)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
 > EFUSE, ROM, Config or PSECT.
+
+## What changed in v0.5.6
+
+- individual players now apply volume and mute live over the already-running S32_LE PCM stream, without restarting FFmpeg, TCP, `nc` or `aplay`
+- the individual and group native media-player sliders use one uniform 0.1% step from 0-100%
+- the separate individual and group fine-volume Number entities were removed and are deleted automatically from the entity registry on upgrade
+- a 40 ms software gain ramp reduces clicks during volume and mute changes
+- FFmpeg requests best-effort normal Linux nice `-5`; hub-side `aplay` requests nice `-3`
+- niceness is non-realtime and optional: playback continues normally when the OS refuses either priority request
 
 ## What changed in v0.5.0
 
@@ -705,12 +714,10 @@ compete for the same hub UART or audio resources.
 ## Entities in v0.5.0
 
 - `Ring Light`: RGB ring with brightness
-- `Media Player`: general Home Assistant speaker/media player quantized in 0.2% volume steps
+- `Media Player`: Home Assistant speaker/media player with one native 0.1% volume slider and live PCM gain
 - `M1S Media Group`: shared-timeline player for all selected hubs
-- `M1S Media Group Volume 0-100% - Step 0.2%`: precise 0–100% group slider in 0.2% steps
 - `Include in M1S Media Group`: one membership switch per hub
 - `Physical Button`: `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click`, and `hold` events
-- `Media Player Volume 0-100% - Step 0.2%`: precise individual-player slider
 - `Sound Playback Volume`: local-sound playback volume
 - `Illuminance`: direct JN5189 lux value, with ADC raw and millivolts attributes
 - `Hub Temperature`: `persist.sys.temperature` only
@@ -911,5 +918,5 @@ The group volume slider is debounced. Intermediate positions update the displaye
 
 ### Interruption-free live group volume (v0.5.5)
 
-Group volume and mute are now applied as software gain to the already running common S32_LE PCM timeline. Moving either Home Assistant volume control no longer restarts FFmpeg, TCP receivers, `aplay`, queues, or group synchronization. The 0.2% step remains available across 0-100%. Full group restarts are reserved for real member rejoin/recovery events.
+Group volume and mute are now applied as software gain to the already running common S32_LE PCM timeline. Moving either Home Assistant volume control no longer restarts FFmpeg, TCP receivers, `aplay`, queues, or group synchronization. The native player slider now uses 0.1% steps across 0-100%. Full group restarts are reserved for real member rejoin/recovery events.
 

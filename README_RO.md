@@ -6,11 +6,20 @@ Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
 NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
 locală a hubului.
 
-Versiune curentă: **0.5.3 (test release)**
+Versiune curentă: **0.5.6 (versiune de test)**
 
 > Proiectul este destinat modelului Aqara M1S Gen 1 `lumi.gateway.aeu01`.
 > Scrierea JN5189 este o operație avansată. Păstrează un backup verificat și nu
 > scrie niciodată EFUSE, ROM, Config sau PSECT.
+
+## Ce s-a schimbat în v0.5.6
+
+- playerele individuale aplică acum volumul și mute live peste fluxul PCM S32_LE deja pornit, fără repornirea FFmpeg, TCP, `nc` sau `aplay`
+- sliderul nativ al playerului individual și cel al grupului folosesc un singur pas uniform de 0,1% pe intervalul 0-100%
+- entitățile Number separate pentru reglaj fin individual și de grup au fost eliminate și sunt șterse automat din registrul de entități la actualizare
+- o tranziție software de 40 ms reduce pocniturile la schimbarea volumului și mute
+- FFmpeg solicită best-effort nice Linux normal `-5`, iar `aplay` de pe hub solicită nice `-3`
+- prioritatea nu este realtime și este opțională: redarea continuă normal dacă sistemul refuză una dintre solicitări
 
 
 ## Ce s-a schimbat în v0.5.0
@@ -705,12 +714,10 @@ concureze pentru același UART sau aceleași resurse audio ale hubului.
 ## Entități în v0.5.0
 
 - `Ring Light`: inel RGB cu luminozitate
-- `Media Player`: difuzor/media player general Home Assistant, cuantizat în pași de volum de 0,2%
+- `Media Player`: difuzor/media player Home Assistant cu un singur slider nativ de 0,1% și gain PCM live
 - `M1S Media Group`: player cu cronologie comună pentru toate huburile selectate
-- `M1S Media Group Volume 0-100% - Step 0.2%`: slider precis de grup, 0–100%, cu pas de 0,2%
 - `Include in M1S Media Group`: câte un switch de includere pentru fiecare hub
 - `Physical Button`: evenimente `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click` și `hold`
-- `Media Player Volume 0-100% - Step 0.2%`: slider precis pentru playerul individual
 - `Sound Playback Volume`: volumul redării sunetelor locale
 - `Illuminance`: lux direct din JN5189, cu atribute ADC raw și millivolts
 - `Hub Temperature`: numai din `persist.sys.temperature`
@@ -919,5 +926,5 @@ Bara de volum a grupului folosește temporizare de stabilizare. Pozițiile inter
 
 ### Volum de grup live fără întrerupere (v0.5.5)
 
-Volumul și mute pentru grup sunt aplicate acum ca amplificare software direct pe fluxul PCM S32_LE comun deja pornit. Mutarea oricărui control de volum din Home Assistant nu mai repornește FFmpeg, receptoarele TCP, `aplay`, cozile sau sincronizarea grupului. Pasul de 0,2% rămâne disponibil pe intervalul 0-100%. Repornirea completă a grupului rămâne rezervată revenirii sau recuperării reale a unui hub.
+Volumul și mute pentru grup sunt aplicate acum ca amplificare software direct pe fluxul PCM S32_LE comun deja pornit. Mutarea oricărui control de volum din Home Assistant nu mai repornește FFmpeg, receptoarele TCP, `aplay`, cozile sau sincronizarea grupului. Sliderul nativ al playerului folosește acum pași de 0,1% pe intervalul 0-100%. Repornirea completă a grupului rămâne rezervată revenirii sau recuperării reale a unui hub.
 

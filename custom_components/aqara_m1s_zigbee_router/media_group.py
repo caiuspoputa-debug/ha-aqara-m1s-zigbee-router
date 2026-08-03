@@ -5,6 +5,7 @@ from array import array
 from contextlib import suppress
 from dataclasses import dataclass
 import logging
+import os
 import shutil
 import sys
 import time
@@ -50,6 +51,10 @@ WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
 WATCHDOG_STABLE_SECONDS = 30.0
 FULL_RESYNC_RETRY_SECONDS = 30.0
+GAIN_RAMP_SECONDS = 0.04
+GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
+FFMPEG_NICE_TARGET = -5
+APLAY_NICE_TARGET = -3
 
 SILENCE_CHUNK = b"\x00" * CHUNK_BYTES
 
@@ -73,6 +78,9 @@ GROUP_START_COMMAND = (
     + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} {GROUP_FIFO} </dev/null '
       '>/tmp/aqara_m1s_group_aplay.log 2>&1 & '
     + f'echo $! > {GROUP_APLAY_PID}; '
+    + f'APID=$(cat {GROUP_APLAY_PID}); '
+      f'renice {APLAY_NICE_TARGET} -p "$APID" '
+      '>/tmp/aqara_m1s_group_aplay_renice.log 2>&1 || true; '
     + f'echo group > {GROUP_OWNER}'
 )
 
@@ -103,7 +111,6 @@ class AqaraM1SMediaGroupManager:
         self.individual_intent: set[str] = set()
         self.entity: AqaraM1SMediaGroup | None = None
         self.media_entity_added = False
-        self.volume_entity_added = False
 
         self.media_url: str | None = None
         self.media_id: str | None = None
@@ -130,6 +137,11 @@ class AqaraM1SMediaGroupManager:
         self._last_full_resync_reason: str | None = None
         self._applied_volume = self.volume
         self._applied_muted = self.muted
+        self._gain_current = self._effective_gain()
+        self._gain_target = self._gain_current
+        self._gain_ramp_start = self._gain_current
+        self._gain_ramp_remaining = 0
+        self._ffmpeg_nice_applied = False
         self._shutting_down = False
 
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
@@ -287,6 +299,11 @@ class AqaraM1SMediaGroupManager:
             "volume_apply_pending": False,
             "applied_volume_level": self._applied_volume,
             "applied_is_volume_muted": self._applied_muted,
+            "volume_step_percent": 0.1,
+            "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
+            "ffmpeg_nice_target": FFMPEG_NICE_TARGET,
+            "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
+            "aplay_nice_target": APLAY_NICE_TARGET,
         }
 
     async def async_start(
@@ -353,32 +370,72 @@ class AqaraM1SMediaGroupManager:
 
     @staticmethod
     def normalize_volume(volume: float) -> float:
-        """Quantize the complete 0-100% range in uniform 0.2% steps."""
+        """Quantize the complete 0-100% range in uniform 0.1% steps."""
         volume = max(0.0, min(1.0, float(volume)))
-        quantized = round(volume / 0.002) * 0.002
+        quantized = round(volume / 0.001) * 0.001
         return max(0.0, min(1.0, round(quantized, 3)))
 
-    def _apply_live_pcm_gain(self, chunk: bytes) -> bytes:
-        """Scale one common S32_LE PCM chunk without touching the timeline."""
-        if self._applied_muted or self._applied_volume <= 0.0:
-            return SILENCE_CHUNK
+    def _effective_gain(self) -> float:
+        if self._applied_muted:
+            return 0.0
+        return max(0.0, min(1.0, float(self._applied_volume)))
 
-        gain = self._applied_volume
-        if gain >= 1.0:
-            return chunk
+    def _reset_live_gain(self) -> None:
+        target = self._effective_gain()
+        self._gain_current = target
+        self._gain_target = target
+        self._gain_ramp_start = target
+        self._gain_ramp_remaining = 0
+
+    def _apply_live_pcm_gain(self, chunk: bytes) -> bytes:
+        """Scale one common S32_LE chunk with a 40 ms anti-click ramp."""
+        target = self._effective_gain()
+        if target != self._gain_target:
+            self._gain_ramp_start = self._gain_current
+            self._gain_target = target
+            self._gain_ramp_remaining = GAIN_RAMP_SAMPLES
+
+        if self._gain_ramp_remaining <= 0:
+            self._gain_current = target
+            if target <= 0.0:
+                return SILENCE_CHUNK
+            if target >= 1.0:
+                return chunk
 
         samples = array("i")
         samples.frombytes(chunk)
         if samples.itemsize != PCM_SAMPLE_BYTES:
-            # This integration runs on normal Home Assistant CPython platforms,
-            # where C int is 32-bit. Failing loudly is safer than corrupt audio.
             raise RuntimeError(
                 f"Unsupported native int size for S32_LE PCM: {samples.itemsize}"
             )
         if sys.byteorder != "little":
             samples.byteswap()
-        for index, sample in enumerate(samples):
-            samples[index] = int(sample * gain)
+
+        if self._gain_ramp_remaining > 0:
+            start_gain = self._gain_ramp_start
+            change = self._gain_target - start_gain
+            remaining = self._gain_ramp_remaining
+            total = GAIN_RAMP_SAMPLES
+            elapsed = total - remaining
+            for index, sample in enumerate(samples):
+                if remaining > 0:
+                    progress = min(1.0, (elapsed + index + 1) / total)
+                    gain = start_gain + (change * progress)
+                    remaining -= 1
+                else:
+                    gain = self._gain_target
+                samples[index] = int(sample * gain)
+            self._gain_ramp_remaining = remaining
+            if remaining <= 0:
+                self._gain_current = self._gain_target
+            else:
+                progress = min(1.0, (total - remaining) / total)
+                self._gain_current = start_gain + (change * progress)
+        else:
+            gain = self._gain_current
+            for index, sample in enumerate(samples):
+                samples[index] = int(sample * gain)
+
         if sys.byteorder != "little":
             samples.byteswap()
         return samples.tobytes()
@@ -448,8 +505,10 @@ class AqaraM1SMediaGroupManager:
             raise RuntimeError("FFmpeg was not found") from err
 
         self.ffmpeg = process
+        self._ffmpeg_nice_applied = self._try_set_ffmpeg_priority(process.pid)
         self._applied_volume = self.volume
         self._applied_muted = self.muted
+        self._reset_live_gain()
         self._generation += 1
         generation = self._generation
         self._sequence = 0
@@ -477,6 +536,21 @@ class AqaraM1SMediaGroupManager:
             [m.name for m in self.active_members],
         )
 
+    @staticmethod
+    def _try_set_ffmpeg_priority(pid: int) -> bool:
+        """Best-effort moderate CPU priority; never fail group playback."""
+        try:
+            os.setpriority(os.PRIO_PROCESS, pid, FFMPEG_NICE_TARGET)
+            return os.getpriority(os.PRIO_PROCESS, pid) <= FFMPEG_NICE_TARGET
+        except (AttributeError, OSError, PermissionError) as err:
+            _LOGGER.debug(
+                "Could not apply group FFmpeg nice=%s to pid=%s: %s",
+                FFMPEG_NICE_TARGET,
+                pid,
+                err,
+            )
+            return False
+
     async def _stop_stream_locked(self, *, stop_members: bool, reason: str) -> None:
         self._generation += 1
         current = asyncio.current_task()
@@ -488,6 +562,7 @@ class AqaraM1SMediaGroupManager:
 
         process = self.ffmpeg
         self.ffmpeg = None
+        self._ffmpeg_nice_applied = False
         if process is not None and process.returncode is None:
             process.terminate()
             with suppress(asyncio.TimeoutError):
@@ -933,7 +1008,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
     _attr_unique_id = "aqara_m1s_media_group"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    _attr_volume_step = 0.002
+    _attr_volume_step = 0.001
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
@@ -1106,11 +1181,11 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
 
     async def async_volume_up(self) -> None:
         current = self.manager.volume
-        await self.async_set_volume_level(current + 0.002)
+        await self.async_set_volume_level(current + 0.001)
 
     async def async_volume_down(self) -> None:
         current = self.manager.volume
-        await self.async_set_volume_level(current - 0.002)
+        await self.async_set_volume_level(current - 0.001)
 
     async def async_mute_volume(self, mute: bool) -> None:
         await self.manager.async_set_muted(mute)

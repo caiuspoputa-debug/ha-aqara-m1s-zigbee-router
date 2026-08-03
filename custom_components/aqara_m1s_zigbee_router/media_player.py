@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from array import array
 import logging
+import os
 import shutil
+import socket
+import sys
 import time
 from urllib.parse import urlsplit, urlunsplit
 from contextlib import suppress
@@ -49,6 +53,20 @@ WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_STABLE_SECONDS = 30.0
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
 
+PCM_RATE = 32000
+PCM_CHANNELS = 1
+PCM_SAMPLE_BYTES = 4
+PCM_CHUNK_SECONDS = 0.02
+PCM_CHUNK_BYTES = int(
+    PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * PCM_CHUNK_SECONDS
+)
+PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
+GAIN_RAMP_SECONDS = 0.04
+GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
+WRITER_DRAIN_TIMEOUT = 1.0
+FFMPEG_NICE_TARGET = -5
+APLAY_NICE_TARGET = -3
+
 REMOTE_STOP_COMMAND = (
     # First stop the exact PIDs recorded when this integration started the
     # receiver. PID files can be stale after a hub reboot, so this is followed
@@ -70,10 +88,13 @@ REMOTE_START_COMMAND = (
     + f'nc -l -p {RADIO_PORT} </dev/null > {REMOTE_FIFO} '
       '2>/tmp/aqara_m1s_radio_nc.log & '
     + f'echo $! > {REMOTE_NC_PID}; '
-    + f'aplay -t raw -f S32_LE -c 1 -r 32000 '
+    + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} '
       f'{REMOTE_FIFO} </dev/null '
       '>/tmp/aqara_m1s_radio_aplay.log 2>&1 & '
-    + f'echo $! > {REMOTE_APLAY_PID}'
+    + f'echo $! > {REMOTE_APLAY_PID}; '
+    + f'APID=$(cat {REMOTE_APLAY_PID}); '
+      f'renice {APLAY_NICE_TARGET} -p "$APID" '
+      '>/tmp/aqara_m1s_radio_aplay_renice.log 2>&1 || true'
 )
 
 
@@ -97,10 +118,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_name = "Media Player"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    # Use one uniform 0.2% volume increment across the complete 0-100% range.
-    # Home Assistant stores media-player volume as a normalized 0.0-1.0 value,
-    # therefore 0.2% is represented by 0.002.
-    _attr_volume_step = 0.002
+    # One native Home Assistant slider, 0-100%, in uniform 0.1% steps.
+    # The separate fine-volume Number entity was removed in v0.5.6.
+    _attr_volume_step = 0.001
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
@@ -138,7 +158,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._ffmpeg: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._watch_task: asyncio.Task | None = None
-        self._volume_restart_task: asyncio.Task | None = None
+        self._stream_writer: asyncio.StreamWriter | None = None
+        self._ffmpeg_nice_applied = False
+        self._gain_current = self._effective_gain()
+        self._gain_target = self._gain_current
+        self._gain_ramp_start = self._gain_current
+        self._gain_ramp_remaining = 0
         self._watchdog_restart_task: asyncio.Task | None = None
         self._watchdog_stable_task: asyncio.Task | None = None
         self._watchdog_slow_retry_task: asyncio.Task | None = None
@@ -250,6 +275,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "watchdog_restart_attempts": self._watchdog_restart_attempts,
             "last_failure_kind": self._last_failure_kind,
             "last_failure_detail": self._last_failure_detail,
+            "volume_apply_mode": "live_pcm_software_gain",
+            "volume_stream_restart": False,
+            "volume_step_percent": 0.1,
+            "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
+            "ffmpeg_nice_target": FFMPEG_NICE_TARGET,
+            "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
+            "aplay_nice_target": APLAY_NICE_TARGET,
         }
 
     async def async_will_remove_from_hass(self) -> None:
@@ -274,13 +306,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
         tasks = [
             self._resume_task,
-            self._volume_restart_task,
             self._watchdog_restart_task,
             self._watchdog_stable_task,
             self._watchdog_slow_retry_task,
         ]
         self._resume_task = None
-        self._volume_restart_task = None
         self._watchdog_restart_task = None
         self._watchdog_stable_task = None
         self._watchdog_slow_retry_task = None
@@ -395,46 +425,102 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         await self.async_media_stop()
 
     async def async_set_volume_level(self, volume: float) -> None:
-        """Set volume and debounce the FFmpeg restart.
-
-        The hub does not expose a proven safe live-volume command through the
-        current Telnet transport. FFmpeg therefore still has to be restarted,
-        but only once after the slider stops moving instead of once per step.
-        """
-        volume = self._normalize_volume(float(volume))
-        self._attr_volume_level = volume
-        self._attr_is_volume_muted = volume == 0.0
+        """Apply individual-player volume live to the running PCM stream."""
+        self._attr_volume_level = self._normalize_volume(float(volume))
         self.async_write_ha_state()
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)
         )
 
-        if self._volume_restart_task:
-            self._volume_restart_task.cancel()
-            self._volume_restart_task = None
-
-        if self._attr_state == MediaPlayerState.PLAYING and self._media_url:
-            self._volume_restart_task = self.hass.async_create_task(
-                self._restart_after_volume_settle()
-            )
-
-
     @staticmethod
     def _normalize_volume(volume: float) -> float:
-        """Quantize the complete 0-100% range in uniform 0.2% steps."""
+        """Quantize the complete 0-100% range in uniform 0.1% steps."""
         volume = max(0.0, min(1.0, volume))
-        quantized = round(volume / 0.002) * 0.002
+        quantized = round(volume / 0.001) * 0.001
         return max(0.0, min(1.0, round(quantized, 3)))
 
     async def async_volume_up(self) -> None:
-        """Increase volume by 0.2%."""
+        """Increase volume by 0.1%."""
         current = self._attr_volume_level or 0.0
-        await self.async_set_volume_level(current + 0.002)
+        await self.async_set_volume_level(current + 0.001)
 
     async def async_volume_down(self) -> None:
-        """Decrease volume by 0.2%."""
+        """Decrease volume by 0.1%."""
         current = self._attr_volume_level or 0.0
-        await self.async_set_volume_level(current - 0.002)
+        await self.async_set_volume_level(current - 0.001)
+
+    async def async_mute_volume(self, mute: bool) -> None:
+        """Apply mute live through the same PCM gain path."""
+        self._attr_is_volume_muted = bool(mute)
+        self.async_write_ha_state()
+        async_dispatcher_send(
+            self.hass, radio_volume_signal(self.entry.entry_id)
+        )
+
+    def _effective_gain(self) -> float:
+        if self._attr_is_volume_muted:
+            return 0.0
+        return max(0.0, min(1.0, float(self._attr_volume_level or 0.0)))
+
+    def _reset_live_gain(self) -> None:
+        target = self._effective_gain()
+        self._gain_current = target
+        self._gain_target = target
+        self._gain_ramp_start = target
+        self._gain_ramp_remaining = 0
+
+    def _apply_live_pcm_gain(self, chunk: bytes) -> bytes:
+        """Scale one S32_LE PCM chunk with a short anti-click transition."""
+        target = self._effective_gain()
+        if target != self._gain_target:
+            self._gain_ramp_start = self._gain_current
+            self._gain_target = target
+            self._gain_ramp_remaining = GAIN_RAMP_SAMPLES
+
+        if self._gain_ramp_remaining <= 0:
+            self._gain_current = target
+            if target <= 0.0:
+                return PCM_SILENCE_CHUNK
+            if target >= 1.0:
+                return chunk
+
+        samples = array("i")
+        samples.frombytes(chunk)
+        if samples.itemsize != PCM_SAMPLE_BYTES:
+            raise RuntimeError(
+                f"Unsupported native int size for S32_LE PCM: {samples.itemsize}"
+            )
+        if sys.byteorder != "little":
+            samples.byteswap()
+
+        if self._gain_ramp_remaining > 0:
+            start_gain = self._gain_ramp_start
+            change = self._gain_target - start_gain
+            remaining = self._gain_ramp_remaining
+            total = GAIN_RAMP_SAMPLES
+            elapsed = total - remaining
+            for index, sample in enumerate(samples):
+                if remaining > 0:
+                    progress = min(1.0, (elapsed + index + 1) / total)
+                    gain = start_gain + (change * progress)
+                    remaining -= 1
+                else:
+                    gain = self._gain_target
+                samples[index] = int(sample * gain)
+            self._gain_ramp_remaining = remaining
+            if remaining <= 0:
+                self._gain_current = self._gain_target
+            else:
+                progress = min(1.0, (total - remaining) / total)
+                self._gain_current = start_gain + (change * progress)
+        else:
+            gain = self._gain_current
+            for index, sample in enumerate(samples):
+                samples[index] = int(sample * gain)
+
+        if sys.byteorder != "little":
+            samples.byteswap()
+        return samples.tobytes()
 
     def _handle_coordinator_update(self) -> None:
         """Resume the remembered media after a real hub reconnect."""
@@ -496,31 +582,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         finally:
             if self._resume_task is asyncio.current_task():
                 self._resume_task = None
-
-    async def _restart_after_volume_settle(self) -> None:
-        """Apply the final slider value after a short quiet period."""
-        try:
-            await asyncio.sleep(0.7)
-            async with self._lock:
-                if self._attr_state == MediaPlayerState.PLAYING and self._media_url:
-                    await self._start_locked()
-        except asyncio.CancelledError:
-            return
-        finally:
-            if self._volume_restart_task is asyncio.current_task():
-                self._volume_restart_task = None
-
-    async def async_mute_volume(self, mute: bool) -> None:
-        self._attr_is_volume_muted = bool(mute)
-        self.async_write_ha_state()
-
-        if self._volume_restart_task:
-            self._volume_restart_task.cancel()
-            self._volume_restart_task = None
-
-        if self._attr_state == MediaPlayerState.PLAYING and self._media_url:
-            async with self._lock:
-                await self._start_locked()
 
     @staticmethod
     def _safe_media_for_log(media_url: str | None) -> str:
@@ -628,11 +689,35 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self.client.run_command,
             REMOTE_START_COMMAND,
         )
-        await asyncio.sleep(0.25)
+
+        writer: asyncio.StreamWriter | None = None
+        last_error: Exception | None = None
+        for _ in range(12):
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.client.host, RADIO_PORT),
+                    timeout=1.0,
+                )
+                break
+            except (OSError, asyncio.TimeoutError) as err:
+                last_error = err
+                await asyncio.sleep(0.15)
+        if writer is None:
+            with suppress(Exception):
+                await self.hass.async_add_executor_job(
+                    self.client.run_command, REMOTE_STOP_COMMAND
+                )
+            raise ConnectionError(
+                f"individual audio receiver unavailable: {last_error}"
+            )
+
+        sock = writer.get_extra_info("socket")
+        if sock is not None:
+            with suppress(OSError):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self._stream_writer = writer
 
         ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-        effective_volume = 0.0 if self._attr_is_volume_muted else self._attr_volume_level
-        output_url = f"tcp://{self.client.host}:{RADIO_PORT}?tcp_nodelay=1"
         args = [
             ffmpeg,
             "-nostdin",
@@ -649,38 +734,50 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._media_url,
             "-vn",
             "-ac",
-            "1",
+            str(PCM_CHANNELS),
             "-ar",
-            "32000",
-            "-filter:a",
-            f"volume={effective_volume:.4f}",
+            str(PCM_RATE),
             "-c:a",
             "pcm_s32le",
             "-f",
             "s32le",
-            output_url,
+            "pipe:1",
         ]
 
         try:
             self._ffmpeg = await asyncio.create_subprocess_exec(
                 *args,
-                stdout=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-        except FileNotFoundError as err:
+        except Exception as err:
+            writer.close()
+            with suppress(Exception):
+                await writer.wait_closed()
+            self._stream_writer = None
+            with suppress(Exception):
+                await self.hass.async_add_executor_job(
+                    self.client.run_command, REMOTE_STOP_COMMAND
+                )
             self._attr_state = MediaPlayerState.IDLE
             self.async_write_ha_state()
-            raise RuntimeError(
-                "FFmpeg was not found. On Home Assistant OS/Container it is "
-                "normally pre-installed; otherwise install/configure FFmpeg."
-            ) from err
+            if isinstance(err, FileNotFoundError):
+                raise RuntimeError(
+                    "FFmpeg was not found. On Home Assistant OS/Container it is "
+                    "normally pre-installed; otherwise install/configure FFmpeg."
+                ) from err
+            raise
 
+        self._ffmpeg_nice_applied = self._try_set_ffmpeg_priority(
+            self._ffmpeg.pid
+        )
+        self._reset_live_gain()
         self._ffmpeg_session += 1
         session = self._ffmpeg_session
         self._ffmpeg_started_monotonic = time.monotonic()
         _LOGGER.info(
             "Aqara media FFmpeg started entity=%s session=%s pid=%s host=%s "
-            "source=%s volume=%.3f muted=%s",
+            "source=%s volume=%.3f muted=%s nice_target=%s nice_applied=%s",
             self.entity_id,
             session,
             self._ffmpeg.pid,
@@ -688,11 +785,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._safe_media_for_log(self._media_url),
             self._attr_volume_level or 0.0,
             self._attr_is_volume_muted,
+            FFMPEG_NICE_TARGET,
+            self._ffmpeg_nice_applied,
         )
         self._attr_state = MediaPlayerState.PLAYING
         self.async_write_ha_state()
         self._watch_task = self.hass.async_create_background_task(
-            self._watch_ffmpeg(self._ffmpeg),
+            self._watch_ffmpeg(self._ffmpeg, writer),
             f"aqara_m1s_ffmpeg_watch_{self.entry.entry_id}",
         )
         self._watchdog_stable_task = self.hass.async_create_background_task(
@@ -700,91 +799,190 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             f"aqara_m1s_stable_watch_{self.entry.entry_id}",
         )
 
-    async def _watch_ffmpeg(self, process: asyncio.subprocess.Process) -> None:
-        stderr = b""
+    @staticmethod
+    def _try_set_ffmpeg_priority(pid: int) -> bool:
+        """Best-effort moderate CPU priority; never fail playback."""
+        try:
+            os.setpriority(os.PRIO_PROCESS, pid, FFMPEG_NICE_TARGET)
+            return os.getpriority(os.PRIO_PROCESS, pid) <= FFMPEG_NICE_TARGET
+        except (AttributeError, OSError, PermissionError) as err:
+            _LOGGER.debug(
+                "Could not apply FFmpeg nice=%s to pid=%s: %s",
+                FFMPEG_NICE_TARGET,
+                pid,
+                err,
+            )
+            return False
+
+    @staticmethod
+    async def _read_ffmpeg_stderr(
+        process: asyncio.subprocess.Process,
+    ) -> str:
+        if process.stderr is None:
+            return ""
+        lines: list[str] = []
+        while True:
+            line = await process.stderr.readline()
+            if not line:
+                break
+            decoded = line.decode(errors="replace").strip()
+            if decoded:
+                lines.append(decoded)
+                lines = lines[-40:]
+        return "\n".join(lines)[-4000:]
+
+    async def _watch_ffmpeg(
+        self,
+        process: asyncio.subprocess.Process,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """Pump decoded PCM to the hub and classify unexpected failures."""
         session = self._ffmpeg_session
         started = self._ffmpeg_started_monotonic
+        stderr_task = self.hass.async_create_background_task(
+            self._read_ffmpeg_stderr(process),
+            f"aqara_m1s_ffmpeg_stderr_{self.entry.entry_id}",
+        )
+        stderr_text = ""
+        pump_error: Exception | None = None
         try:
-            _, stderr = await process.communicate()
+            if process.stdout is None:
+                raise RuntimeError("FFmpeg PCM stdout pipe is unavailable")
+
+            buffer = bytearray()
+            while self._ffmpeg is process and not self._shutting_down:
+                data = await process.stdout.read(PCM_CHUNK_BYTES * 4)
+                if not data:
+                    break
+                buffer.extend(data)
+                while len(buffer) >= PCM_CHUNK_BYTES:
+                    raw_chunk = bytes(buffer[:PCM_CHUNK_BYTES])
+                    del buffer[:PCM_CHUNK_BYTES]
+                    writer.write(self._apply_live_pcm_gain(raw_chunk))
+                    await asyncio.wait_for(
+                        writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                    )
+
+            await process.wait()
+            stderr_text = await stderr_task
 
             if self._ffmpeg is not process or self._shutting_down:
                 return
-
-            runtime = max(0.0, time.monotonic() - started) if started else 0.0
-            stderr_text = stderr.decode(errors="replace")[-4000:].strip()
-            self._ffmpeg = None
-            self._ffmpeg_started_monotonic = None
-            stable_task = self._watchdog_stable_task
-            self._watchdog_stable_task = None
-            await self._cancel_task(stable_task)
-
-            if not self.coordinator.last_update_success:
-                failure_kind = "hub_offline"
-                failure_detail = "The coordinator reports the hub offline"
-            else:
-                failure_kind, failure_detail = self._classify_ffmpeg_failure(
-                    stderr_text, runtime
-                )
-            self._last_failure_kind = failure_kind
-            self._last_failure_detail = failure_detail
-            self._recovery_pending = True
-
-            _LOGGER.warning(
-                "Aqara media FFmpeg ended unexpectedly entity=%s session=%s pid=%s "
-                "host=%s returncode=%s runtime=%.1fs playback_requested=%s "
-                "failure_kind=%s source=%s stderr=%r",
-                self.entity_id,
-                session,
-                process.pid,
-                self.client.host,
-                process.returncode,
-                runtime,
-                self._resume_after_reconnect,
-                failure_kind,
-                self._safe_media_for_log(self._media_url),
-                stderr_text,
-            )
-            self._attr_state = MediaPlayerState.IDLE
-            self.async_write_ha_state()
-
-            if failure_kind in ("hub_audio", "unknown"):
-                await self._log_remote_audio_snapshot(session)
-            else:
-                _LOGGER.info(
-                    "Aqara media skipped hub snapshot entity=%s session=%s "
-                    "failure_kind=%s detail=%s",
-                    self.entity_id,
-                    session,
-                    failure_kind,
-                    failure_detail,
-                )
-
-            if (
-                not self._shutting_down
-                and self._resume_after_reconnect
-                and self._resume_media_id
-            ):
-                if failure_kind == "hub_offline":
-                    _LOGGER.warning(
-                        "Aqara media recovery waiting for hub reconnect "
-                        "entity=%s host=%s",
-                        self.entity_id,
-                        self.client.host,
-                    )
-                else:
-                    self._schedule_watchdog_restart(failure_kind)
         except asyncio.CancelledError:
+            if not stderr_task.done():
+                stderr_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await stderr_task
             _LOGGER.debug(
-                "Aqara media FFmpeg watcher cancelled intentionally "
+                "Aqara media PCM watcher cancelled intentionally "
                 "entity=%s session=%s pid=%s",
                 self.entity_id,
                 session,
                 process.pid,
             )
             raise
+        except Exception as err:
+            pump_error = err
+            if process.returncode is None:
+                process.terminate()
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+            if not stderr_task.done():
+                with suppress(asyncio.TimeoutError):
+                    stderr_text = await asyncio.wait_for(
+                        stderr_task, timeout=1.0
+                    )
+            elif not stderr_task.cancelled():
+                with suppress(Exception):
+                    stderr_text = stderr_task.result()
+
+            if self._ffmpeg is not process or self._shutting_down:
+                return
         finally:
-            if self._watch_task is asyncio.current_task():
-                self._watch_task = None
+            if not stderr_task.done():
+                stderr_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await stderr_task
+
+        runtime = max(0.0, time.monotonic() - started) if started else 0.0
+        self._ffmpeg = None
+        self._ffmpeg_started_monotonic = None
+        if self._stream_writer is writer:
+            self._stream_writer = None
+        writer.close()
+        with suppress(Exception):
+            await writer.wait_closed()
+
+        stable_task = self._watchdog_stable_task
+        self._watchdog_stable_task = None
+        await self._cancel_task(stable_task)
+
+        if not self.coordinator.last_update_success:
+            failure_kind = "hub_offline"
+            failure_detail = "The coordinator reports the hub offline"
+        elif pump_error is not None:
+            failure_kind = "hub_audio"
+            failure_detail = f"PCM/TCP writer failed: {pump_error}"
+        else:
+            failure_kind, failure_detail = self._classify_ffmpeg_failure(
+                stderr_text, runtime
+            )
+        self._last_failure_kind = failure_kind
+        self._last_failure_detail = failure_detail
+        self._recovery_pending = True
+
+        _LOGGER.warning(
+            "Aqara media FFmpeg/PCM ended unexpectedly entity=%s session=%s "
+            "pid=%s host=%s returncode=%s runtime=%.1fs "
+            "playback_requested=%s failure_kind=%s source=%s "
+            "pump_error=%r stderr=%r",
+            self.entity_id,
+            session,
+            process.pid,
+            self.client.host,
+            process.returncode,
+            runtime,
+            self._resume_after_reconnect,
+            failure_kind,
+            self._safe_media_for_log(self._media_url),
+            pump_error,
+            stderr_text,
+        )
+        self._attr_state = MediaPlayerState.IDLE
+        self.async_write_ha_state()
+
+        if failure_kind in ("hub_audio", "unknown"):
+            await self._log_remote_audio_snapshot(session)
+        else:
+            _LOGGER.info(
+                "Aqara media skipped hub snapshot entity=%s session=%s "
+                "failure_kind=%s detail=%s",
+                self.entity_id,
+                session,
+                failure_kind,
+                failure_detail,
+            )
+
+        if (
+            not self._shutting_down
+            and self._resume_after_reconnect
+            and self._resume_media_id
+        ):
+            if failure_kind == "hub_offline":
+                _LOGGER.warning(
+                    "Aqara media recovery waiting for hub reconnect "
+                    "entity=%s host=%s",
+                    self.entity_id,
+                    self.client.host,
+                )
+            else:
+                self._schedule_watchdog_restart(failure_kind)
+
+        if self._watch_task is asyncio.current_task():
+            self._watch_task = None
 
     def _schedule_watchdog_restart(self, failure_kind: str | None = None) -> None:
         if self._shutting_down:
@@ -976,6 +1174,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         watch_task = self._watch_task
         self._watch_task = None
         await self._cancel_task(watch_task)
+        writer = self._stream_writer
+        self._stream_writer = None
+        if writer is not None:
+            writer.close()
+            with suppress(Exception):
+                await writer.wait_closed()
+        self._ffmpeg_nice_applied = False
         if process is None:
             return
         runtime = max(0.0, time.monotonic() - started) if started else 0.0

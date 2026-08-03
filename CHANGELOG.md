@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.6
+
+- moved every individual media player to the same interruption-free live PCM software-gain model already used by the group
+- changed the native individual and group media-player volume step from 0.2% to 0.1% across 0-100%
+- removed the separate individual and group fine-volume Number entities; the native media-player slider is now the only stream-volume control
+- added a 40 ms software gain ramp for volume and mute changes to reduce clicks without restarting FFmpeg, TCP, `nc` or `aplay`
+- gave FFmpeg a best-effort moderate CPU priority (`nice -5`) in Home Assistant and `aplay` a smaller best-effort priority (`nice -3`) on each hub
+- priority changes use normal Linux niceness only; they never use realtime scheduling, terminate other processes, or fail playback when the OS refuses the requested priority
+
+
 ## 0.5.5
 
 - removed all FFmpeg and receiver restarts caused by M1S media-group volume or mute changes

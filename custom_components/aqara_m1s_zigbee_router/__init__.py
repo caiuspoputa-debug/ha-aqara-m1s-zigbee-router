@@ -140,6 +140,20 @@ async def async_setup_entry(
     if obsolete_select_id is not None:
         entity_registry.async_remove(obsolete_select_id)
 
+    # v0.5.6 removes the separate fine-volume Number entities. Delete their
+    # registry entries as well, so they disappear instead of remaining as
+    # unavailable legacy entities after the integration reload.
+    obsolete_number_unique_ids = (
+        f"{entry.entry_id}_radio_fine_volume",
+        "aqara_m1s_media_group_fine_volume",
+    )
+    for unique_id in obsolete_number_unique_ids:
+        obsolete_number_id = entity_registry.async_get_entity_id(
+            "number", DOMAIN, unique_id
+        )
+        if obsolete_number_id is not None:
+            entity_registry.async_remove(obsolete_number_id)
+
     await coordinator.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(
         entry,
@@ -179,7 +193,10 @@ async def async_setup_entry(
         command = (
             f'wget -q "{url}" '
             "-O /tmp/ha_audio.wav "
-            "&& aplay -x 1 /tmp/ha_audio.wav"
+            "&& (aplay -x 1 /tmp/ha_audio.wav & "
+            "APID=$!; renice -3 -p \"$APID\" "
+            ">/tmp/aqara_m1s_play_url_aplay_renice.log 2>&1 || true; "
+            "wait \"$APID\")"
         )
         await hass.async_add_executor_job(
             selected_client.run_command,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shlex
 import shutil
 from contextlib import suppress
@@ -18,6 +19,8 @@ REMOTE_FIFO = "/tmp/aqara_m1s_sound_fifo"
 REMOTE_SOURCE_PID = "/tmp/aqara_m1s_sound_source_nc.pid"
 REMOTE_SINK_PID = "/tmp/aqara_m1s_sound_sink_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_sound_aplay.pid"
+FFMPEG_NICE_TARGET = -5
+APLAY_NICE_TARGET = -3
 
 REMOTE_STOP_COMMAND = (
     f"for f in {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID}; do "
@@ -39,6 +42,9 @@ def remote_start_command(path: str) -> str:
         + f"aplay -t raw -f S32_LE -c 1 -r 32000 {REMOTE_FIFO} </dev/null "
           ">/tmp/aqara_m1s_sound_aplay.log 2>&1 & "
         + f"echo $! > {REMOTE_APLAY_PID}; "
+        + f"APID=$(cat {REMOTE_APLAY_PID}); "
+          f"renice {APLAY_NICE_TARGET} -p \"$APID\" "
+          ">/tmp/aqara_m1s_sound_aplay_renice.log 2>&1 || true; "
         + f"cat {source} | nc -l -p {SOURCE_PORT} "
           ">/dev/null 2>/tmp/aqara_m1s_sound_source_nc.log & "
         + f"echo $! > {REMOTE_SOURCE_PID}"
@@ -107,9 +113,25 @@ class AqaraM1SSoundPlayer:
                 raise RuntimeError("FFmpeg was not found on Home Assistant") from err
 
             self._ffmpeg = process
+            self._try_set_ffmpeg_priority(process.pid)
             self._watch_task = self.hass.async_create_task(
                 self._watch(process)
             )
+
+    @staticmethod
+    def _try_set_ffmpeg_priority(pid: int) -> bool:
+        """Best-effort normal Linux niceness; never fail sound playback."""
+        try:
+            os.setpriority(os.PRIO_PROCESS, pid, FFMPEG_NICE_TARGET)
+            return os.getpriority(os.PRIO_PROCESS, pid) <= FFMPEG_NICE_TARGET
+        except (AttributeError, OSError, PermissionError) as err:
+            _LOGGER.debug(
+                "Could not apply sound FFmpeg nice=%s to pid=%s: %s",
+                FFMPEG_NICE_TARGET,
+                pid,
+                err,
+            )
+            return False
 
     async def _watch(self, process: asyncio.subprocess.Process) -> None:
         stderr = b""
