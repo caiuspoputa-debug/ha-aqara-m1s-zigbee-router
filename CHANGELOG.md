@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.5
+
+- removed all FFmpeg and receiver restarts caused by M1S media-group volume or mute changes
+- moved group gain control into the existing Home Assistant PCM broadcast loop
+- each new volume value is applied to the next common 20 ms S32_LE chunk while preserving the same FFmpeg process, TCP sessions, queues and synchronization timeline
+- retained the 0.2% volume scale and full-group resynchronisation when a hub actually rejoins
+- added diagnostics: `volume_apply_mode: live_pcm_software_gain` and `volume_stream_restart: false`
+
 ## 0.5.4
 
 - changed M1S media-group volume handling to debounce slider updates

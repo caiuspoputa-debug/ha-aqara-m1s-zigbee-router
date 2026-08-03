@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from array import array
 from contextlib import suppress
 from dataclasses import dataclass
 import logging
 import shutil
+import sys
 import time
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -48,7 +50,6 @@ WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
 WATCHDOG_STABLE_SECONDS = 30.0
 FULL_RESYNC_RETRY_SECONDS = 30.0
-GROUP_VOLUME_SETTLE_SECONDS = 0.8
 
 SILENCE_CHUNK = b"\x00" * CHUNK_BYTES
 
@@ -127,7 +128,6 @@ class AqaraM1SMediaGroupManager:
         self._last_failure: str | None = None
         self._full_resync_count = 0
         self._last_full_resync_reason: str | None = None
-        self._volume_restart_task: asyncio.Task | None = None
         self._applied_volume = self.volume
         self._applied_muted = self.muted
         self._shutting_down = False
@@ -282,11 +282,9 @@ class AqaraM1SMediaGroupManager:
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
-            "volume_apply_mode": "debounced_final_value",
-            "volume_settle_seconds": GROUP_VOLUME_SETTLE_SECONDS,
-            "volume_apply_pending": bool(
-                self._volume_restart_task and not self._volume_restart_task.done()
-            ),
+            "volume_apply_mode": "live_pcm_software_gain",
+            "volume_stream_restart": False,
+            "volume_apply_pending": False,
             "applied_volume_level": self._applied_volume,
             "applied_is_volume_muted": self._applied_muted,
         }
@@ -322,7 +320,6 @@ class AqaraM1SMediaGroupManager:
     async def async_stop(self, *, clear_intent: bool = True) -> None:
         if clear_intent:
             self.desired_playing = False
-        await self._cancel_pending_volume_apply()
         await self._cancel_background_recovery()
         async with self._lock:
             await self._stop_stream_locked(stop_members=True, reason="user_stop")
@@ -330,81 +327,28 @@ class AqaraM1SMediaGroupManager:
 
     async def async_shutdown(self) -> None:
         self._shutting_down = True
-        await self._cancel_pending_volume_apply()
         await self._cancel_background_recovery()
         async with self._lock:
             await self._stop_stream_locked(stop_members=True, reason="shutdown")
 
     async def async_set_volume(self, volume: float) -> None:
-        """Store every slider position but apply only the final settled value.
+        """Apply group volume inside the running PCM broadcaster.
 
-        Home Assistant may issue several volume service calls while a slider is
-        being dragged. Restarting the shared FFmpeg timeline for every intermediate
-        value causes repeated interruptions. Each new value therefore replaces the
-        pending value and resets a short quiet-period timer. Only one full group
-        restart is performed after the calls stop.
+        The shared FFmpeg process and every hub receiver remain untouched.
+        Only the software gain used for the next 20 ms PCM chunk changes, so
+        slider movement cannot interrupt or resynchronise the stream.
         """
-        self.volume = self.normalize_volume(volume)
+        normalized = self.normalize_volume(volume)
+        self.volume = normalized
+        self._applied_volume = normalized
         async_dispatcher_send(self.hass, media_group_volume_signal())
         self._signal_update()
 
-        previous = self._volume_restart_task
-        self._volume_restart_task = None
-        if previous and previous is not asyncio.current_task():
-            previous.cancel()
-
-        if (
-            self.desired_playing
-            and self.media_url
-            and (
-                self.volume != self._applied_volume
-                or self.muted != self._applied_muted
-            )
-        ):
-            self._volume_restart_task = self.hass.async_create_background_task(
-                self._apply_volume_after_settle(),
-                "aqara_m1s_group_final_volume_apply",
-            )
-
-    async def _apply_volume_after_settle(self) -> None:
-        """Restart the shared timeline once, using the last requested volume."""
-        try:
-            await asyncio.sleep(GROUP_VOLUME_SETTLE_SECONDS)
-            async with self._lock:
-                if (
-                    self.desired_playing
-                    and self.media_url
-                    and (
-                        self.volume != self._applied_volume
-                        or self.muted != self._applied_muted
-                    )
-                ):
-                    await self._restart_stream_locked(
-                        reason="volume_change_final"
-                    )
-        except asyncio.CancelledError:
-            return
-        finally:
-            if self._volume_restart_task is asyncio.current_task():
-                self._volume_restart_task = None
-            self._signal_update()
-
-    async def _cancel_pending_volume_apply(self) -> None:
-        task = self._volume_restart_task
-        self._volume_restart_task = None
-        if task and task is not asyncio.current_task():
-            await self._cancel_task(task)
-
     async def async_set_muted(self, muted: bool) -> None:
-        muted = bool(muted)
-        if muted == self.muted and muted == self._applied_muted:
-            self._signal_update()
-            return
-        await self._cancel_pending_volume_apply()
-        self.muted = muted
-        if self.desired_playing and self.media_url:
-            async with self._lock:
-                await self._restart_stream_locked(reason="mute_change")
+        """Mute or unmute through live PCM gain without restarting audio."""
+        normalized = bool(muted)
+        self.muted = normalized
+        self._applied_muted = normalized
         self._signal_update()
 
     @staticmethod
@@ -413,6 +357,31 @@ class AqaraM1SMediaGroupManager:
         volume = max(0.0, min(1.0, float(volume)))
         quantized = round(volume / 0.002) * 0.002
         return max(0.0, min(1.0, round(quantized, 3)))
+
+    def _apply_live_pcm_gain(self, chunk: bytes) -> bytes:
+        """Scale one common S32_LE PCM chunk without touching the timeline."""
+        if self._applied_muted or self._applied_volume <= 0.0:
+            return SILENCE_CHUNK
+
+        gain = self._applied_volume
+        if gain >= 1.0:
+            return chunk
+
+        samples = array("i")
+        samples.frombytes(chunk)
+        if samples.itemsize != PCM_SAMPLE_BYTES:
+            # This integration runs on normal Home Assistant CPython platforms,
+            # where C int is 32-bit. Failing loudly is safer than corrupt audio.
+            raise RuntimeError(
+                f"Unsupported native int size for S32_LE PCM: {samples.itemsize}"
+            )
+        if sys.byteorder != "little":
+            samples.byteswap()
+        for index, sample in enumerate(samples):
+            samples[index] = int(sample * gain)
+        if sys.byteorder != "little":
+            samples.byteswap()
+        return samples.tobytes()
 
     async def _restart_stream_locked(self, reason: str) -> None:
         if reason.startswith("member_rejoin:"):
@@ -435,7 +404,6 @@ class AqaraM1SMediaGroupManager:
         if not self.media_url or not self.desired_playing:
             return
         ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-        effective_volume = 0.0 if self.muted else self.volume
         args = [
             ffmpeg,
             "-nostdin",
@@ -463,8 +431,6 @@ class AqaraM1SMediaGroupManager:
             "1",
             "-ar",
             str(PCM_RATE),
-            "-filter:a",
-            f"volume={effective_volume:.4f}",
             "-c:a",
             "pcm_s32le",
             "-f",
@@ -696,8 +662,9 @@ class AqaraM1SMediaGroupManager:
                     break
                 buffer.extend(data)
                 while len(buffer) >= CHUNK_BYTES:
-                    chunk = bytes(buffer[:CHUNK_BYTES])
+                    raw_chunk = bytes(buffer[:CHUNK_BYTES])
                     del buffer[:CHUNK_BYTES]
+                    chunk = self._apply_live_pcm_gain(raw_chunk)
                     sequence = self._sequence
                     self._sequence += 1
                     failed: list[str] = []

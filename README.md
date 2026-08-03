@@ -908,3 +908,8 @@ hub, Wi-Fi, RGB/lux support or audio files
 ### Group volume final-value apply (v0.5.4)
 
 The group volume slider is debounced. Intermediate positions update the displayed pending value, but the shared FFmpeg timeline is restarted only once, 0.8 seconds after the final volume service call. This avoids repeated audio interruptions while dragging the slider.
+
+### Interruption-free live group volume (v0.5.5)
+
+Group volume and mute are now applied as software gain to the already running common S32_LE PCM timeline. Moving either Home Assistant volume control no longer restarts FFmpeg, TCP receivers, `aplay`, queues, or group synchronization. The 0.2% step remains available across 0-100%. Full group restarts are reserved for real member rejoin/recovery events.
+

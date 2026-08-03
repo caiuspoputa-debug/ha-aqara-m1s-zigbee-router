@@ -916,3 +916,8 @@ RGB/lux sau fișierele audio.
 ### Aplicarea valorii finale a volumului de grup (v0.5.4)
 
 Bara de volum a grupului folosește temporizare de stabilizare. Pozițiile intermediare actualizează valoarea afișată, însă cronologia FFmpeg comună este repornită o singură dată, la 0,8 secunde după ultima comandă de volum. Astfel sunt evitate întreruperile repetate în timpul deplasării barei.
+
+### Volum de grup live fără întrerupere (v0.5.5)
+
+Volumul și mute pentru grup sunt aplicate acum ca amplificare software direct pe fluxul PCM S32_LE comun deja pornit. Mutarea oricărui control de volum din Home Assistant nu mai repornește FFmpeg, receptoarele TCP, `aplay`, cozile sau sincronizarea grupului. Pasul de 0,2% rămâne disponibil pe intervalul 0-100%. Repornirea completă a grupului rămâne rezervată revenirii sau recuperării reale a unui hub.
+
