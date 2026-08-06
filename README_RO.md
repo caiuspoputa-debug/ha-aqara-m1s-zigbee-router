@@ -2,6 +2,191 @@
 
 **Română** | [English](README.md)
 
+## Comportamentul Wi-Fi după restart și prevenirea pornirii în modul AP
+
+### Problema observată
+
+Un hub Aqara M1S cu IP-ul `192.168.0.100` a fost găsit după restart în modul de configurare Wi-Fi, cu punctul de acces propriu activ, deși SSID-ul și parola rețelei erau încă salvate.
+
+Inițial s-a suspectat managerul Wi-Fi personalizat, însă logurile au arătat că modul AP era deja activ la aproximativ 20 de secunde după boot, mult înainte ca `wifi_manager.sh` să poată declanșa trecerea automată în AP după pragul configurat de 240 de secunde.
+
+### Logica originală Aqara
+
+La pornirea normală, scriptul:
+
+```sh
+fw_manager.sh -r
+```
+
+apelează funcția normală de inițializare, nu factory reset.
+
+Factory resetul se execută doar prin:
+
+```sh
+fw_manager.sh -f -r
+```
+
+În timpul pornirii normale, `fw_manager.sh` verifică următoarele proprietăți:
+
+```sh
+persist.app.cloud_provisioned
+persist.app.hap_provisioned
+persist.app.hap_keepalive
+```
+
+Logica originală este echivalentă cu:
+
+```sh
+cp="$(getprop persist.app.cloud_provisioned)"
+hp="$(getprop persist.app.hap_provisioned)"
+ka="$(getprop persist.app.hap_keepalive)"
+
+if [ "$cp" != "true" ] &&
+   [ "$hp" != "true" ] &&
+   [ "$ka" != "true" ]; then
+    wifi_start.sh AP
+else
+    wifi_start.sh STA &
+fi
+```
+
+Prin urmare, dacă toate cele trei proprietăți sunt `false` sau goale, hubul pornește intenționat în modul AP, chiar dacă:
+
+* SSID-ul este salvat;
+* parola Wi-Fi este salvată;
+* `persist.app.user_paired=true`;
+* backupul Wi-Fi din `/data/m1s_wifi/safe/` există.
+
+Proprietatea `user_paired` nu este folosită de această decizie de boot.
+
+### Valorile găsite pe huburi
+
+Hubul `.100`, găsit în modul AP:
+
+```text
+cloud_provisioned=false
+hap_provisioned=false
+hap_keepalive=
+user_paired=true
+```
+
+Hubul `.101` avea aceeași situație și prezenta același risc la următorul restart:
+
+```text
+cloud_provisioned=false
+hap_provisioned=false
+hap_keepalive=
+user_paired=true
+```
+
+Hubul `.102` pornea normal deoarece cel puțin o proprietate era `true`:
+
+```text
+cloud_provisioned=true
+hap_provisioned=false
+hap_keepalive=false
+user_paired=true
+```
+
+Hubul `.104`, folosit ca referință, avea toate valorile active:
+
+```text
+cloud_provisioned=true
+hap_provisioned=true
+hap_keepalive=true
+user_paired=true
+```
+
+### Corecția aplicată
+
+Pentru uniformizare, pe huburile `.100`, `.101` și `.102` au fost setate aceleași valori ca pe `.104`:
+
+```sh
+setprop persist.app.cloud_provisioned true
+setprop persist.app.hap_provisioned true
+setprop persist.app.hap_keepalive true
+setprop persist.app.user_paired true
+sync
+```
+
+Verificare:
+
+```sh
+echo "cloud_provisioned=$(getprop persist.app.cloud_provisioned)"
+echo "hap_provisioned=$(getprop persist.app.hap_provisioned)"
+echo "hap_keepalive=$(getprop persist.app.hap_keepalive)"
+echo "user_paired=$(getprop persist.app.user_paired)"
+```
+
+Rezultatul așteptat:
+
+```text
+cloud_provisioned=true
+hap_provisioned=true
+hap_keepalive=true
+user_paired=true
+```
+
+### Important despre `post_init.sh`
+
+Linia următoare trebuie păstrată:
+
+```sh
+fw_manager.sh -r &
+```
+
+Aceasta pornește normal serviciile Aqara.
+
+Nu trebuie confundată cu factory resetul:
+
+```sh
+fw_manager.sh -f -r
+```
+
+În `post_init.sh` rămâne forma:
+
+```sh
+fw_manager.sh -r &
+```
+
+Telnetul este activat separat ulterior prin:
+
+```sh
+fw_manager.sh -t -k &
+```
+
+### Diagnostic rapid
+
+Dacă un hub pornește din nou în AP după reboot, se verifică mai întâi:
+
+```sh
+getprop persist.app.cloud_provisioned
+getprop persist.app.hap_provisioned
+getprop persist.app.hap_keepalive
+getprop persist.app.user_paired
+getprop persist.app.wifi_ssid
+getprop persist.app.wifi_passphrase
+```
+
+Dacă primele trei proprietăți sunt toate `false` sau goale, firmware-ul Aqara va selecta modul AP la boot.
+
+### Concluzie
+
+Pornirea în AP nu a fost provocată de `wifi_manager.sh` și nici de lipsa SSID-ului. Cauza a fost faptul că toate cele trei stări originale Aqara/HomeKit folosite de `fw_manager.sh` erau inactive.
+
+Setarea lor pe `true` face ca logica originală de boot să aleagă:
+
+```sh
+wifi_start.sh STA
+```
+
+în loc de:
+
+```sh
+wifi_start.sh AP
+```
+
+
 Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
 NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
 locală a hubului.
