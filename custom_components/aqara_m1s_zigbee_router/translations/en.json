@@ -17,13 +17,14 @@
   "options": {
     "step": {
       "init": {
-        "title": "Administrarea fișierelor audio / Sound file management",
-        "description": "Folosește opțiunile de mai jos pentru încărcare sau ștergere. După fiecare operație lista și informațiile sunt reîmprospătate imediat. Pentru închiderea corectă și reîncărcarea completă a integrării, alege Finalizare și închidere / Use the options below to upload or delete files. The list and information refresh immediately after each operation. To close correctly and fully reload the integration, choose Finish and close.",
+        "title": "Aqara M1S management",
+        "description": "Configure Wi-Fi, sounds and Zigbee rejoin. Choose Finish and close for a controlled full integration reload.",
         "menu_options": {
           "upload_sound": "Încarcă WAV / Upload WAV",
           "delete_sound": "Șterge WAV / Delete WAV",
           "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
-          "finish": "Finalizare și închidere / Finish and close"
+          "finish": "Finalizare și închidere / Finish and close",
+          "change_wifi": "Change Wi-Fi network"
         }
       },
       "upload_sound": {
@@ -46,16 +47,29 @@
         "data": {
           "confirm": "Am înțeles și vreau să șterg asocierea Zigbee actuală / I understand and want to clear the current Zigbee association"
         }
+      },
+      "change_wifi": {
+        "title": "Change Wi-Fi network",
+        "description": "Requires the optional Wi-Fi recovery module on the hub. The new network is tested locally and promoted only after a fresh IPv4 address is obtained. If the test fails, the hub enters recovery. Reserve the same IP for the hub MAC before changing networks. The Wi-Fi password is not stored in Home Assistant configuration.",
+        "data": {
+          "ssid": "New SSID",
+          "wifi_password": "New Wi-Fi password",
+          "confirm": "I confirm the Wi-Fi network change"
+        }
       }
     },
     "error": {
       "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
       "delete_failed": "Delete failed. Verify the hub connection.",
       "rejoin_confirmation_required": "Confirmation is required before clearing the current Zigbee association.",
-      "rejoin_failed": "The JN5189 did not acknowledge the rejoin command. Verify the hub connection and compatible firmware."
+      "rejoin_failed": "The JN5189 did not acknowledge the rejoin command. Verify the hub connection and compatible firmware.",
+      "wifi_confirmation_required": "Confirmation is required before changing the Wi-Fi network.",
+      "wifi_invalid": "The SSID or Wi-Fi password is invalid.",
+      "wifi_change_failed": "The Wi-Fi change could not be started. Verify Telnet and the Wi-Fi recovery module installation."
     },
     "abort": {
-      "no_managed_sounds": "No WAV files were found in /data/musics/music-ch."
+      "no_managed_sounds": "No WAV files were found in /data/musics/music-ch.",
+      "wifi_change_started": "The new Wi-Fi network test has started on the hub. Connectivity may drop temporarily. The hub keeps the new network only after obtaining a fresh IPv4 address."
     }
   },
   "device_automation": {

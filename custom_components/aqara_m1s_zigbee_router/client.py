@@ -261,6 +261,61 @@ class AqaraM1SClient:
             assert last_error is not None
             raise last_error
 
+
+    def wifi_recovery_available(self) -> bool:
+        """Return True when the safe Wi-Fi recovery module is installed."""
+        out = self.run_command(
+            "if [ -x /data/m1s_wifi/wifi_apply_candidate.sh ]; "
+            "then echo __M1S_WIFI_READY__; else echo __M1S_WIFI_MISSING__; fi"
+        )
+        return "__M1S_WIFI_READY__" in out
+
+    def start_wifi_change(self, ssid: str, password: str) -> None:
+        """Stage a new Wi-Fi candidate and start the hub-side safe test.
+
+        The password is not written to Home Assistant storage or logs.  It is
+        transferred over the already-configured Telnet session, staged in
+        mode-0600 files on the hub and then consumed by the Wi-Fi recovery
+        helper.  The helper promotes the candidate only after a fresh IPv4
+        address is obtained.
+        """
+        if not ssid or not password:
+            raise ValueError("SSID and Wi-Fi password are required")
+        if len(ssid.encode("utf-8")) > 32:
+            raise ValueError("SSID is longer than 32 UTF-8 bytes")
+        if "\x00" in ssid or "\x00" in password:
+            raise ValueError("NUL is not allowed in Wi-Fi credentials")
+
+        ssid_b64 = base64.b64encode(ssid.encode("utf-8")).decode("ascii")
+        pass_b64 = base64.b64encode(password.encode("utf-8")).decode("ascii")
+        command = (
+            "BASE=/data/m1s_wifi; CAND=$BASE/candidate; "
+            "LOCK=$BASE/ha_wifi_change.lock; "
+            "if [ ! -x $BASE/wifi_apply_candidate.sh ]; then "
+            "echo __M1S_WIFI_MISSING__; "
+            "elif ! mkdir $LOCK 2>/dev/null; then "
+            "echo __M1S_WIFI_BUSY__; "
+            "else "
+            "mkdir -p $CAND; "
+            f"printf '%s' '{ssid_b64}' | base64 -d > $CAND/ssid.new && "
+            f"printf '%s' '{pass_b64}' | base64 -d > $CAND/pass.new && "
+            "chmod 600 $CAND/ssid.new $CAND/pass.new && "
+            "mv $CAND/ssid.new $CAND/ssid && mv $CAND/pass.new $CAND/pass && "
+            "nohup sh -c 'sleep 3; "
+            "/data/m1s_wifi/wifi_apply_candidate.sh; rc=$?; "
+            "rmdir /data/m1s_wifi/ha_wifi_change.lock 2>/dev/null; exit $rc' "
+            ">/tmp/m1s_wifi_ha_change.log 2>&1 </dev/null & "
+            "echo __M1S_WIFI_STARTED__; "
+            "fi"
+        )
+        out = self.run_command(command)
+        if "__M1S_WIFI_MISSING__" in out:
+            raise RuntimeError("Wi-Fi recovery module is not installed")
+        if "__M1S_WIFI_BUSY__" in out:
+            raise RuntimeError("Another Wi-Fi change is already running")
+        if "__M1S_WIFI_STARTED__" not in out:
+            raise RuntimeError("Hub did not start the Wi-Fi change")
+
     def list_sounds(self) -> list[str]:
         out = self.run_command('find /data/musics -type f -name "*.wav" 2>/dev/null')
         sounds = []

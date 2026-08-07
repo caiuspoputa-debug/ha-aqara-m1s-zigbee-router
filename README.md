@@ -1,32 +1,16 @@
-# Aqara M1S Zigbee Router
+# Aqara M1S Zigbee Router — Complete conversion and Home Assistant integration
 
 [Română](README_RO.md) | **English**
 
-## Comportamentul Wi-Fi după restart și prevenirea pornirii în modul AP
+Release status: **v0.5.7 final package**
 
-### Problema observată
+This guide covers the complete path from a stock Aqara M1S Gen 1 (`lumi.gateway.aeu01`) to the project configuration: stock Linux/Wi-Fi/HomeKit/audio retained, persistent LAN-only Telnet, JN5189 BDB Zigbee Router firmware, RGB/lux UART control, local audio, physical-button bridge, safe Wi-Fi recovery and the Home Assistant integration.
 
-Un hub Aqara M1S cu IP-ul `192.168.0.100` a fost găsit după restart în modul de configurare Wi-Fi, cu punctul de acces propriu activ, deși SSID-ul și parola rețelei erau încă salvate.
+> Advanced operation: keep two verified JN5189 flash backups. Never write EFUSE, ROM, Config, PSECT or pFLASH and never perform a full-chip erase.
 
-Inițial s-a suspectat managerul Wi-Fi personalizat, însă logurile au arătat că modul AP era deja activ la aproximativ 20 de secunde după boot, mult înainte ca `wifi_manager.sh` să poată declanșa trecerea automată în AP după pragul configurat de 240 de secunde.
+## Stock Wi-Fi boot state: STA versus AP
 
-### Logica originală Aqara
-
-La pornirea normală, scriptul:
-
-```sh
-fw_manager.sh -r
-```
-
-apelează funcția normală de inițializare, nu factory reset.
-
-Factory resetul se execută doar prin:
-
-```sh
-fw_manager.sh -f -r
-```
-
-În timpul pornirii normale, `fw_manager.sh` verifică următoarele proprietăți:
+A stock boot through `fw_manager.sh -r` selects STA or AP using these properties:
 
 ```sh
 persist.app.cloud_provisioned
@@ -34,164 +18,29 @@ persist.app.hap_provisioned
 persist.app.hap_keepalive
 ```
 
-Logica originală este echivalentă cu:
+If all three are false or empty, the Aqara boot logic may intentionally start AP mode even when the SSID/password are still stored. `persist.app.user_paired=true` does not override that decision. The kit therefore includes `scripts/hub/aqara_wifi_boot_state.sh check|fix`, which diagnoses/corrects this state without printing the SSID, Wi-Fi password or MiIO token.
 
-```sh
-cp="$(getprop persist.app.cloud_provisioned)"
-hp="$(getprop persist.app.hap_provisioned)"
-ka="$(getprop persist.app.hap_keepalive)"
+`fw_manager.sh -r` is the normal service-start path. Do **not** confuse it with `fw_manager.sh -f -r`, which is the factory-reset path.
 
-if [ "$cp" != "true" ] &&
-   [ "$hp" != "true" ] &&
-   [ "$ka" != "true" ]; then
-    wifi_start.sh AP
-else
-    wifi_start.sh STA &
-fi
-```
+## What changed in v0.5.7
 
-Prin urmare, dacă toate cele trei proprietăți sunt `false` sau goale, hubul pornește intenționat în modul AP, chiar dacă:
+- added **Change Wi-Fi network** to **Settings → Devices & services → Aqara M1S Zigbee Router → Configure**
+- the Wi-Fi password is masked in the form and is not stored in Home Assistant config-entry data/options
+- the integration stages the candidate only on the hub and uses the optional sanitized recovery helper for test/promotion/rollback
+- candidate validation clears a stale interface IPv4 before reconnecting, so an old address cannot be mistaken for success
+- the Configure menu is now general **Aqara M1S management**, not sound-only management
 
-* SSID-ul este salvat;
-* parola Wi-Fi este salvată;
-* `persist.app.user_paired=true`;
-* backupul Wi-Fi din `/data/m1s_wifi/safe/` există.
+### Safe Wi-Fi change from Configure
 
-Proprietatea `user_paired` nu este folosită de această decizie de boot.
+First install and validate `installers/m1s_wifi_recovery_SANITIZED.tgz`. Reserve the same IP for the hub MAC on the destination network whenever possible, because the integration connects to the configured IP. Then open **Configure → Change Wi-Fi network**, enter the new SSID/password and confirm. The hub stores the candidate in mode-0600 temporary files, tests the new network locally, and promotes it to the `safe/` backup only after receiving a fresh IPv4 address. On failure, the existing recovery/AP path is used. A temporary Home Assistant offline state during the change is expected.
 
-### Valorile găsite pe huburi
-
-Hubul `.100`, găsit în modul AP:
-
-```text
-cloud_provisioned=false
-hap_provisioned=false
-hap_keepalive=
-user_paired=true
-```
-
-Hubul `.101` avea aceeași situație și prezenta același risc la următorul restart:
-
-```text
-cloud_provisioned=false
-hap_provisioned=false
-hap_keepalive=
-user_paired=true
-```
-
-Hubul `.102` pornea normal deoarece cel puțin o proprietate era `true`:
-
-```text
-cloud_provisioned=true
-hap_provisioned=false
-hap_keepalive=false
-user_paired=true
-```
-
-Hubul `.104`, folosit ca referință, avea toate valorile active:
-
-```text
-cloud_provisioned=true
-hap_provisioned=true
-hap_keepalive=true
-user_paired=true
-```
-
-### Corecția aplicată
-
-Pentru uniformizare, pe huburile `.100`, `.101` și `.102` au fost setate aceleași valori ca pe `.104`:
-
-```sh
-setprop persist.app.cloud_provisioned true
-setprop persist.app.hap_provisioned true
-setprop persist.app.hap_keepalive true
-setprop persist.app.user_paired true
-sync
-```
-
-Verificare:
-
-```sh
-echo "cloud_provisioned=$(getprop persist.app.cloud_provisioned)"
-echo "hap_provisioned=$(getprop persist.app.hap_provisioned)"
-echo "hap_keepalive=$(getprop persist.app.hap_keepalive)"
-echo "user_paired=$(getprop persist.app.user_paired)"
-```
-
-Rezultatul așteptat:
-
-```text
-cloud_provisioned=true
-hap_provisioned=true
-hap_keepalive=true
-user_paired=true
-```
-
-### Important despre `post_init.sh`
-
-Linia următoare trebuie păstrată:
-
-```sh
-fw_manager.sh -r &
-```
-
-Aceasta pornește normal serviciile Aqara.
-
-Nu trebuie confundată cu factory resetul:
-
-```sh
-fw_manager.sh -f -r
-```
-
-În `post_init.sh` rămâne forma:
-
-```sh
-fw_manager.sh -r &
-```
-
-Telnetul este activat separat ulterior prin:
-
-```sh
-fw_manager.sh -t -k &
-```
-
-### Diagnostic rapid
-
-Dacă un hub pornește din nou în AP după reboot, se verifică mai întâi:
-
-```sh
-getprop persist.app.cloud_provisioned
-getprop persist.app.hap_provisioned
-getprop persist.app.hap_keepalive
-getprop persist.app.user_paired
-getprop persist.app.wifi_ssid
-getprop persist.app.wifi_passphrase
-```
-
-Dacă primele trei proprietăți sunt toate `false` sau goale, firmware-ul Aqara va selecta modul AP la boot.
-
-### Concluzie
-
-Pornirea în AP nu a fost provocată de `wifi_manager.sh` și nici de lipsa SSID-ului. Cauza a fost faptul că toate cele trei stări originale Aqara/HomeKit folosite de `fw_manager.sh` erau inactive.
-
-Setarea lor pe `true` face ca logica originală de boot să aleagă:
-
-```sh
-wifi_start.sh STA
-```
-
-în loc de:
-
-```sh
-wifi_start.sh AP
-```
-
+---
 
 Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.6 (test release)**
+Current version: **0.5.7 (final candidate)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
@@ -948,6 +797,7 @@ Open:
 
 The management session uses bilingual labels, with Romanian first:
 
+- **Schimbă rețeaua Wi-Fi / Change Wi-Fi network**
 - **Încărcare sunet WAV / Upload WAV sound**
 - **Ștergere sunet WAV / Delete WAV sound**
 - **Conectare la alt coordonator Zigbee / Join a different Zigbee coordinator**
@@ -1104,4 +954,3 @@ The group volume slider is debounced. Intermediate positions update the displaye
 ### Interruption-free live group volume (v0.5.5)
 
 Group volume and mute are now applied as software gain to the already running common S32_LE PCM timeline. Moving either Home Assistant volume control no longer restarts FFmpeg, TCP receivers, `aplay`, queues, or group synchronization. The native player slider now uses 0.1% steps across 0-100%. Full group restarts are reserved for real member rejoin/recovery events.
-

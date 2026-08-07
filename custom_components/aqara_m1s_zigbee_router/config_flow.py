@@ -19,6 +19,9 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
 )
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
@@ -114,7 +117,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         return self.hass.data[DOMAIN][DATA_CLIENTS][self.config_entry.entry_id]
 
     async def async_step_init(self, user_input=None):
-        menu_options = ["upload_sound"]
+        menu_options = ["change_wifi", "upload_sound"]
         try:
             sounds = await self.hass.async_add_executor_job(
                 self._client.list_sounds
@@ -130,6 +133,46 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         return self.async_show_menu(
             step_id="init",
             menu_options=menu_options,
+        )
+
+
+    async def async_step_change_wifi(self, user_input=None):
+        """Safely test and apply a different Wi-Fi network on the hub."""
+        errors = {}
+        if user_input is not None:
+            if not user_input.get("confirm", False):
+                errors["base"] = "wifi_confirmation_required"
+            else:
+                try:
+                    await self.hass.async_add_executor_job(
+                        self._client.start_wifi_change,
+                        user_input["ssid"],
+                        user_input["wifi_password"],
+                    )
+                except ValueError:
+                    errors["base"] = "wifi_invalid"
+                except (OSError, RuntimeError, TimeoutError):
+                    errors["base"] = "wifi_change_failed"
+                else:
+                    return self.async_abort(reason="wifi_change_started")
+
+        return self.async_show_form(
+            step_id="change_wifi",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("ssid"): TextSelector(
+                        TextSelectorConfig(autocomplete="ssid")
+                    ),
+                    vol.Required("wifi_password"): TextSelector(
+                        TextSelectorConfig(
+                            type=TextSelectorType.PASSWORD,
+                            autocomplete="new-password",
+                        )
+                    ),
+                    vol.Required("confirm", default=False): BooleanSelector(),
+                }
+            ),
+            errors=errors,
         )
 
     async def async_step_finish(self, user_input=None):

@@ -17,13 +17,14 @@
   "options": {
     "step": {
       "init": {
-        "title": "Administrarea fișierelor audio / Sound file management",
-        "description": "Folosește opțiunile de mai jos pentru încărcare sau ștergere. După fiecare operație lista și informațiile sunt reîmprospătate imediat. Pentru închiderea corectă și reîncărcarea completă a integrării, alege Finalizare și închidere / Use the options below to upload or delete files. The list and information refresh immediately after each operation. To close correctly and fully reload the integration, choose Finish and close.",
+        "title": "Administrare Aqara M1S / Aqara M1S management",
+        "description": "Configurează Wi-Fi, sunetele și reconectarea Zigbee. Pentru închiderea corectă și reîncărcarea completă a integrării, alege Finalizare și închidere. / Configure Wi-Fi, sounds and Zigbee rejoin. To close correctly and fully reload the integration, choose Finish and close.",
         "menu_options": {
           "upload_sound": "Încarcă WAV / Upload WAV",
           "delete_sound": "Șterge WAV / Delete WAV",
           "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
-          "finish": "Finalizare și închidere / Finish and close"
+          "finish": "Finalizare și închidere / Finish and close",
+          "change_wifi": "Schimbă rețeaua Wi-Fi / Change Wi-Fi network"
         }
       },
       "upload_sound": {
@@ -46,16 +47,29 @@
         "data": {
           "confirm": "Am înțeles și vreau să șterg asocierea Zigbee actuală / I understand and want to clear the current Zigbee association"
         }
+      },
+      "change_wifi": {
+        "title": "Schimbă rețeaua Wi-Fi / Change Wi-Fi network",
+        "description": "Necesită modulul opțional Wi-Fi recovery instalat pe hub. Noua rețea este testată local; devine backup numai după obținerea unui IPv4 proaspăt. Dacă testul eșuează, hubul intră în mecanismul de recuperare. Rezervă în router același IP pentru MAC-ul hubului înainte de schimbare. Parola nu este salvată în configurația Home Assistant. / Requires the optional Wi-Fi recovery module on the hub. The new network is tested locally and is promoted only after a fresh IPv4 address is obtained. If the test fails, the hub enters recovery. Reserve the same IP for the hub MAC before changing networks. The password is not stored in Home Assistant configuration.",
+        "data": {
+          "ssid": "SSID nou / New SSID",
+          "wifi_password": "Parolă Wi-Fi nouă / New Wi-Fi password",
+          "confirm": "Confirm schimbarea rețelei / Confirm network change"
+        }
       }
     },
     "error": {
       "upload_failed": "Încărcarea a eșuat. Verifică formatul WAV și conexiunea cu hubul.",
       "delete_failed": "Ștergerea a eșuat. Verifică legătura cu hubul.",
       "rejoin_confirmation_required": "Confirmarea este obligatorie înainte de ștergerea asocierii Zigbee actuale.",
-      "rejoin_failed": "JN5189 nu a confirmat comanda de reconectare. Verifică legătura cu hubul și firmware-ul compatibil."
+      "rejoin_failed": "JN5189 nu a confirmat comanda de reconectare. Verifică legătura cu hubul și firmware-ul compatibil.",
+      "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",
+      "wifi_invalid": "SSID-ul sau parola Wi-Fi nu sunt valide.",
+      "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery."
     },
     "abort": {
-      "no_managed_sounds": "Nu există fișiere WAV în /data/musics/music-ch."
+      "no_managed_sounds": "Nu există fișiere WAV în /data/musics/music-ch.",
+      "wifi_change_started": "Testul noii rețele Wi-Fi a fost pornit pe hub. Conexiunea poate cădea temporar. Hubul păstrează noua rețea numai după obținerea unui IPv4 proaspăt."
     }
   },
   "device_automation": {

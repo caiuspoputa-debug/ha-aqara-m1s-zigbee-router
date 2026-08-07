@@ -1,886 +1,761 @@
-# Aqara M1S Zigbee Router
+[**Română**](README_RO.md) | [English](README.md)
 
-**Română** | [English](README.md)
+# Aqara M1S Gen 1 — conversie completă în Zigbee Router + integrare Home Assistant
 
-## Comportamentul Wi-Fi după restart și prevenirea pornirii în modul AP
+Versiune documentație: **2026-08-07 — revizia FINAL v0.5.7**  
+Integrare Home Assistant inclusă: **0.5.7**  
+Model țintă: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
-### Problema observată
+Acesta este ghidul principal pentru refacerea unui hub stock în configurația folosită de proiect:
 
-Un hub Aqara M1S cu IP-ul `192.168.0.100` a fost găsit după restart în modul de configurare Wi-Fi, cu punctul de acces propriu activ, deși SSID-ul și parola rețelei erau încă salvate.
+- Linux, Wi-Fi, HomeKit și audio stock păstrate;
+- Telnet persistent numai în LAN;
+- NXP JN5189 convertit în **BDB Zigbee Router**;
+- inel RGB și iluminare citite direct prin UART;
+- media player individual și grup media în Home Assistant;
+- sunete WAV locale administrabile;
+- bridge opțional pentru butonul fizic prin MQTT;
+- mecanism opțional de recuperare Wi-Fi, fără SSID sau parole incluse în pachet.
 
-Inițial s-a suspectat managerul Wi-Fi personalizat, însă logurile au arătat că modul AP era deja activ la aproximativ 20 de secunde după boot, mult înainte ca `wifi_manager.sh` să poată declanșa trecerea automată în AP după pragul configurat de 240 de secunde.
+Revizia R2 integrează constatările din README-ul GitHub din 2026-08-07: alegerea stock STA/AP pe baza proprietăților Aqara/HomeKit, administrarea completă a sunetelor, comportamentul de disponibilitate și precizările de operare HACS/rejoin.
 
-### Logica originală Aqara
+> **Operație avansată.** Conversia scrie memoria FLASH a JN5189. Nu continua fără două backupuri identice și verificate. Nu scrie niciodată EFUSE, ROM, Config, PSECT sau pFLASH și nu executa erase complet al cipului.
 
-La pornirea normală, scriptul:
+---
 
-```sh
-fw_manager.sh -r
-```
+## 1. Ce este „curent” și ce este doar istoric
 
-apelează funcția normală de inițializare, nu factory reset.
+Folosește pentru o instalare nouă numai următoarele componente:
 
-Factory resetul se execută doar prin:
+| Componentă | Versiune/fișier curent | Rol |
+|---|---|---|
+| Integrare Home Assistant | `custom_components/aqara_m1s_zigbee_router`, manifest `0.5.7` | control local, senzori, audio, grup, diagnostic și schimbare Wi-Fi sigură |
+| Firmware JN5189 | `jn5189_router_rgb_lux_rejoin_test.bin` | Zigbee Router, RGB, lux PIO19/ADC5, comandă rejoin A7 |
+| Boot persistent | `scripts/hub/post_init.sh` | servicii stock, Telnet, UART liber, boot Router |
+| Diagnostic boot Wi-Fi stock | `scripts/hub/aqara_wifi_boot_state.sh` | verifică și, la cerere, corectează stările Aqara care aleg STA sau AP |
+| Programare JN5189 | `scripts/hub/jn5189_*.sh` și `scripts/windows/JN5189-*.ps1` | preflight, ISP, backup, flash și readback |
+| Recuperare Wi-Fi | `installers/m1s_wifi_recovery_SANITIZED.tgz` | opțional; pornește AP după lipsă IP |
+| Buton fizic MQTT | `installers/m1s_button_bridge_SANITIZED.tgz` | opțional; publică gesturile butonului |
 
-```sh
-fw_manager.sh -f -r
-```
+Folderele și README-urile versiunilor 0.1.x–0.5.5 au fost folosite pentru reconstruirea istoricului, dar nu trebuie amestecate cu procedura curentă. Vezi [auditul complet](docs/AUDIT_README_SI_SCRIPTURI.md) și [raportul de validare](docs/VALIDATION_REPORT.md).
 
-În timpul pornirii normale, `fw_manager.sh` verifică următoarele proprietăți:
-
-```sh
-persist.app.cloud_provisioned
-persist.app.hap_provisioned
-persist.app.hap_keepalive
-```
-
-Logica originală este echivalentă cu:
-
-```sh
-cp="$(getprop persist.app.cloud_provisioned)"
-hp="$(getprop persist.app.hap_provisioned)"
-ka="$(getprop persist.app.hap_keepalive)"
-
-if [ "$cp" != "true" ] &&
-   [ "$hp" != "true" ] &&
-   [ "$ka" != "true" ]; then
-    wifi_start.sh AP
-else
-    wifi_start.sh STA &
-fi
-```
-
-Prin urmare, dacă toate cele trei proprietăți sunt `false` sau goale, hubul pornește intenționat în modul AP, chiar dacă:
-
-* SSID-ul este salvat;
-* parola Wi-Fi este salvată;
-* `persist.app.user_paired=true`;
-* backupul Wi-Fi din `/data/m1s_wifi/safe/` există.
-
-Proprietatea `user_paired` nu este folosită de această decizie de boot.
-
-### Valorile găsite pe huburi
-
-Hubul `.100`, găsit în modul AP:
-
-```text
-cloud_provisioned=false
-hap_provisioned=false
-hap_keepalive=
-user_paired=true
-```
-
-Hubul `.101` avea aceeași situație și prezenta același risc la următorul restart:
-
-```text
-cloud_provisioned=false
-hap_provisioned=false
-hap_keepalive=
-user_paired=true
-```
-
-Hubul `.102` pornea normal deoarece cel puțin o proprietate era `true`:
-
-```text
-cloud_provisioned=true
-hap_provisioned=false
-hap_keepalive=false
-user_paired=true
-```
-
-Hubul `.104`, folosit ca referință, avea toate valorile active:
-
-```text
-cloud_provisioned=true
-hap_provisioned=true
-hap_keepalive=true
-user_paired=true
-```
-
-### Corecția aplicată
-
-Pentru uniformizare, pe huburile `.100`, `.101` și `.102` au fost setate aceleași valori ca pe `.104`:
-
-```sh
-setprop persist.app.cloud_provisioned true
-setprop persist.app.hap_provisioned true
-setprop persist.app.hap_keepalive true
-setprop persist.app.user_paired true
-sync
-```
-
-Verificare:
-
-```sh
-echo "cloud_provisioned=$(getprop persist.app.cloud_provisioned)"
-echo "hap_provisioned=$(getprop persist.app.hap_provisioned)"
-echo "hap_keepalive=$(getprop persist.app.hap_keepalive)"
-echo "user_paired=$(getprop persist.app.user_paired)"
-```
-
-Rezultatul așteptat:
-
-```text
-cloud_provisioned=true
-hap_provisioned=true
-hap_keepalive=true
-user_paired=true
-```
-
-### Important despre `post_init.sh`
-
-Linia următoare trebuie păstrată:
-
-```sh
-fw_manager.sh -r &
-```
-
-Aceasta pornește normal serviciile Aqara.
-
-Nu trebuie confundată cu factory resetul:
-
-```sh
-fw_manager.sh -f -r
-```
-
-În `post_init.sh` rămâne forma:
-
-```sh
-fw_manager.sh -r &
-```
-
-Telnetul este activat separat ulterior prin:
-
-```sh
-fw_manager.sh -t -k &
-```
-
-### Diagnostic rapid
-
-Dacă un hub pornește din nou în AP după reboot, se verifică mai întâi:
-
-```sh
-getprop persist.app.cloud_provisioned
-getprop persist.app.hap_provisioned
-getprop persist.app.hap_keepalive
-getprop persist.app.user_paired
-getprop persist.app.wifi_ssid
-getprop persist.app.wifi_passphrase
-```
-
-Dacă primele trei proprietăți sunt toate `false` sau goale, firmware-ul Aqara va selecta modul AP la boot.
-
-### Concluzie
-
-Pornirea în AP nu a fost provocată de `wifi_manager.sh` și nici de lipsa SSID-ului. Cauza a fost faptul că toate cele trei stări originale Aqara/HomeKit folosite de `fw_manager.sh` erau inactive.
-
-Setarea lor pe `true` face ca logica originală de boot să aleagă:
-
-```sh
-wifi_start.sh STA
-```
-
-în loc de:
-
-```sh
-wifi_start.sh AP
-```
-
-
-Integrare custom Home Assistant pentru un hub Aqara M1S Gen 1 convertit în
-NXP JN5189 BDB Zigbee Router, cu inel RGB, iluminare, audio și diagnosticare
-locală a hubului.
-
-Versiune curentă: **0.5.6 (versiune de test)**
-
-> Proiectul este destinat modelului Aqara M1S Gen 1 `lumi.gateway.aeu01`.
-> Scrierea JN5189 este o operație avansată. Păstrează un backup verificat și nu
-> scrie niciodată EFUSE, ROM, Config sau PSECT.
-
-## Ce s-a schimbat în v0.5.6
-
-- playerele individuale aplică acum volumul și mute live peste fluxul PCM S32_LE deja pornit, fără repornirea FFmpeg, TCP, `nc` sau `aplay`
-- sliderul nativ al playerului individual și cel al grupului folosesc un singur pas uniform de 0,1% pe intervalul 0-100%
-- entitățile Number separate pentru reglaj fin individual și de grup au fost eliminate și sunt șterse automat din registrul de entități la actualizare
-- o tranziție software de 40 ms reduce pocniturile la schimbarea volumului și mute
-- FFmpeg solicită best-effort nice Linux normal `-5`, iar `aplay` de pe hub solicită nice `-3`
-- prioritatea nu este realtime și este opțională: redarea continuă normal dacă sistemul refuză una dintre solicitări
-
-
-## Ce s-a schimbat în v0.5.0
-
-- media playerul individual original și watchdog-ul lui automat sunt păstrate
-- este reparată eroarea din ramura de reluare întârziată a watchdog-ului individual
-- un singur **M1S Media Group** opțional folosește un singur proces FFmpeg și o cronologie PCM comună
-- fiecare hub selectat primește aceeași secvență PCM de 20 ms; conținutul audibil începe după o poartă comună de sincronizare cu 1,5 secunde de tăcere
-- un hub offline este eliminat fără să întrerupă huburile rămase; când revine, integrarea repornește toate receptoarele de grup și procesul FFmpeg comun pentru o pornire uniformă
-- o pregătire eșuată este reîncercată cu protecție de 30 de secunde, pentru a evita întreruperile repetate rapide ale întregului grup
-- redarea individuală are prioritate strictă: un hub care redă individual nu este oprit și nu este preluat de grup
-- fiecare hub primește switch-ul **Include in M1S Media Group**
-- grupul are volum normal și un slider precis separat 0–100%, cu pas de 0,2%
-- acțiunile butonului fizic sunt expuse ca entitate event și trigger-e de dispozitiv: `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click` și `hold`
-- grupul folosește resurse audio dedicate pe portul TCP `12347`; playerul individual rămâne izolat pe `12346`
-
-> v0.5.0 este reconstruită din baza curată v0.3.7. A trecut testele statice, verificarea comenzilor shell, arbitrajul și testele de secvență PCM, dar necesită validare fizică pe cele patru huburi înainte de publicarea ca versiune stabilă.
-
-## Ce s-a schimbat în v0.2.6
-
-- numele afișat al entității a fost schimbat din **Radio** în **Media Player**
-- volumul media playerului este cuantizat uniform în pași de 0,2% pe intervalul 0–100%
-- etichete bilingve în meniul Configure, cu româna afișată prima
-- actualizarea imediată a catalogului de sunete după încărcarea sau ștergerea unui WAV
-- reîncărcarea completă și controlată a integrării prin
-  **Finalizare și închidere / Finish and close**
-- documentație mai clară pentru upload, ștergere, download și reîncărcarea finală
-- butonul **X** aparține interfeței Home Assistant; folosirea lui sare numai peste
-  reîncărcarea finală a intrării de configurare, nu și peste actualizarea imediată
-  a catalogului de sunete
-
-## Configurație validată
-
-- Hub: Aqara M1S Gen 1 (`lumi.gateway.aeu01`)
-- Firmware stock folosit la pregătire: `3.1.3_0009`
-- Linux: MIPS, kernel 3.10.90, BusyBox 1.22.1
-- SoC Zigbee: NXP JN5189
-- Rol Zigbee după conversie: BDB Router
-- UART Zigbee: `/dev/ttyS1`, 115200 8N1
-- Reset JN5189: GPIO18, activ la `1`
-- Selectare ISP JN5189: GPIO33, ISP=`0`, boot normal=`1`
-- Director de sunete administrat: `/data/musics/music-ch`
-- Domeniul integrării: `aqara_m1s_zigbee_router`
-
-## Funcții
-
-- funcționare NXP BDB Zigbee Router cu Zigbee2MQTT
-- inel RGB cu reglarea culorii și luminozității
-- iluminare citită direct din JN5189, fără MQTT
-- navigarea media nativă Home Assistant și redarea URL-urilor directe
-- redare radio prin FFmpeg din Home Assistant
-- butoane pentru sunetele WAV locale Aqara
-- upload din browser și ștergere protejată pentru WAV-uri personalizate
-- controlul volumului de redare
-- temperatura hubului din proprietatea validată `persist.sys.temperature`
-- diagnostic pentru IP Wi-Fi, procese și starea JN5189
-- monitorizare comună online/offline la 15 secunde
-- stingerea automată a inelului roșu de boot după reconectarea Wi-Fi
-- mutarea confirmată a routerului la un alt coordonator Zigbee
-
-Când hubul este offline, lumina, media playerul, volumul și senzorii live devin
-indisponibili. Butoanele sunetelor rămân intenționat vizibile. Uploadul și
-ștergerea actualizează numai catalogul de sunete; nu reîncarcă integrarea și nu
-resetează celelalte entități.
-
-## Firmware RGB + lux + rejoin curent
-
-Imaginea de test compatibilă cu v0.2.1 folosește **PIO19/ADC5** pentru lumină
-ambientală și adaugă comanda UART protejată pentru rejoin:
+### Hash firmware curent
 
 ```text
 Fișier: jn5189_router_rgb_lux_rejoin_test.bin
 Dimensiune: 209296 bytes (0x33190)
-Zona imaginii rotunjită la sector: 0x33200
-Memorie: ID 0 / FLASH
+SHA256: a1a1f302be9e3ab95fd6a3b8f4ac260e1f397fec275fb3e3caf8418cd75e7a2f
+Zona aplicației rotunjită la sector: 0x33200
+Memory ID: 0 / FLASH
 ```
 
-Imaginea a fost scrisă cu succes la 19 iulie 2026, iar routerul a revenit online
-în Zigbee2MQTT fără ștergerea completă a memoriei. Înainte de publicarea unui
-fișier binar trebuie calculat și notat SHA256; două builduri cu nume asemănător
-nu trebuie presupuse identice.
-
-
-### Build experimental fără serverul On/Off
-
-A fost compilată imaginea experimentală
-`jn5189_router_rgb_lux_no_switch.bin`, după dezactivarea macro-urilor serverului
-On/Off și eliminarea referințelor directe care împiedicau compilarea.
-
-```text
-Dimensiune: 208784 bytes (0x32F90)
-Zona aplicației rotunjită la sector: 0x33000
-```
-
-Imaginea a pornit, iar routerul a revenit online după restartarea Zigbee2MQTT.
-Totuși, Zigbee2MQTT a afișat în continuare switch-ul vechi după rejoin,
-interview și reconfigure. Prin urmare, acest build **nu este validat ca eliminând
-switch-ul**. Descriptorul endpointului sau o altă definiție ZCL generată trebuie
-verificată înainte ca imaginea să fie publicată drept firmware de înlocuire.
-
-## Instalare completă pornind de la un hub stock
-
-### 1. Adăugarea hubului în Xiaomi Home
-
-1. Resetează hubul sau pune-l în modul de asociere.
-2. Apasă de două ori butonul hubului pentru trecerea din modul Aqara în modul
-   Xiaomi/Mi Home.
-3. Adaugă hubul în Xiaomi Home/Mi Home pe o rețea Wi-Fi de 2,4 GHz.
-4. Folosește regiunea corectă a contului Xiaomi.
-5. Rezervă adresa IP a hubului în configurația DHCP a routerului.
-
-Apăsarea dublă schimbă ecosistemul aplicației; nu este secvența Telnet
-documentată mai jos.
-
-### 2. Extragerea tokenului MiIO
-
-1. Instalează **Xiaomi Gateway 3** de la AlexxIT din HACS.
-2. Repornește Home Assistant dacă este cerut.
-3. Adaugă integrarea Xiaomi Gateway 3.
-4. Autentifică-te cu același cont și aceeași regiune folosite în Xiaomi Home.
-5. Găsește modelul `lumi.gateway.aeu01` și copiază tokenul MiIO.
-
-Un token MiIO valid are exact 32 de caractere hexazecimale. Tratează-l ca pe o
-parolă și nu îl publica.
-
-Verificare în Windows PowerShell:
+Verificare în PowerShell:
 
 ```powershell
+Get-Item .\jn5189_router_rgb_lux_rejoin_test.bin
+Get-FileHash .\jn5189_router_rgb_lux_rejoin_test.bin -Algorithm SHA256
+```
+
+Oprește procedura dacă dimensiunea sau SHA256 diferă. Buildul istoric `jn5189_router_rgb_lux_no_switch.bin` nu a demonstrat eliminarea serverului On/Off și **nu se folosește** la o conversie nouă. Numele unui binar nu este dovadă de identitate; folosește numai fișierul și hashul de mai sus.
+
+După extragerea întregului kit, verifică toate fișierele din PowerShell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\windows\Verify-Kit.ps1
+```
+
+Rezultatul corect se termină cu `KIT_SHA256_OK`. Lista `SHA256SUMS.txt` nu se include pe ea însăși în calcul.
+
+---
+
+## 2. Starea de validare
+
+Separă clar ce provine din configurația fizic folosită și ce a fost standardizat în acest kit:
+
+### Confirmat în istoricul proiectului
+
+- modelul `lumi.gateway.aeu01` și firmware stock de pregătire `3.1.3_0009`;
+- Linux MIPS, kernel 3.10.90, BusyBox 1.22.1;
+- JN5189 pe `/dev/ttyS1`, 115200 8N1;
+- GPIO18 reset, activ la `1`;
+- GPIO33: ISP=`0`, boot normal=`1`;
+- programare prin SPSDK și `socket://HUB_IP:1888`;
+- backup FLASH Memory ID 0 de 646656 bytes (`0x9DE00`);
+- firmware-ul curent scris cu succes și revenirea Routerului în Zigbee2MQTT;
+- bootul persistent de bază, RGB, lux, audio și integrarea Home Assistant.
+
+### Standardizat în această revizie
+
+- README master reorganizat pentru o instalare de la zero;
+- scripturi separate pentru preflight, ISP, boot, verificare și PowerShell;
+- readback SHA256 obligatoriu după flash;
+- script separat pentru diagnosticul și corectarea stărilor stock care aleg STA/AP, fără citirea SSID-ului sau parolei;
+- installer Wi-Fi fără credențiale incluse, care preia datele existente numai local de pe hub;
+- pachet separat pentru bridge-ul butonului fizic, fără broker/username/parolă incluse;
+- inventar de porturi, pași de acceptare și proceduri de recuperare.
+
+Scripturile nou standardizate au fost verificate static și ca arhive, dar recuperarea Wi-Fi și bridge-ul butonului trebuie reverificate fizic pe un hub de test înainte de copierea pe toate huburile.
+
+---
+
+## 3. Cerințe
+
+### Hardware
+
+- Aqara M1S Gen 1, model exact `lumi.gateway.aeu01`;
+- rețea Wi-Fi 2,4 GHz;
+- router cu rezervare DHCP;
+- coordinator Zigbee2MQTT cu Permit join disponibil;
+- PC Windows în aceeași rețea;
+- Home Assistant cu acces la HACS sau la `/config/custom_components`.
+
+### Software pe Windows
+
+- PowerShell 5.1 sau PowerShell 7;
+- Python 3;
+- `python-miio` pentru verificarea tokenului;
+- SPSDK cu aplicația `dk6prog`;
+- client Telnet Windows sau PuTTY.
+
+Instalare:
+
+```powershell
+python --version
 python -m pip install python-miio
+python -m pip install "spsdk[dk6]"
+python -m spsdk.apps.dk6prog --help
+```
+
+### Reguli de rețea
+
+1. Rezervă un IP fix prin DHCP înainte de conversie.
+2. Nu expune prin port forwarding Telnet sau porturile proiectului.
+3. PC-ul, Home Assistant și hubul trebuie să fie în LAN-ul de încredere.
+4. Ultimul octet al IP-ului este folosit de topicul butonului: `m1s/<octet>/button/action`; schimbarea IP-ului rupe asocierea până la actualizarea integrării.
+
+---
+
+## 4. Structura kitului
+
+```text
+Aqara_M1S_Complete_Kit_v0.5.7_FINAL/
+├── README_RO.md
+├── CHANGELOG.md
+├── custom_components/aqara_m1s_zigbee_router/
+├── jn5189_router_rgb_lux_rejoin_test.bin
+├── scripts/
+│   ├── hub/
+│   │   ├── post_init.sh
+│   │   ├── aqara_wifi_boot_state.sh
+│   │   ├── install_post_init.sh
+│   │   ├── jn5189_preflight.sh
+│   │   ├── jn5189_enter_isp_1888.sh
+│   │   ├── jn5189_close_isp_1888.sh
+│   │   ├── jn5189_boot_router.sh
+│   │   └── verify_hub.sh
+│   └── windows/
+│       ├── Send-FileToM1S.ps1
+│       ├── Receive-FileFromM1S.ps1
+│       ├── Verify-Kit.ps1
+│       ├── JN5189-Backup.ps1
+│       └── JN5189-Flash-Verify.ps1
+├── installers/
+│   ├── m1s_wifi_recovery_SANITIZED.tgz
+│   └── m1s_button_bridge_SANITIZED.tgz
+├── SHA256SUMS.txt
+└── docs/
+    ├── AUDIT_README_SI_SCRIPTURI.md
+    ├── INVENTAR_README.md
+    ├── VALIDATION_REPORT.md
+    ├── COMPARATIE_README_GITHUB_2026-08-07.md
+    ├── README_RO_ORIGINAL_v0.5.6.md
+    └── README_EN_ORIGINAL_v0.5.6.md
+```
+
+Nu copia pe hub întregul repository Home Assistant. Pe hub ajung numai scripturile/pachetele indicate; integrarea se instalează în Home Assistant.
+
+---
+
+# PARTEA I — Pregătirea hubului stock
+
+## 5. Etapa 0 — Fișa hubului și punctele de oprire
+
+Înainte de orice comandă, notează separat pentru fiecare hub:
+
+```text
+Nume hub:
+Model:
+IP rezervat:
+MAC Wi-Fi:
+Firmware stock:
+Token MiIO salvat în manager de parole:
+Data backupului JN5189:
+SHA256 backup 1:
+SHA256 backup 2:
+SHA256 firmware scris:
+Rezultat readback:
+Numele dispozitivului în Zigbee2MQTT:
+Numele intrării Home Assistant:
+```
+
+### Oprește procedura dacă
+
+- modelul nu este `lumi.gateway.aeu01`;
+- IP-ul nu este rezervat;
+- Telnet cade sau rețeaua este instabilă;
+- SPSDK nu detectează `JN5189`;
+- backupul nu are exact 646656 bytes;
+- cele două backupuri stock au SHA256 diferit;
+- firmware-ul nu are dimensiunea și SHA256 documentate;
+- readbackul după scriere diferă de firmware;
+- există încă un proces real `cat /dev/ttyS1` sau `mzigbee_agent` înainte de ISP.
+
+Nu folosi reboot ca „test” între erase și write.
+
+---
+
+## 6. Etapa 1 — Adăugare în Xiaomi Home
+
+1. Resetează hubul sau pune-l în modul de asociere.
+2. Apasă de două ori butonul pentru trecerea din modul Aqara în Xiaomi/Mi Home.
+3. Adaugă-l în Xiaomi Home pe Wi-Fi 2,4 GHz.
+4. Folosește regiunea corectă a contului.
+5. Confirmă că hubul este online și funcțional stock.
+6. Creează rezervarea DHCP și verifică IP-ul după un restart normal.
+
+Apăsarea dublă pentru ecosistem nu este secvența de activare Telnet.
+
+---
+
+## 7. Etapa 2 — Obținerea și verificarea tokenului MiIO
+
+Metoda folosită în proiect:
+
+1. Instalează **Xiaomi Gateway 3** de la AlexxIT prin HACS.
+2. Autentifică integrarea cu același cont și aceeași regiune Xiaomi.
+3. Găsește `lumi.gateway.aeu01` și copiază tokenul MiIO.
+4. Păstrează tokenul ca parolă; nu îl introduce în README, scripturi sau arhive.
+
+Un token valid are 32 de caractere hexazecimale.
+
+```powershell
 python -m miio.cli device --ip HUB_IP --token MIIO_TOKEN info
 ```
 
-### 3. Activarea temporară Telnet
+Comanda trebuie să răspundă cu informațiile dispozitivului. Nu continua cu un token neverificat.
 
-Secvența fizică temporară validată este:
+---
+
+## 8. Etapa 3 — Telnet temporar
+
+Secvența fizică documentată pentru firmware stock compatibil:
 
 ```text
 5-2-2-2-2-2-2
 ```
 
-Dacă firmware-ul stock compatibil o acceptă, conectează-te cu:
+Conectare:
 
 ```powershell
 telnet HUB_IP
 ```
 
-Încearcă utilizatorul `admin` cu parola goală; dacă este necesar, încearcă
-`root` cu parola goală.
+În configurația documentată s-a folosit `admin` cu parolă goală; alternativ `root` cu parolă goală.
 
-Alternativa prin MiIO este:
+Metoda MiIO folosită istoric pentru activarea temporară Telnet este:
 
 ```powershell
 python -m miio.cli device --ip HUB_IP --token MIIO_TOKEN raw_command set_ip_info '{"ssid":"\"\"","pswd":"123123 ; passwd -d admin ; passwd -d root ; telnetd"}'
 ```
 
-Telnet nu este criptat și trebuie păstrat numai în LAN. Metoda fizică sau MiIO
-poate fi temporară.
+Această comandă modifică temporar accesul administrativ. Ruleaz-o numai în LAN și nu o salva împreună cu tokenul real.
 
-#### Telnet persistent și pornirea Routerului
-
-Următorul `post_init.sh` este scriptul de boot validat în prezent. A fost
-instalat pe patru huburi convertite. La fiecare restart Linux păstrează
-serviciile originale Linux, Wi-Fi, HomeKit și audio, pornește Telnet persistent,
-suspendă watchdog-ul stock, oprește `mzigbee_agent`, pornește normal JN5189 și
-trimite RGB OFF după încă 10 secunde.
+### Verificare inițială pe hub
 
 ```sh
-mkdir -p /data/scripts
-[ -f /data/scripts/post_init.sh ] && cp /data/scripts/post_init.sh /data/scripts/post_init.sh.bak
-
-cat > /data/scripts/post_init.sh <<'EOF'
-#!/bin/sh
-
-LOG_FILE="/tmp/post_init.log"
-
-wait_for_wifi()
-{
-    i=0
-
-    while [ "$i" -lt 120 ]; do
-        if ifconfig wlan0 2>/dev/null | grep -q 'inet addr'; then
-            return 0
-        fi
-
-        sleep 2
-        i=$((i+2))
-    done
-
-    return 1
-}
-
-# Porneste serviciile Linux, Wi-Fi, HomeKit si audio originale.
-fw_manager.sh -r &
-
-(
-    wait_for_wifi
-    sleep 5
-
-    # Porneste Telnet persistent.
-    fw_manager.sh -t -k &
-    echo "$(date) Telnet start requested." >> "$LOG_FILE"
-
-    # Asteapta terminarea pornirii serviciilor stock.
-    sleep 20
-
-    # Suspenda watchdog-ul care ar reporni mzigbee_agent.
-    for p in $(ps | grep '[a]pp_monitor' | awk '{print $1}'); do
-        kill -STOP "$p" 2>/dev/null
-    done
-
-    # Opreste procesul stock care ocupa UART-ul JN5189.
-    for p in $(ps | grep '[m]zigbee_agent' | awk '{print $1}'); do
-        kill -9 "$p" 2>/dev/null
-    done
-
-    # Configureaza UART-ul JN5189.
-    stty -F /dev/ttyS1 115200 raw -echo
-
-    # Boot normal JN5189: GPIO33=1, reset GPIO18 1 -> 0.
-    echo out > /sys/class/gpio/gpio33/direction
-    echo out > /sys/class/gpio/gpio18/direction
-
-    echo 1 > /sys/class/gpio/gpio33/value
-    echo 1 > /sys/class/gpio/gpio18/value
-    sleep 1
-    echo 0 > /sys/class/gpio/gpio18/value
-
-    echo "$(date) JN5189 Router started." >> "$LOG_FILE"
-
-    # Asteapta stabilizarea routerului, apoi stinge inelul.
-    sleep 10
-    printf '\245\000\000\000\245' > /dev/ttyS1
-
-    echo "$(date) Ring light OFF sent." >> "$LOG_FILE"
-) &
-
-exit 0
-EOF
-
-chmod +x /data/scripts/post_init.sh
-/bin/sh -n /data/scripts/post_init.sh
-echo "syntax=$?"
-sync
+uname -a
+busybox | head -n 1
+getprop ro.product.model
+ifconfig wlan0
+ps w | grep -E '[m]zigbee_agent|[a]pp_monitor|[m]ha_master'
+ls -l /dev/ttyS1
 ```
 
-Rezultatul așteptat este `syntax=0`. Nu da reboot dacă rezultatul este diferit.
-După reboot, așteaptă cel puțin 40 de secunde și verifică:
+Rezultatul trebuie să corespundă modelului și arhitecturii documentate.
+
+---
+
+## 9. Transfer de fișiere între Windows și hub
+
+Metoda simplă folosește un listener BusyBox `nc` pentru o singură conexiune. Portul exemplu este `12345` și trebuie să rămână numai în LAN.
+
+### Hub — primește un fișier
 
 ```sh
-cat /tmp/post_init.log
-ps | grep '[t]elnetd'
-ps | grep '[m]zigbee_agent'
-ps | grep '[a]pp_monitor'
-cat /sys/class/gpio/gpio33/value
-cat /sys/class/gpio/gpio18/value
+rm -f /tmp/post_init.sh
+nc -l -p 12345 > /tmp/post_init.sh
 ```
 
-Starea validată este:
+Comanda rămâne blocată până când Windows trimite fișierul.
 
-- Telnet rulează;
-- `mzigbee_agent` este absent sau apare numai ca zombie (`Z`);
-- `app_monitor.sh` este suspendat (`T`);
-- GPIO33 este `1`, iar GPIO18 este `0`;
-- inelul roșu de boot se stinge automat după întârzierea finală de 10 secunde.
+### Windows — trimite fișierul
 
-Scriptul nu creează și nu oprește alte tuneluri `nc` și nu folosește `killall`.
-Vechiul tunel MQTT de pe portul `1884`, dacă există pentru alt scop, nu este
-atins. Citirea directă a luxului nu depinde de acel tunel MQTT.
-
-### 4. Backup și programarea JN5189
-
-Instalează SPSDK în Windows:
+Din rădăcina kitului:
 
 ```powershell
-python --version
-python -m pip install "spsdk[dk6]"
-python -m spsdk.apps.dk6prog --help
+.\scripts\windows\Send-FileToM1S.ps1 `
+  -HubIp HUB_IP `
+  -Path .\scripts\hub\post_init.sh `
+  -Port 12345
 ```
 
-Transportul validat folosește pyserial `socket://` prin BusyBox `nc`. Procedura
-de mai jos folosește temporar portul TCP `1888`. Portul trebuie să rămână doar
-în LAN și trebuie închis imediat după programare.
-
-
-#### 4.0 Hub deja adăugat în integrarea Home Assistant
-
-Dacă hubul este deja configurat în integrarea **Aqara M1S Zigbee Router**, dezactivează
-temporar integrarea sau oprește Home Assistant înainte de programarea JN5189.
-
-Integrarea poate deschide automat sesiuni Telnet și poate porni un proces blocant:
+### Hub — validează ce a primit
 
 ```sh
-cat /dev/ttyS1
+ls -l /tmp/post_init.sh
+/bin/sh -n /tmp/post_init.sh
+echo "syntax=$?"
+busybox sha256sum /tmp/post_init.sh 2>/dev/null || true
 ```
 
-Acest proces ocupă UART-ul. În această situație, conexiunea TCP pe portul `1888`
-poate funcționa, SPSDK poate trimite cadrul ISP, dar JN5189 nu răspunde și comanda
-se termină cu:
+Așteaptă `syntax=0`. Repetă aceeași metodă pentru celelalte scripturi sau pachete, schimbând numele destinației.
+
+## 9A. Etapa 3A — Verificarea alegerii stock STA/AP
+
+Această verificare este **separată** de modulul opțional de recuperare Wi-Fi. Firmware-ul Aqara decide la boot dacă pornește în STA sau AP din următoarele trei proprietăți:
 
 ```text
-GENERAL ERROR: TimeoutError
+persist.app.cloud_provisioned
+persist.app.hap_provisioned
+persist.app.hap_keepalive
 ```
 
-Oprirea doar a procesului `cat` nu este suficientă dacă integrarea îl recreează.
-După dezactivarea integrării sau oprirea Home Assistant, verifică pe hub:
+Dacă toate trei sunt `false` sau goale, `fw_manager.sh -r` poate porni intenționat `wifi_start.sh AP`, chiar dacă SSID-ul și parola sunt încă salvate. `persist.app.user_paired=true` și existența backupului local Wi-Fi nu schimbă această decizie.
+
+Transferă scriptul fără secrete:
+
+Pe hub:
 
 ```sh
-ps | grep ttyS1
-ps | grep 1886
-ps | grep 1888
-ps | awk '$5=="-sh"{print $1,$5}'
+rm -f /tmp/aqara_wifi_boot_state.sh
+nc -l -p 12345 > /tmp/aqara_wifi_boot_state.sh
 ```
 
-Rezultatul corect înainte de intrarea în ISP este:
-
-- niciun `cat /dev/ttyS1`;
-- niciun listener vechi pe `1886` sau `1888`;
-- numai sesiunea Telnet folosită pentru intervenție.
-
-Dacă există shell-uri Telnet vechi care recreează `cat /dev/ttyS1`, identifică
-părintele procesului:
-
-```sh
-for p in $(ps | grep 'cat /dev/ttyS1' | grep -v grep | awk '{print $1}'); do
-  echo "CAT=$p"
-  grep PPid /proc/$p/status
-done
-```
-
-Apoi identifică shell-ul părinte:
-
-```sh
-tr '\0' ' ' < /proc/PID_PARINTE/cmdline
-echo
-cat /proc/PID_PARINTE/status | grep PPid
-```
-
-Dacă este un shell Telnet vechi și nu este sesiunea curentă, oprește-l cu:
-
-```sh
-kill -9 PID_PARINTE
-```
-
-Nu folosi `killall nc`, deoarece hubul poate avea și alte tuneluri `nc` active.
-
-După un restart fizic, serviciile stock pot porni din nou. Oprește watchdog-ul și
-eliberează UART-ul înainte de ISP:
-
-```sh
-for p in $(ps | grep '[a]pp_monitor' | awk '{print $1}'); do
-  kill -STOP "$p" 2>/dev/null
-done
-
-for p in $(ps | grep '[m]zigbee_agent' | awk '{print $1}'); do
-  kill -9 "$p" 2>/dev/null
-done
-
-for p in $(ps | grep '[c]at /dev/ttyS1' | awk '{print $1}'); do
-  kill -9 "$p" 2>/dev/null
-done
-
-ps | grep app_monitor
-ps | grep mzigbee
-ps | grep ttyS1
-```
-
-Starea validată este:
-
-- `app_monitor.sh` în starea `T`;
-- `mzigbee_agent` absent sau numai zombie;
-- niciun proces real pe `/dev/ttyS1`.
-
-
-#### 4.1 Pregătirea hubului și intrarea în ISP
-
-Rulează în Telnet pe hub. Blocul oprește procesul Zigbee stock, pune GPIO33 pe
-nivelul ISP, resetează JN5189 și pornește un listener direct TCP–UART care se
-repornește după fiecare conexiune. Nu folosește FIFO și nici proces `cat`.
-
-```sh
-PORT=1888
-LOOP_PID_FILE=/var/tmp/jn1888_loop.pid
-LOOP_LOG=/var/tmp/jn1888_loop.log
-
-if [ -f "$LOOP_PID_FILE" ]; then
-    OLD_LOOP=$(cat "$LOOP_PID_FILE" 2>/dev/null)
-    [ -n "$OLD_LOOP" ] && kill -9 "$OLD_LOOP" 2>/dev/null
-    rm -f "$LOOP_PID_FILE"
-fi
-
-for p in $(ps w | grep "[n]c -l -p $PORT" | awk '{print $1}'); do
-    kill -9 "$p" 2>/dev/null
-done
-
-for p in $(ps w | grep '[a]pp_monitor' | awk '{print $1}'); do
-    kill -STOP "$p" 2>/dev/null
-done
-for p in $(ps w | grep '[m]zigbee_agent' | awk '{print $1}'); do
-    kill -9 "$p" 2>/dev/null
-done
-
-stty 115200 cs8 -parenb -cstopb cread clocal -crtscts \
-  -ignbrk -brkint -ignpar -parmrk -inpck -istrip \
-  -ixon -ixoff -icanon -echo min 1 time 0 < /dev/ttyS1
-
-echo out > /sys/class/gpio/gpio33/direction
-echo out > /sys/class/gpio/gpio18/direction
-echo 0 > /sys/class/gpio/gpio33/value
-echo 1 > /sys/class/gpio/gpio18/value
-sleep 1
-echo 0 > /sys/class/gpio/gpio18/value
-sleep 1
-
-(
-    while true; do
-        nc -l -p "$PORT" < /dev/ttyS1 > /dev/ttyS1
-        sleep 1
-    done
-) >"$LOOP_LOG" 2>&1 &
-LOOP_PID=$!
-echo "$LOOP_PID" > "$LOOP_PID_FILE"
-
-sleep 3
-netstat -lnt | grep ":$PORT"
-```
-
-Confirmarea importantă este linia `LISTEN` pentru portul `1888`. O sesiune
-`nc` se închide după fiecare comandă SPSDK, iar bucla pornește listenerul
-următor. Verifică `netstat` înaintea fiecărei comenzi SPSDK.
-
-#### 4.2 Verificarea comunicației
-
-În PowerShell:
+În Windows:
 
 ```powershell
-python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n info
+.\scripts\windows\Send-FileToM1S.ps1 `
+  -HubIp HUB_IP `
+  -Path .\scripts\hub\aqara_wifi_boot_state.sh `
+  -Port 12345
 ```
 
-Rezultatul trebuie să includă:
+Pe hub:
+
+```sh
+chmod 700 /tmp/aqara_wifi_boot_state.sh
+/bin/sh -n /tmp/aqara_wifi_boot_state.sh
+/tmp/aqara_wifi_boot_state.sh check
+echo "rc=$?"
+```
+
+Rezultate:
+
+- `BOOT_WIFI_SELECTION=STA_EXPECTED` — cel puțin una dintre cele trei stări este `true`;
+- `BOOT_WIFI_SELECTION=AP_RISK` și `rc=1` — toate trei sunt inactive; corectează înainte de primul reboot.
+
+Corecție validată:
+
+```sh
+/tmp/aqara_wifi_boot_state.sh fix
+/tmp/aqara_wifi_boot_state.sh check
+```
+
+Rezultatul final trebuie să conțină:
+
+```text
+cloud_provisioned=true
+hap_provisioned=true
+hap_keepalive=true
+user_paired=true
+BOOT_WIFI_SELECTION=STA_EXPECTED
+```
+
+Scriptul nu citește și nu afișează SSID-ul, parola Wi-Fi sau tokenul MiIO. Echivalentul manual este `setprop ... true` pentru cele patru proprietăți urmat de `sync`.
+
+> **Critic:** `fw_manager.sh -r` înseamnă pornire normală a serviciilor. `fw_manager.sh -f -r` declanșează calea de factory reset și nu trebuie pus în `post_init.sh`.
+
+---
+
+# PARTEA II — Boot persistent și backupul original
+
+## 10. Etapa 4 — Instalarea `post_init.sh`
+
+Înainte de instalare, etapa 9A trebuie să arate `STA_EXPECTED`. `post_init.sh` doar înregistrează un avertisment dacă stările devin din nou inactive; nu le modifică automat la fiecare boot.
+
+`post_init.sh` curent face următoarele la fiecare boot Linux:
+
+1. pornește serviciile stock prin `fw_manager.sh -r` — pornire normală, fără opțiunea `-f`;
+2. așteaptă Wi-Fi;
+3. solicită Telnet persistent prin `fw_manager.sh -t -k`;
+4. pornește opțional managerul Wi-Fi și portalul, dacă au fost instalate;
+5. suspendă `app_monitor`, pentru a nu reporni agentul Zigbee stock;
+6. oprește `mzigbee_agent` și orice `cat /dev/ttyS1` rămas;
+7. configurează UART-ul la 115200;
+8. pornește JN5189 normal, GPIO33=`1`, reset GPIO18 `1 -> 0`;
+9. pornește opțional bridge-ul butonului, dacă este configurat;
+10. stinge inelul după 10 secunde.
+
+După transferul fișierelor `post_init.sh` și `install_post_init.sh` în `/tmp`:
+
+```sh
+chmod 700 /tmp/install_post_init.sh
+/bin/sh -n /tmp/install_post_init.sh
+/tmp/install_post_init.sh /tmp/post_init.sh
+```
+
+Verifică:
+
+```sh
+ls -l /data/scripts/post_init.sh
+/bin/sh -n /data/scripts/post_init.sh
+grep -n 'fw_manager\|mzigbee_agent\|gpio33\|button_watch' /data/scripts/post_init.sh
+```
+
+Nu reporni încă hubul. Mai întâi efectuează backupul JN5189.
+
+> În huburile proiectului, `/data/scripts/post_init.sh` este hookul persistent folosit la boot. După primul reboot verifică obligatoriu `/tmp/post_init.log`; existența fișierului în `/data` nu este suficientă pentru a demonstra că a fost executat.
+
+---
+
+## 11. Etapa 5 — Eliberarea UART-ului înainte de ISP
+
+Dacă hubul a fost deja adăugat în integrarea Home Assistant, dezactivează temporar intrarea sau oprește Home Assistant. Integrarea poate recrea automat tunelul UART și un proces `cat /dev/ttyS1`.
+
+Transferă și rulează preflightul:
+
+```sh
+chmod 700 /tmp/jn5189_preflight.sh
+/tmp/jn5189_preflight.sh
+```
+
+Starea corectă înainte de ISP:
+
+- niciun `cat /dev/ttyS1` real;
+- `mzigbee_agent` poate fi oprit;
+- `app_monitor` poate fi suspendat în starea `T`;
+- portul 1888 liber;
+- numai sesiunea Telnet folosită pentru intervenție.
+
+Pentru identificarea părintelui unui proces care reapare:
+
+```sh
+for p in $(ps w | grep '[c]at /dev/ttyS1' | awk '{print $1}'); do
+  echo "CAT=$p"
+  grep PPid /proc/$p/status
+ done
+```
+
+Nu folosi `killall nc`; hubul poate avea tuneluri audio sau UART legitime.
+
+---
+
+## 12. Etapa 6 — Intrarea JN5189 în ISP
+
+Transferă `scripts/hub/jn5189_enter_isp_1888.sh` în `/tmp`, apoi:
+
+```sh
+chmod 700 /tmp/jn5189_enter_isp_1888.sh
+/bin/sh -n /tmp/jn5189_enter_isp_1888.sh
+/tmp/jn5189_enter_isp_1888.sh
+```
+
+Rezultatul așteptat:
+
+```text
+ISP_LISTENER_OK port=1888 ...
+GPIO33=0 GPIO18=0
+```
+
+Verificare suplimentară:
+
+```sh
+netstat -lnt | grep 1888
+ps w | grep '[n]c -l -p 1888'
+```
+
+Scriptul folosește o buclă care recreează listenerul după fiecare conexiune SPSDK. Așteaptă aproximativ două secunde între comenzile SPSDK.
+
+### Verificare din Windows
+
+```powershell
+python -m spsdk.apps.dk6prog `
+  -b PYSERIAL `
+  -d "socket://HUB_IP:1888" `
+  -n info
+```
+
+Trebuie să apară:
 
 ```text
 Detected DEVICE: JN5189
 FLASH  Memory ID 0  Base 0x0  Length 0x9DE00  Sector 0x200
 ```
 
-După `info`, revino în Telnet și verifică dacă bucla a recreat listenerul:
+Oprește-te dacă dispozitivul sau geometria memoriei diferă.
 
-```sh
-netstat -lnt | grep 1888
-```
+---
 
-#### 4.3 Backup pentru un hub stock
+## 13. Etapa 7 — Două backupuri stock identice
 
-Înaintea primei conversii, citește Memory ID 0 și păstrează backupul în două
-locuri sigure:
+Din PowerShell, rulează de două ori scriptul de backup:
 
 ```powershell
-python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n read -o ".\jn5189_original_flash.bin" 0x0 646656 0
-Get-FileHash ".\jn5189_original_flash.bin" -Algorithm SHA256
+.\scripts\windows\JN5189-Backup.ps1 -HubIp HUB_IP
+Start-Sleep -Seconds 3
+.\scripts\windows\JN5189-Backup.ps1 -HubIp HUB_IP
 ```
 
-Verifică din nou `LISTEN` înaintea oricărei alte comenzi SPSDK.
-
-### 5. Scrierea sau actualizarea firmware-ului
-
-Verifică fișierul exact ales pentru flash:
-
-```powershell
-Get-Item ".\jn5189_router_rgb_lux_rejoin_test.bin"
-Get-FileHash ".\jn5189_router_rgb_lux_rejoin_test.bin" -Algorithm SHA256
-```
-
-Pentru actualizarea unui firmware Router deja funcțional, scrie direct la
-adresa `0x0`, **fără erase complet**. Aceasta este procedura reușită la
-19 iulie 2026 și a păstrat asocierea Zigbee existentă:
-
-```powershell
-python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n write 0x0 ".\jn5189_router_rgb_lux_rejoin_test.bin"
-```
-
-Confirmarea reușită pentru acest build este:
+Fiecare fișier trebuie să aibă:
 
 ```text
-Written 209296 bytes to memory ID 0 at address 0x0
+646656 bytes
 ```
 
-La prima conversie sau la recuperare, când ștergerea zonei imaginii este cu
-adevărat necesară, șterge numai zona aplicației rotunjită la sector, niciodată
-întregul cip:
+Compară hashurile celor mai recente două fișiere:
 
 ```powershell
-python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n erase 0x0 0x33200 0
+Get-ChildItem .\m1s-backups\*.bin |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 2 |
+  ForEach-Object {
+    [pscustomobject]@{
+      File = $_.FullName
+      Bytes = $_.Length
+      SHA256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+    }
+  }
 ```
 
-Confirmă din nou `LISTEN`, apoi execută `write`. Nu scrie niciodată în EFUSE,
-ROM, Config, PSECT sau pFLASH.
+Condiția de continuare este:
 
+- ambele au 646656 bytes;
+- SHA256 este identic;
+- fișierele sunt copiate în minimum două locații fizice diferite;
+- numele conține IP-ul/identitatea hubului; backupurile huburilor nu se amestecă.
 
-#### 5.2 Recuperare validată după `TimeoutError`
+Backupul poate conține date specifice dispozitivului. Nu îl publica.
 
-Procedura validată pe un hub care fusese deja scris, dar nu mai răspundea stabil în
-ISP, a fost:
+---
 
-1. restart fizic al hubului;
-2. dezactivarea temporară a integrării Home Assistant;
-3. suspendarea `app_monitor.sh`;
-4. oprirea `mzigbee_agent`;
-5. eliminarea tuturor proceselor `cat /dev/ttyS1` și a shell-urilor Telnet vechi
-   care le recreau;
-6. confirmarea că `/dev/ttyS1`, `1886` și `1888` sunt libere;
-7. GPIO33=`0`;
-8. reset GPIO18 `1 -> 0`;
-9. pornirea listenerului temporar:
-   ```sh
-   nc -l -p 1888 < /dev/ttyS1 > /dev/ttyS1 &
-   ```
-10. verificarea `info` din PowerShell;
-11. ștergerea numai a zonei aplicației:
-    ```powershell
-    python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n erase 0x0 0x33200 0
-    ```
-12. repornirea listenerului `1888`;
-13. scrierea imaginii folosind calea completă:
-    ```powershell
-    python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://IP_HUB:1888" -n write 0x0 "C:\cale\completa\jn5189_router_rgb_lux_rejoin_test.bin" 0
-    ```
-14. confirmarea:
-    ```text
-    Written 209296 bytes to memory ID 0 at address 0x0
-    ```
-15. boot normal cu GPIO33=`1` și reset GPIO18 `1 -> 0`.
+# PARTEA III — Scrierea firmware-ului Router
 
-În SPSDK 3.10.0, comanda `erase` folosește argumente poziționale. Forma cu
-`--memory-id` nu este acceptată.
+## 14. Etapa 8 — Alegerea între update și prima conversie
 
-Un listener BusyBox `nc -l` simplu deservește o singură conexiune și se închide
-după fiecare comandă SPSDK. Dacă nu se folosește bucla documentată la 4.1, trebuie
-repornit manual înainte de fiecare `info`, `erase` sau `write`.
+### Hub deja Router, actualizare de firmware
 
+Nu folosi erase. Scrierea directă a imaginii a păstrat contextul Zigbee în testul documentat.
 
-#### 5.1 Închiderea listenerului temporar
+### Hub stock, prima conversie
 
-După ultima comandă SPSDK, rulează în Telnet:
+Folosește `-EraseApplication`, care șterge numai zona aplicației `0x0–0x33200`, apoi scrie imaginea. Nu șterge întregul cip.
+
+### Verificare simulată PowerShell
+
+```powershell
+.\scripts\windows\JN5189-Flash-Verify.ps1 `
+  -HubIp HUB_IP `
+  -FirmwarePath .\jn5189_router_rgb_lux_rejoin_test.bin `
+  -EraseApplication `
+  -WhatIf
+```
+
+`-WhatIf` nu scrie nimic. Verifică IP-ul, calea și hashul afișat.
+
+---
+
+## 15. Etapa 9 — Flash și readback obligatoriu
+
+### Prima conversie stock
+
+```powershell
+.\scripts\windows\JN5189-Flash-Verify.ps1 `
+  -HubIp HUB_IP `
+  -FirmwarePath .\jn5189_router_rgb_lux_rejoin_test.bin `
+  -EraseApplication
+```
+
+### Actualizare a unui Router existent
+
+```powershell
+.\scripts\windows\JN5189-Flash-Verify.ps1 `
+  -HubIp HUB_IP `
+  -FirmwarePath .\jn5189_router_rgb_lux_rejoin_test.bin
+```
+
+Scriptul:
+
+1. verifică dimensiunea și SHA256 ale firmware-ului;
+2. rulează `info`;
+3. opțional șterge numai `0x33200` bytes din Memory ID 0;
+4. scrie la adresa `0x0`;
+5. citește înapoi exact 209296 bytes;
+6. compară SHA256 firmware/readback;
+7. se oprește cu eroare dacă există orice diferență.
+
+Confirmarea finală trebuie să indice același SHA256 pentru firmware și readback.
+
+Nu trece la boot dacă readbackul diferă.
+
+### Comenzi SPSDK echivalente, pentru depanare
+
+```powershell
+# Info
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n info
+
+# Erase numai la prima conversie/recuperare
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n erase 0x0 0x33200 0
+
+# Write
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n write 0x0 ".\jn5189_router_rgb_lux_rejoin_test.bin" 0
+
+# Readback exact
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n read -o ".\readback.bin" 0x0 209296 0
+```
+
+În SPSDK 3.10.0, `erase` folosește argumente poziționale; forma `--memory-id` nu este acceptată.
+
+---
+
+## 16. Etapa 10 — Închiderea ISP și bootul Routerului
+
+Transferă scripturile de închidere și boot, apoi:
 
 ```sh
-if [ -f /var/tmp/jn1888_loop.pid ]; then
-    LOOP_PID=$(cat /var/tmp/jn1888_loop.pid 2>/dev/null)
-    [ -n "$LOOP_PID" ] && kill -9 "$LOOP_PID" 2>/dev/null
-    rm -f /var/tmp/jn1888_loop.pid
-fi
-for p in $(ps w | grep '[n]c -l -p 1888' | awk '{print $1}'); do
-    kill -9 "$p" 2>/dev/null
-done
-sleep 2
+chmod 700 /tmp/jn5189_close_isp_1888.sh /tmp/jn5189_boot_router.sh
+/tmp/jn5189_close_isp_1888.sh
 netstat -lnt | grep 1888
 ```
 
 Ultima comandă nu trebuie să afișeze nimic.
 
-### 6. Ieșirea din ISP și pornirea Routerului
-
-Rulează pe hub:
+În Zigbee2MQTT activează **Permit join (All)**, apoi:
 
 ```sh
-echo 1 > /sys/class/gpio/gpio33/value
-echo 1 > /sys/class/gpio/gpio18/value
-sleep 1
-echo 0 > /sys/class/gpio/gpio18/value
-sleep 10
-
-cat /sys/class/gpio/gpio33/value
-cat /sys/class/gpio/gpio18/value
+/tmp/jn5189_boot_router.sh
 ```
 
-Valorile normale sunt:
+Rezultatul așteptat:
 
 ```text
-1
-0
+ROUTER_BOOT_SENT GPIO33=1 GPIO18=0
 ```
 
-Modul Router cere ca `/dev/ttyS1` să rămână liber de procesul original
-`mzigbee_agent`. După fiecare reboot verifică:
+Așteaptă 30–60 de secunde. În Zigbee2MQTT trebuie să apară dispozitivul Lumi/NXP `BDB-Router` cu rol Router.
+
+### Dacă nu apare
+
+1. confirmă Permit join;
+2. confirmă GPIO33=`1`, GPIO18=`0`;
+3. confirmă că `mzigbee_agent` și `cat /dev/ttyS1` nu rulează;
+4. repornește o singură dată Zigbee2MQTT;
+5. pulsează din nou resetul prin `jn5189_boot_router.sh`;
+6. nu repeta erase/write fără un motiv demonstrat.
+
+---
+
+## 17. Etapa 11 — Primul reboot complet
+
+După ce Routerul este online și readbackul a fost salvat:
 
 ```sh
-ps | grep '[m]zigbee_agent'
-ps | grep '[a]pp_monitor'
+sync
+reboot
 ```
 
-Niciun proces nu trebuie să ocupe `/dev/ttyS1` în timp ce integrarea folosește
-protocoalele RGB și lux ale JN5189. Această cerință Router este diferită de o
-configurație stock în care `mzigbee_agent` rămâne pornit.
+Așteaptă minimum 45 de secunde, reconectează Telnet și rulează `verify_hub.sh`:
 
-Dacă a fost șters accidental întregul flash, activează **Permit join (All)**
-în Zigbee2MQTT, păstrează GPIO33=`1`, pulsează GPIO18 `1 -> 0` și așteaptă
-30–60 de secunde pentru reasocierea dispozitivului `BDB-Router`.
+```sh
+chmod 700 /tmp/verify_hub.sh
+/tmp/verify_hub.sh
+```
 
-### 7. Verificarea Zigbee, RGB și lux
+Criterii de acceptare:
 
-Dispozitivul trebuie să apară în Zigbee2MQTT ca Lumi/NXP `BDB-Router`, cu rol
-Router.
+- `/tmp/post_init.log` există și conține pornirea JN5189;
+- Telnet rulează;
+- `app_monitor` este suspendat (`T`);
+- `mzigbee_agent` este absent sau numai zombie;
+- GPIO33=`1`, GPIO18=`0`;
+- Routerul reapare în Zigbee2MQTT după reboot;
+- inelul roșu de boot se stinge după întârzierea finală;
+- Wi-Fi păstrează IP-ul rezervat.
 
-Protocol RGB:
+Nu instala Home Assistant înainte ca această etapă să fie stabilă.
+
+---
+
+# PARTEA IV — Protocoalele locale
+
+## 18. RGB, lux și rejoin
+
+### RGB
 
 ```text
 A5 RED GREEN BLUE CHECKSUM
 CHECKSUM = A5 XOR RED XOR GREEN XOR BLUE
 ```
 
-Test manual OFF:
+Test OFF:
 
 ```sh
 printf '\245\000\000\000\245' > /dev/ttyS1
 ```
 
-Cerere și răspuns lux:
+### Lux
 
 ```text
 Cerere:  A6 00 00 00 A6
 Răspuns: A6 RAW_H RAW_L MV_H MV_L LUX_H LUX_L CHECKSUM
 ```
 
-Checksum-ul răspunsului este XOR-ul primilor șapte bytes. Integrarea îl
-validează și publică `LUX_H * 256 + LUX_L` în lux. Nu lăsa un proces blocant
-`cat /dev/ttyS1` pornit după testele manuale; integrarea creează și administrează
-singură tunelul TCP/UART pe portul `1886`.
+Checksumul răspunsului este XOR-ul primilor șapte bytes. Firmware-ul curent folosește PIO19/ADC5.
 
-### Protocolul de rejoin și locul butonului (firmware compatibil v0.2.1)
-
-Activează mai întâi **Permit join** pe coordonatorul destinație.
-
-Acțiunea de rejoin nu este o entitate pe pagina dispozitivului. Se găsește aici:
-
-**Setări > Dispozitive și servicii > Aqara M1S Zigbee Router > Configure > Conectare la alt coordonator Zigbee**
-
-Citește avertismentul și confirmă. Integrarea trimite comanda numai după pasul
-de confirmare.
-
-
-Integrarea trimite această cerere distinctă de cinci bytes:
+### Rejoin A7
 
 ```text
-Cerere:    A7 52 4A 4E F1
+Cerere:     A7 52 4A 4E F1
 Confirmare: A7 4F 4B 00 A3
 ```
 
-Payloadul `52 4A 4E` reprezintă `RJN`. După trimiterea confirmării, JN5189
-șterge numai contextul persistent al rețelei Zigbee și se repornește. Calea BDB
-existentă pornește automat Network Steering la boot. Linux, setările Wi-Fi,
-RGB/lux și fișierele din `/data/musics` nu sunt șterse.
+Înainte de rejoin, activează **Permit join** pe coordonatorul destinație. În Home Assistant deschide:
 
-Firmware-ul fizic validat anterior `jn5189_router_rgb_lux_pio19.bin` nu
-implementează `A7`. Acțiunea din Configurare eșuează astfel în siguranță, fără
-să modifice nimic, până la instalarea unui build de firmware compatibil.
+**Setări → Dispozitive și servicii → Aqara M1S Zigbee Router → Configurează → Conectare la alt coordonator Zigbee**
 
-## Instalarea în Home Assistant
+Citește avertismentul și confirmă. Acțiunea șterge numai contextul persistent al rețelei Zigbee din JN5189 și pornește Network Steering. Nu șterge Linux, Wi-Fi, RGB/lux sau sunetele. Coordonatorul vechi poate păstra o intrare rămasă; elimin-o numai după ce Routerul apare online pe coordonatorul nou.
+
+Nu lăsa un `cat /dev/ttyS1` manual după teste; integrarea își administrează singură tunelul UART.
+
+---
+
+# PARTEA V — Home Assistant
+
+## 19. Etapa 12 — Instalarea integrării v0.5.7
 
 ### HACS
 
-1. Deschide **HACS > Integrations**.
-2. Deschide meniul și alege **Custom repositories**.
-3. Adaugă:
+1. HACS → Integrations → Custom repositories.
+2. Adaugă repository-ul:
    `https://github.com/caiuspoputa-debug/ha-aqara-m1s-zigbee-router`
-4. Selectează categoria **Integration**.
-5. Descarcă ultima versiune.
+3. Categoria: **Integration**.
+4. Pentru această procedură reproductibilă selectează release-ul **0.5.7** și confirmă după instalare că `manifest.json` arată `0.5.7`; opțiunea „latest” se poate schimba ulterior.
+5. HACS instalează direct repository-ul; nu este necesar un ZIP separat atașat release-ului.
 6. Repornește complet Home Assistant.
-7. Deschide **Setări > Dispozitive și servicii > Adaugă integrare**.
-8. Caută **Aqara M1S Zigbee Router**.
-9. Introdu IP-ul hubului și datele Telnet.
 
-HACS instalează direct conținutul repository-ului; `hacs.json` nu cere o
-arhivă ZIP atașată separat release-ului.
+### Manual
 
-### Instalare manuală
-
-Copiază:
+Copiază directorul:
 
 ```text
 custom_components/aqara_m1s_zigbee_router
@@ -892,224 +767,687 @@ custom_components/aqara_m1s_zigbee_router
 /config/custom_components/aqara_m1s_zigbee_router
 ```
 
-Repornește Home Assistant și adaugă integrarea. Domeniul este diferit de
-`aqara_m1s_local`, deci cele două integrări pot coexista, dar nu trebuie să
-concureze pentru același UART sau aceleași resurse audio ale hubului.
+Repornește Home Assistant.
 
-## Entități în v0.5.0
+### Adăugarea hubului
 
-- `Ring Light`: inel RGB cu luminozitate
-- `Media Player`: difuzor/media player Home Assistant cu un singur slider nativ de 0,1% și gain PCM live
-- `M1S Media Group`: player cu cronologie comună pentru toate huburile selectate
-- `Include in M1S Media Group`: câte un switch de includere pentru fiecare hub
-- `Physical Button`: evenimente `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click` și `hold`
-- `Sound Playback Volume`: volumul redării sunetelor locale
-- `Illuminance`: lux direct din JN5189, cu atribute ADC raw și millivolts
-- `Hub Temperature`: numai din `persist.sys.temperature`
-- `WiFi IP`
-- diagnostic pentru procesele HomeKit, MQTT și Telnet
-- starea `JN5189 Router`
-- câte un buton de redare pentru fiecare WAV din catalogul suportat
+Setări → Dispozitive și servicii → Adaugă integrare → **Aqara M1S Zigbee Router**.
 
-Entitățile vechi sunt eliminate intenționat: `Volume Property`,
-`Uptime Seconds`, `Sound`, `Delete Selected Sound` și
-`Play Selected Sound`.
+Completează:
 
-## Media player nativ și radio
+- Host: IP-ul rezervat al hubului;
+- Port: `23`;
+- Username: de regulă `admin`;
+- Password: parola Telnet folosită, goală în configurația documentată;
+- Name: numele unic al hubului.
 
-Versiunea 0.2.0 publică entitatea ca difuzor cu `PLAY_MEDIA` și `BROWSE_MEDIA`.
-Poate naviga sursele audio Home Assistant compatibile, inclusiv Local Media,
-și poate reda URL-uri radio HTTP/HTTPS directe.
+> Config flow-ul salvează datele de conectare la hub. Verifică Telnet manual înainte de prima adăugare. Parola Wi-Fi introdusă ulterior în Configure nu este salvată în config entry sau options.
 
-Exemplu:
+---
 
-```yaml
-action: media_player.play_media
-target:
-  entity_id: media_player.aqara_m1s_zigbee_router_radio
-data:
-  media_content_id: "https://example.org/live.aac"
-  media_content_type: music
-```
+## 20. Entitățile curente
 
-Home Assistant rezolvă identificatorii `media-source://`, iar FFmpeg convertește
-intrarea în PCM mono, 32000 Hz, semnat pe 32 biți. Hubul primește fluxul pe
-portul TCP `12346` și îl redă cu `aplay`. Curățarea folosește PID-urile proprii
-și nu execută niciodată `killall nc`, deoarece hubul poate folosi și alte
-procese `nc`.
+Pentru fiecare hub:
 
-Integrarea separată **Radio Favorites** poate selecta această entitate ca
-destinație și oferă un catalog reutilizabil de posturi.
+- **Ring Light** — RGB și luminozitate;
+- **Media Player** — redare individuală, volum/mute live, pas 0,1%;
+- **Include in M1S Media Group** — includerea hubului în grup;
+- **Physical Button** — event MQTT;
+- **Sound Playback Volume** — volum pentru WAV-urile locale;
+- **Refresh Sound List**;
+- câte un buton pentru fiecare WAV detectat;
+- **Illuminance** — lux, ADC raw și millivolts;
+- **Hub Temperature** — `persist.sys.temperature`;
+- **WiFi IP**;
+- stări pentru HomeKit Process, MQTT Process, Telnet Process și JN5189 Router.
 
-## Administrarea sunetelor
+Global, o singură entitate:
 
-Deschide:
+- **M1S Media Group** — cronologie PCM comună pentru huburile selectate.
 
-**Setări > Dispozitive și servicii > Aqara M1S Zigbee Router > Configure**
+Entitățile Number de volum fin au fost eliminate în v0.5.6 și rămân eliminate în v0.5.7; sliderul nativ are pas de 0,1%.
 
-Sesiunea de administrare folosește etichete bilingve, cu româna prima:
+### Disponibilitate și revenire online
 
-- **Încărcare sunet WAV / Upload WAV sound**
-- **Ștergere sunet WAV / Delete WAV sound**
-- **Conectare la alt coordonator Zigbee / Join a different Zigbee coordinator**
-  (acțiune separată cu confirmare)
-- **Finalizare și închidere / Finish and close**
+Coordonatorul verifică hubul la fiecare 15 secunde. Când hubul este offline, lumina, playerul, volumul și senzorii live devin indisponibili. Butoanele WAV rămân intenționat vizibile. La prima revenire online, integrarea așteaptă 10 secunde pentru stabilizarea Wi-Fi/Telnet/UART și trimite o singură comandă RGB OFF; ultima culoare și luminozitate selectate rămân memorate pentru următoarea aprindere manuală.
 
-### Încărcarea unui fișier WAV
+---
 
-1. Deschide **Configure** și selectează
-   **Încărcare sunet WAV / Upload WAV sound**.
-2. Selectează fișierul WAV sau trage-l în câmpul de încărcare.
-3. Așteaptă mesajul de succes. Fișierul încărcat corect este copiat în:
+## 21. Audio și media
 
-   ```text
-   /data/musics/music-ch
-   ```
+### Player individual
 
-4. Repetă operația pentru celelalte fișiere. Fereastra de administrare rămâne
-   deschisă după fiecare încărcare.
-5. După terminarea tuturor operațiilor, revino în meniul de administrare și apasă
-   **Finalizare și închidere / Finish and close**.
+- port hub: `12346`;
+- FFmpeg în Home Assistant → PCM `S32_LE`, mono, 32000 Hz;
+- bucăți PCM de 20 ms;
+- gain și mute live, rampă anti-click 40 ms;
+- 3 retry-uri rapide la 5 secunde, apoi retry lent la 60 secunde;
+- starea stabilă se resetează după 30 secunde;
+- redarea individuală are prioritate față de grup;
+- suportă `PLAY_MEDIA` și `BROWSE_MEDIA`, inclusiv surse Home Assistant `media-source://` și URL-uri HTTP/HTTPS;
+- FFmpeg solicită best-effort `nice -5`, iar `aplay` pe hub `nice -3`; sunt priorități Linux normale, nu realtime, iar redarea continuă dacă sistemul le refuză.
 
-Operația de upload actualizează imediat catalogul de sunete. Pentru reîncărcarea
-completă a intrării de configurare, apasă
-**Finalizare și închidere / Finish and close**. Versiunea 0.2.6 reconstruiește
-apoi celelalte entități și actualizează informațiile dispozitivului.
+Integrarea separată **Radio Favorites** poate folosi acest media player ca țintă, dar nu este necesară pentru funcționarea de bază.
 
-Butonul **X** aparține interfeței Home Assistant și nu poate fi eliminat de o
-integrare custom. Închiderea cu **X** sare peste reîncărcarea finală a intrării
-de configurare, dar nu mai lasă catalogul de sunete neactualizat după upload sau
-ștergere.
+### Grup media
 
-Format acceptat:
+- port hub: `12347`;
+- o singură cronologie FFmpeg;
+- 1,5 secunde tăcere de sincronizare;
+- coadă de aproximativ 1 secundă;
+- reconciliere la 3 secunde;
+- resync complet cu protecție de 30 secunde;
+- un hub offline este scos fără oprirea celorlalte; revenirea lui produce resync.
 
-- extensie `.wav`
-- PCM necomprimat
-- mono
-- 32000 Hz
-- signed 32-bit little-endian (`pcm_s32le`)
-- maximum 20 MiB
+### Sunete WAV locale
 
-Conversie cu FFmpeg:
+- sursă hub: port `12347`;
+- destinație PCM hub: port `12348`;
+- upload: port `12349`;
+- director administrat: `/data/musics/music-ch`;
+- format: WAV PCM mono, 32000 Hz, signed 32-bit little-endian;
+- limită upload: 20 MiB.
+
+Conversie:
 
 ```sh
 ffmpeg -y -i input.mp3 -ac 1 -ar 32000 -c:a pcm_s32le output.wav
 ```
 
-Uploadul folosește un transfer LAN verificat pe portul TCP `12349`. Integrarea
-verifică dimensiunea și integritatea fișierului transferat înainte de mutarea
-fișierului temporar în directorul protejat. BusyBox `base64` rămâne disponibil
-ca metodă de rezervă.
+### Administrarea sunetelor din Home Assistant
 
-### Ștergerea unui fișier WAV
+Deschide:
 
-1. Deschide **Configure** și selectează
-   **Ștergere sunet WAV / Delete WAV sound**.
-2. Selectează fișierul personalizat care trebuie eliminat.
-3. Confirmă ștergerea.
-4. Repetă pentru celelalte fișiere, dacă este necesar.
-5. Apasă **Finalizare și închidere / Finish and close**, pentru ca versiunea 0.2.6
-   să facă reîncărcarea completă a integrării și să actualizeze toate informațiile
-   asociate dispozitivului.
+**Setări → Dispozitive și servicii → Aqara M1S Zigbee Router → Configurează**
 
-Pot fi administrate numai fișierele aflate direct în directorul protejat:
+Meniul curent oferă:
 
-```text
-/data/musics/music-ch
-```
+- **Schimbă rețeaua Wi-Fi / Change Wi-Fi network**;
+- **Încărcare sunet WAV / Upload WAV sound**;
+- **Ștergere sunet WAV / Delete WAV sound**, numai când există fișiere administrate;
+- **Conectare la alt coordonator Zigbee / Join a different Zigbee coordinator**;
+- **Finalizare și închidere / Finish and close**.
 
-Sunetele Aqara originale din directoare precum `/data/musics/music-scene` nu
-sunt oferite pentru ștergere de integrare.
+Încărcare:
+
+1. alege fișierul WAV;
+2. integrarea validează formatul și limita de 20 MiB;
+3. transferul principal folosește portul `12349`, verifică dimensiunea și MD5 înainte de înlocuirea destinației;
+4. dacă transferul TCP eșuează, există fallback BusyBox `base64`, tot cu verificare;
+5. fișierul ajunge numai în `/data/musics/music-ch`;
+6. lista butoanelor de sunet se actualizează imediat;
+7. după toate operațiile apasă **Finalizare și închidere** pentru reloadul complet și controlat al config entry-ului.
+
+Ștergere:
+
+1. selectează numai un fișier oferit de meniu;
+2. confirmă ștergerea;
+3. repetă pentru celelalte fișiere;
+4. apasă **Finalizare și închidere**.
+
+Sunetele originale din directoare precum `/data/musics/music-scene` nu sunt oferite pentru ștergere. Butonul **X** al ferestrei aparține frontendului Home Assistant: închiderea cu X nu anulează uploadul/ștergerea și lista se reîmprospătează imediat, dar sare reloadul final al config entry-ului.
+
+
+### Schimbarea Wi-Fi direct din integrare (v0.5.7)
+
+Această opțiune apare numai ca interfață de comandă; mecanismul sigur rulează pe hub și necesită instalarea prealabilă a `installers/m1s_wifi_recovery_SANITIZED.tgz` din etapa 14.
+
+1. În router, rezervă **același IP** pentru MAC-ul Wi-Fi al hubului pe noua rețea, dacă este posibil. Integrarea este configurată după IP.
+2. Deschide **Setări → Dispozitive și servicii → Aqara M1S Zigbee Router → Configurează → Schimbă rețeaua Wi-Fi**.
+3. Introdu noul SSID și parola; parola este afișată mascat și **nu este salvată** în datele sau opțiunile Home Assistant.
+4. Bifează confirmarea și pornește schimbarea.
+5. Integrarea scrie temporar candidatul numai pe hub, cu permisiuni `0600`, apoi pornește `wifi_apply_candidate.sh`.
+6. Helperul șterge mai întâi un IPv4 vechi rămas pe interfață, pornește asocierea la noul SSID și consideră testul reușit numai după apariția unui **IPv4 proaspăt**.
+7. Numai după succes, SSID-ul și parola devin copia `safe/` folosită la recovery. Dacă testul eșuează, rulează mecanismul de recuperare/AP existent.
+
+Este normal ca Home Assistant să marcheze temporar hubul offline în timpul schimbării. Dacă noua rețea acordă alt IP, integrarea nu îl poate ghici automat; actualizează rezervarea DHCP astfel încât hubul să păstreze IP-ul configurat sau reconfigurează integrarea ulterior.
+
+> Nu folosi opțiunea dacă modulul Wi-Fi recovery nu este instalat și verificat. Integrarea va refuza pornirea dacă `/data/m1s_wifi/wifi_apply_candidate.sh` lipsește.
 
 ### Descărcarea unui WAV existent de pe hub
 
-Fereastra de administrare Home Assistant poate încărca și șterge fișiere, dar
-nu oferă momentan un buton de descărcare în browser. Pentru copierea unui WAV
-existent de pe hub, folosește un transfer TCP temporar, numai în rețeaua locală.
+Interfața Configure încarcă și șterge, dar nu oferă download. Folosește un listener temporar LAN-only pe `1889`.
 
-Pe hub, găsește fișierul și pornește un listener pentru o singură conexiune:
+Pe hub:
 
 ```sh
 find /data/musics -type f -name '*.wav'
 nc -l -p 1889 < /data/musics/music-scene/disarm.wav
 ```
 
-Apoi rulează în Windows PowerShell, schimbând numele fișierului când este cazul:
+În Windows:
 
 ```powershell
-$client = New-Object System.Net.Sockets.TcpClient
-$client.Connect("IP_HUB", 1889)
-$stream = $client.GetStream()
-$file = [System.IO.File]::Create("$env:USERPROFILE\Downloads\disarm.wav")
-$stream.CopyTo($file)
-$file.Close()
-$stream.Close()
-$client.Close()
-Get-Item "$env:USERPROFILE\Downloads\disarm.wav"
+.\scripts\windows\Receive-FileFromM1S.ps1 `
+  -HubIp HUB_IP `
+  -OutputPath "$env:USERPROFILE\Downloads\disarm.wav" `
+  -Port 1889
 ```
 
-Listenerul `nc` de pe hub se închide automat după transfer. Păstrează portul
-`1889` numai în LAN și nu îl expune prin port forwarding.
+Scriptul Windows afișează calea, dimensiunea și SHA256. Listenerul `nc` este one-shot și se închide după transfer. Nu publica portul `1889` în Internet.
 
-Integrarea înregistrează și următoarele acțiuni pentru automatizări avansate:
+### Limitare cunoscută importantă rămasă în v0.5.7
+
+Grupul media și sursa sunetelor WAV folosesc ambele portul `12347`. Nu porni un WAV local pe un hub în timp ce receptorul de grup al acelui hub deține portul. Aceasta trebuie verificată și corectată în introspecția de cod ulterioară; README-ul nu pretinde că arbitrajul dintre cele două trasee este rezolvat.
+
+---
+
+## 22. Servicii Home Assistant
+
+Domeniu: `aqara_m1s_zigbee_router`
 
 ```text
-aqara_m1s_zigbee_router.upload_sound
-aqara_m1s_zigbee_router.delete_sound
-aqara_m1s_zigbee_router.refresh_sounds
+play_url
+play_sound
+run_command
+upload_sound
+delete_sound
+refresh_sounds
 ```
 
-## Temperatura și disponibilitatea
+`run_command` execută o comandă shell prin Telnet pe hub și trebuie tratat ca acces administrativ complet. Nu îl expune utilizatorilor neautorizați și nu construi automatizări din input nevalidat.
 
-`Hub Temperature` citește exclusiv:
+---
+
+# PARTEA VI — Butonul fizic prin MQTT
+
+## 23. Etapa 13 — Instalarea bridge-ului opțional
+
+Integrarea Home Assistant expune entitatea `Physical Button`, dar are nevoie de un publisher pe hub. Arhivele vechi nu conțineau acest publisher; kitul actual îl furnizează separat.
+
+### Ce face
+
+- citește `/var/log/messages`;
+- filtrează liniile `mha_master` cu `on_message basis.button`;
+- nu deschide `/dev/input/event0`;
+- aplică o fereastră de 1,2 secunde pentru a păstra gestul final;
+- publică MQTT QoS 0:
+  `m1s/<ultimul_octet_IP>/button/action`;
+- valori: `click`, `double_click`, `triple_click`, `quadruple_click`, `five_click`, `hold`.
+
+### Transfer și instalare
+
+Pe hub:
 
 ```sh
-getprop persist.sys.temperature
+rm -f /tmp/m1s_button_bridge_SANITIZED.tgz
+nc -l -p 12345 > /tmp/m1s_button_bridge_SANITIZED.tgz
 ```
 
-Valoarea Linux thermal-zone cunoscută ca fiind greșită, `1 °C`, nu este
-folosită. Dacă proprietatea nu poate fi interpretată sau este neverosimilă,
-entitatea devine indisponibilă.
+În Windows:
 
-Coordinatorul verifică hubul la 15 secunde. Entitățile live devin indisponibile
-cât timp hubul este offline; butoanele sunetelor rămân vizibile intenționat.
-După ce hubul devine accesibil, integrarea așteaptă **10 secunde** și trimite
-o singură comandă RGB OFF. Întârzierea permite stabilizarea Wi-Fi, Telnet și
-UART-ului JN5189 înainte de stingerea roșului slab de boot. Ultima culoare și
-luminozitate selectate în Home Assistant rămân memorate pentru următoarea
-pornire manuală.
+```powershell
+.\scripts\windows\Send-FileToM1S.ps1 `
+  -HubIp HUB_IP `
+  -Path .\installers\m1s_button_bridge_SANITIZED.tgz
+```
 
-## Securitate și recuperare
+Pe hub:
 
-- Păstrează Telnet și porturile `1886`, `12346` și `12349` numai în LAN.
-- Nu le expune prin port forwarding.
-- Nu publica tokenul MiIO sau datele Telnet.
-- Păstrează backupul flash original JN5189 și hash-ul său SHA256.
-- Nu scrie niciodată EFUSE, ROM, Config sau PSECT.
-- Pentru recuperare, intră în ISP cu GPIO33=`0`, verifică `info`, scrie
-  backupul original validat în Memory ID 0, citește-l înapoi, compară SHA256,
-  apoi pornește cu GPIO33=`1` și GPIO18=`0`.
+```sh
+rm -rf /tmp/m1s_button_install
+mkdir -p /tmp/m1s_button_install
+cd /tmp/m1s_button_install
+tar -xzf /tmp/m1s_button_bridge_SANITIZED.tgz
+/bin/sh -n install.sh
+./install.sh
+```
 
-## Actualizare de la v0.2.0
+### Configurare fără parole în arhivă
 
-1. Compilează și validează fizic sursa JN5189 furnizată cu protocolul `A7`.
-2. Scrie numai imaginea compatibilă verificată și testează RGB, lux și Zigbee.
-3. Actualizează fișierele repository-ului și manifestul la `0.2.1`.
-4. Creează/publică tagul `v0.2.1`.
-5. Actualizează prin HACS și repornește complet Home Assistant.
-6. Activează Permit join pe coordonatorul destinație.
-7. Deschide **Configurare** la integrare, alege **Conectare la alt coordonator
-   Zigbee**, citește avertizarea și confirmă.
+```sh
+cp /data/m1s_button/m1s_button.conf.example /data/m1s_button/m1s_button.conf
+```
 
-Vechiul coordonator poate păstra o intrare învechită, care poate fi ștearsă după
-apariția routerului în noul coordonator. Acțiunea nu șterge Linux, Wi-Fi,
-RGB/lux sau fișierele audio.
+Editează numai pe hub și înlocuiește `HOME_ASSISTANT_IP`:
 
-### Aplicarea valorii finale a volumului de grup (v0.5.4)
+```sh
+cat > /data/m1s_button/m1s_button.conf <<'EOF_BUTTON_CONF'
+BROKER_HOST="HOME_ASSISTANT_IP"
+BROKER_PORT="1883"
+HUB_ID=""
+MQTT_USERNAME_FILE="/data/m1s_button/mqtt_username"
+MQTT_PASSWORD_FILE="/data/m1s_button/mqtt_password"
+EOF_BUTTON_CONF
+```
 
-Bara de volum a grupului folosește temporizare de stabilizare. Pozițiile intermediare actualizează valoarea afișată, însă cronologia FFmpeg comună este repornită o singură dată, la 0,8 secunde după ultima comandă de volum. Astfel sunt evitate întreruperile repetate în timpul deplasării barei.
+Scrie credentialele MQTT fără să le afișezi în README sau istoric. Înlocuiește local valorile din comenzile următoare:
 
-### Volum de grup live fără întrerupere (v0.5.5)
+```sh
+printf '%s' 'MQTT_USERNAME_LOCAL' > /data/m1s_button/mqtt_username
+printf '%s' 'MQTT_PASSWORD_LOCAL' > /data/m1s_button/mqtt_password
+chmod 600 /data/m1s_button/m1s_button.conf \
+  /data/m1s_button/mqtt_username \
+  /data/m1s_button/mqtt_password
+sync
+```
 
-Volumul și mute pentru grup sunt aplicate acum ca amplificare software direct pe fluxul PCM S32_LE comun deja pornit. Mutarea oricărui control de volum din Home Assistant nu mai repornește FFmpeg, receptoarele TCP, `aplay`, cozile sau sincronizarea grupului. Sliderul nativ al playerului folosește acum pași de 0,1% pe intervalul 0-100%. Repornirea completă a grupului rămâne rezervată revenirii sau recuperării reale a unui hub.
+Pentru broker fără autentificare, lasă cele două fișiere de credentiale goale.
 
+### Test fără apăsarea butonului
+
+```sh
+/data/m1s_button/m1s_mqtt_publish.sh click
+echo "rc=$?"
+```
+
+Așteaptă `rc=0`. Verifică în Home Assistant Developer Tools → Events sau cu un subscriber MQTT că payloadul ajunge pe topicul exact.
+
+### Pornire watcher
+
+```sh
+/data/m1s_button/button_watch.sh >/tmp/m1s_button_console.log 2>&1 &
+```
+
+După reboot, `post_init.sh` îl pornește automat dacă există configurația.
+
+```sh
+ps w | grep '[b]utton_watch.sh'
+tail -f /tmp/m1s_button.log
+```
+
+Nu publica fișierele `m1s_button.conf`, `mqtt_username` sau `mqtt_password`.
+
+---
+
+# PARTEA VII — Recuperare Wi-Fi
+
+## 24. Etapa 14 — Installerul Wi-Fi sanitizat, opțional
+
+Pachetul:
+
+```text
+installers/m1s_wifi_recovery_SANITIZED.tgz
+```
+
+nu conține SSID sau parolă. Fișierele `safe/ssid` și `safe/pass` din payload sunt goale, iar installerul preia valorile curente direct de pe hub înainte de înlocuire.
+
+### Înainte de instalare
+
+Rulează mai întâi etapa 9A. Modulul de recovery nu repară logica stock de provisioning care poate alege AP imediat după boot; el intervine numai ulterior, după lipsa IPv4 pentru pragul configurat. Dacă hubul intră în AP la aproximativ 20 de secunde de la boot, verifică proprietățile Aqara înainte de a suspecta managerul de recovery.
+
+### Funcționare
+
+- managerul verifică IPv4 la fiecare 10 secunde;
+- după 240 secunde fără IPv4 poate porni AP;
+- AP-ul este automat numai dacă există `/data/m1s_wifi/actions_enabled`;
+- fără acel fișier, managerul rămâne în simulare și doar scrie în log ce ar face;
+- portalul de configurare ascultă pe `8080`;
+- noua rețea devine backup numai după obținerea unui IPv4;
+- la eșec, hubul revine în AP și ulterior la rețeaua sigură.
+
+### Transfer și instalare
+
+Hub:
+
+```sh
+rm -f /tmp/m1s_wifi_recovery_SANITIZED.tgz
+nc -l -p 12345 > /tmp/m1s_wifi_recovery_SANITIZED.tgz
+```
+
+Windows:
+
+```powershell
+.\scripts\windows\Send-FileToM1S.ps1 `
+  -HubIp HUB_IP `
+  -Path .\installers\m1s_wifi_recovery_SANITIZED.tgz
+```
+
+Hub:
+
+```sh
+rm -rf /tmp/m1s_wifi_install
+mkdir -p /tmp/m1s_wifi_install
+cd /tmp/m1s_wifi_install
+tar -xzf /tmp/m1s_wifi_recovery_SANITIZED.tgz
+/bin/sh -n install.sh
+./install.sh
+```
+
+Rezultat așteptat:
+
+```text
+WIFI_RECOVERY_INSTALL_OK
+```
+
+### Verificare fără afișarea credentialelor
+
+```sh
+wc -c /data/m1s_wifi/safe/ssid /data/m1s_wifi/safe/pass
+ls -l /data/m1s_wifi/safe/ssid /data/m1s_wifi/safe/pass
+ps w | grep '[w]ifi_manager.sh'
+ps w | grep '[m]1s_wifi_portal_safe.sh'
+tail -n 80 /tmp/m1s_wifi_manager.log
+```
+
+Ambele fișiere trebuie să aibă dimensiune mai mare de zero și permisiuni restrictive. Nu folosi `cat` asupra parolei în capturi sau loguri.
+
+### Test în modul simulare
+
+```sh
+touch /data/m1s_wifi/test_noip
+sleep 20
+tail -n 30 /tmp/m1s_wifi_manager.log
+rm -f /data/m1s_wifi/test_noip
+```
+
+Pentru că `actions_enabled` lipsește, logul trebuie să arate că AP-ul **ar fi pornit**, fără schimbarea reală a rețelei.
+
+### Activarea recuperării reale
+
+Activează numai după testul de simulare și după ce ai confirmat că backupul Wi-Fi local este populat:
+
+```sh
+touch /data/m1s_wifi/actions_enabled
+chmod 600 /data/m1s_wifi/actions_enabled
+sync
+```
+
+Dezactivare:
+
+```sh
+rm -f /data/m1s_wifi/actions_enabled
+```
+
+În AP, portalul este accesat direct la una dintre adresele detectate de hub:
+
+```text
+http://192.168.49.1:8080/
+http://192.168.1.1:8080/
+```
+
+Nu expune portul 8080 în afara LAN-ului.
+
+---
+
+# PARTEA VIII — Porturi, fișiere și procese
+
+## 25. Inventar de porturi
+
+| Port | Direcție/rol | Permanent |
+|---:|---|---|
+| 23 | Telnet către hub | da, numai LAN |
+| 1886 | tunel UART JN5189 creat de integrare | la nevoie |
+| 1888 | ISP temporar SPSDK | nu; închide după programare |
+| 1889 | transfer temporar WAV/fișier de pe hub | nu |
+| 8080 | portal recuperare Wi-Fi | opțional |
+| 12345 | transfer manual temporar către hub | nu |
+| 12346 | media player individual | în timpul redării |
+| 12347 | grup media și, separat, sursa WAV locală | în timpul redării; conflict cunoscut |
+| 12348 | destinație PCM pentru WAV local | în timpul redării |
+| 12349 | upload WAV | temporar |
+| 1884 | client/tunel MQTT legacy din cod | nefolosit de fluxul curent |
+
+Porturile listener ale hubului nu trebuie publicate în Internet.
+
+---
+
+## 26. Fișiere persistente importante
+
+```text
+/data/scripts/post_init.sh
+/data/m1s_wifi/
+/data/m1s_wifi/safe/ssid
+/data/m1s_wifi/safe/pass
+/data/m1s_wifi/actions_enabled
+/data/m1s_button/button_watch.sh
+/data/m1s_button/m1s_mqtt_publish.sh
+/data/m1s_button/m1s_button.conf
+/data/m1s_button/mqtt_username
+/data/m1s_button/mqtt_password
+/data/musics/music-ch/
+```
+
+Fișiere sensibile care nu se publică:
+
+- backupurile JN5189 stock;
+- tokenul MiIO;
+- SSID/parola Wi-Fi;
+- configurația și credentialele MQTT;
+- datele Telnet când nu sunt goale.
+
+---
+
+## 27. Procese așteptate
+
+După boot și înainte de redare:
+
+- `telnetd` — prezent;
+- `app_monitor` — suspendat (`T`);
+- `mzigbee_agent` — absent sau zombie;
+- `mha_master` — prezent pentru serviciile stock și buton;
+- `wifi_manager.sh` — prezent numai dacă modulul Wi-Fi este instalat;
+- `m1s_wifi_portal_safe.sh` — prezent numai dacă modulul Wi-Fi este instalat;
+- `button_watch.sh` — prezent numai dacă bridge-ul este instalat/configurat;
+- fără `cat /dev/ttyS1` permanent în afara tunelului temporar administrat de integrare.
+
+---
+
+# PARTEA IX — Verificarea finală „hub refăcut din prima”
+
+## 28. Checklist obligatoriu
+
+### Hardware și backup
+
+- [ ] modelul este `lumi.gateway.aeu01`;
+- [ ] IP DHCP rezervat și stabil;
+- [ ] token MiIO verificat și păstrat separat;
+- [ ] două backupuri stock de 646656 bytes;
+- [ ] SHA256 identic între cele două backupuri;
+- [ ] backupurile salvate în două locații.
+
+### Firmware
+
+- [ ] firmware 209296 bytes;
+- [ ] SHA256 `a1a1f302...e7a2f`;
+- [ ] SPSDK detectează JN5189 și memoria corectă;
+- [ ] erase limitat la `0x33200` numai când este necesar;
+- [ ] write reușit;
+- [ ] readback identic SHA256;
+- [ ] portul 1888 închis;
+- [ ] GPIO33=`1`, GPIO18=`0`;
+- [ ] `BDB-Router` online în Zigbee2MQTT.
+
+### Boot persistent
+
+- [ ] `aqara_wifi_boot_state.sh check` arată `STA_EXPECTED`;
+- [ ] `fw_manager.sh -r` este păstrat și nu apare nicăieri `fw_manager.sh -f -r`;
+- [ ] `/tmp/post_init.log` creat după reboot;
+- [ ] Telnet disponibil;
+- [ ] `app_monitor` suspendat;
+- [ ] `mzigbee_agent` nu ocupă UART-ul;
+- [ ] inelul de boot se stinge;
+- [ ] Routerul revine automat după power cycle.
+
+### Home Assistant
+
+- [ ] manifestul integrării arată `0.5.7`;
+- [ ] toate entitățile live sunt disponibile;
+- [ ] RGB și lux funcționează;
+- [ ] media player individual pornește/oprește și își păstrează volumul;
+- [ ] grupul funcționează cu minimum două huburi selectate;
+- [ ] un hub offline nu oprește permanent celelalte;
+- [ ] revenirea hubului produce resync;
+- [ ] upload/listare/redare WAV testate fără grup activ pe același port.
+
+### Opționale
+
+- [ ] buton MQTT testat întâi cu publisher manual;
+- [ ] toate cele șase gesturi verificate fizic;
+- [ ] installerul Wi-Fi are safe/ssid și safe/pass populate local;
+- [ ] testul `test_noip` în simulare a trecut;
+- [ ] `actions_enabled` creat numai după simulare;
+- [ ] niciun secret nu există în arhiva distribuită.
+
+---
+
+# PARTEA X — Recuperare
+
+## 29. `TimeoutError` în SPSDK
+
+Cauzele cele mai frecvente documentate:
+
+- integrarea Home Assistant recreează `cat /dev/ttyS1`;
+- un shell Telnet vechi ține UART-ul;
+- listenerul BusyBox `nc` s-a închis după o comandă;
+- JN5189 nu a fost resetat în ISP;
+- GPIO33 nu este `0`;
+- portul 1888 este ocupat sau filtrat.
+
+Procedură:
+
+1. dezactivează integrarea Home Assistant;
+2. restart fizic al hubului numai dacă nu ești între erase și write;
+3. suspendă `app_monitor`;
+4. oprește `mzigbee_agent` și orice `cat /dev/ttyS1`;
+5. rulează din nou `jn5189_enter_isp_1888.sh`;
+6. confirmă `info`;
+7. continuă de la ultimul pas sigur, nu repeta automat erase.
+
+---
+
+## 30. Restaurarea firmware-ului stock JN5189
+
+Folosește numai backupul exact al aceluiași hub.
+
+1. intră în ISP;
+2. rulează `info`;
+3. șterge numai zona necesară, conform dimensiunii imaginii de restaurat;
+4. scrie backupul original în Memory ID 0 la `0x0`;
+5. citește-l înapoi pe aceeași lungime;
+6. compară SHA256 cu backupul original;
+7. închide listenerul;
+8. pornește JN5189 normal;
+9. pentru revenire complet stock trebuie restaurat și comportamentul boot care permite `mzigbee_agent`; simpla scriere a flashului JN5189 nu anulează automat `post_init.sh`.
+
+Nu scrie backupul unui alt hub.
+
+---
+
+## 31. Revenirea la boot stock Linux
+
+Pentru diagnostic, nu șterge imediat scriptul. Redenumește-l și păstrează backupul:
+
+```sh
+mv /data/scripts/post_init.sh /data/scripts/post_init.sh.disabled
+sync
+reboot
+```
+
+Aceasta permite serviciilor stock să pornească normal, inclusiv agentul Zigbee original. Un JN5189 care încă are firmware Router nu devine stock doar prin dezactivarea scriptului; evită să lași `mzigbee_agent` să concureze inutil cu firmware-ul Router.
+
+---
+
+## 32. Probleme audio
+
+Verifică numai procesele și PID-urile traseului implicat:
+
+```sh
+ps w | grep -E '[n]c -l -p 12346|[n]c -l -p 12347|[n]c -l -p 12348|[a]play'
+netstat -lnt | grep -E ':(12346|12347|12348|12349)( |$)'
+```
+
+Nu folosi `killall nc` sau `killall aplay`. Integrarea folosește PID files și filtre pe linia de comandă tocmai pentru a nu întrerupe alte funcții.
+
+---
+
+## 33. Probleme cu butonul
+
+```sh
+ps w | grep '[m]ha_master'
+ps w | grep '[b]utton_watch.sh'
+tail -f /var/log/messages | grep 'on_message basis.button'
+tail -n 100 /tmp/m1s_button.log
+```
+
+Dacă evenimentul există în log, dar nu ajunge în Home Assistant, testează publisherul manual și topicul MQTT. Dacă evenimentul nu apare în log, problema este înaintea bridge-ului.
+
+---
+
+## 34. Probleme cu recuperarea Wi-Fi
+
+Separă mai întâi cele două cazuri:
+
+1. **AP imediat după boot** — verifică `cloud_provisioned`, `hap_provisioned` și `hap_keepalive` cu `aqara_wifi_boot_state.sh check`;
+2. **AP după aproximativ 240 secunde fără IPv4** — investighează managerul opțional de recovery.
+
+```sh
+ps w | grep '[w]ifi_manager.sh'
+ps w | grep '[m]1s_wifi_portal_safe.sh'
+tail -n 120 /tmp/m1s_wifi_manager.log
+ls -l /data/m1s_wifi/actions_enabled
+wc -c /data/m1s_wifi/safe/ssid /data/m1s_wifi/safe/pass
+```
+
+Nu afișa conținutul `safe/pass`. Pentru revenire manuală la STA:
+
+```sh
+rm -f /data/m1s_wifi/ap_hold
+/data/m1s_wifi/restore_sta.sh
+```
+
+---
+
+# PARTEA XI — Actualizare și disciplină de versiune
+
+## 35. Actualizarea integrării Home Assistant
+
+1. fă backup Home Assistant;
+2. notează versiunea manifestului;
+3. actualizează prin HACS sau copiere manuală;
+4. repornește complet Home Assistant;
+5. verifică logurile și entitățile eliminate/migrate;
+6. testează un singur hub înaintea tuturor.
+
+Integrarea v0.5.6 elimină automat din registru vechile entități Number pentru volum fin.
+
+---
+
+## 36. Actualizarea firmware-ului JN5189
+
+Pentru un Router funcțional:
+
+- păstrează backupul stock;
+- salvează și imaginea Router curentă;
+- verifică hashul nou;
+- dezactivează integrarea HA;
+- intră în ISP;
+- folosește scriere directă fără erase, exceptând cazul în care noul build cere explicit altceva;
+- efectuează readback și comparație;
+- testează Zigbee, RGB, lux și rejoin.
+
+Numele fișierului nu este dovadă de identitate; hashul este obligatoriu.
+
+---
+
+## 37. Ce nu este rezolvat doar prin documentație
+
+Pentru introspecția ulterioară de cod rămân cel puțin următoarele puncte:
+
+1. conflictul portului `12347` între grup și sursa WAV;
+2. fișierul `mqtt_client.py` legacy, prezent dar nefolosit;
+3. `select.py` legacy, prezent dar platforma nu este încărcată;
+4. lipsa unei verificări reale de conectivitate în config flow;
+5. securizarea suplimentară a serviciului `run_command`;
+6. testarea fizică a bridge-ului butonului standardizat;
+7. testarea fizică a installerului Wi-Fi sanitizat și a tuturor ramurilor AP/rollback;
+8. verificarea comportamentului la log rotation pentru watcherul butonului;
+9. eliminarea sau arhivarea codului/fișierelor istorice care nu mai aparțin release-ului curent;
+10. clarificarea descriptorului ZCL care menține switch-ul expus în Zigbee2MQTT; buildul experimental `no_switch` nu a demonstrat rezolvarea și nu este inclus ca firmware recomandat.
+
+Acestea sunt documentate intenționat, nu ascunse sub afirmația „totul este final”.
+
+---
+
+## 38. Regula de aur pentru refacerea următorului hub
+
+Pentru fiecare hub nou, urmează aceeași ordine fără scurtături:
+
+```text
+model/IP → token/Telnet → verificare STA/AP → post_init verificat → ISP info →
+două backupuri stock identice → firmware hash → erase limitat numai la stock →
+write → readback identic → închidere ISP → Permit join → boot Router →
+reboot și verify_hub → Home Assistant → opționale buton/Wi-Fi → checklist final
+```
+
+Nu trece la etapa următoare până când criteriul de acceptare al etapei curente este îndeplinit.

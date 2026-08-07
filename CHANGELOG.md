@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.7
+
+- added **Change Wi-Fi network** to the integration Configure menu
+- the Wi-Fi password is masked in the Home Assistant form and is not stored in config-entry data or options
+- the integration stages the candidate only on the hub and delegates validation/rollback to the optional sanitized Wi-Fi recovery module
+- hardened candidate validation by clearing a stale interface IPv4 before the new connection attempt, preventing an old address from being mistaken for success
+- renamed the Configure menu from sound-only management to general Aqara M1S management
+- added Romanian/English documentation links and documented the safe Wi-Fi change workflow
+
 ## 0.5.6
 
 - moved every individual media player to the same interruption-free live PCM software-gain model already used by the group
