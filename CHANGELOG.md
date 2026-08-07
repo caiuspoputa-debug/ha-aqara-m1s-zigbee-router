@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.8 - test
+
+- group synchronization now has priority over uninterrupted playback: a recovered or lagging hub causes a controlled full-group restart instead of being allowed to continue with a permanent offset
+- reduced the per-hub PCM queue ceiling from 1.0 s to 0.25 s and added a 120 ms lag threshold that requests full resynchronisation
+- the broadcaster yields after every 20 ms PCM chunk so writer tasks can drain in real time even when FFmpeg stdout arrives in larger bursts
+- a hub that returns online is allowed an 8-second stabilization window before it participates in the next full-group synchronization
+- added a PCM-progress health watchdog: if FFmpeg remains alive but no PCM arrives for 12 seconds, the complete group is restarted automatically
+- the 30-second stable-watch now clears watchdog failures only when PCM is actually flowing and at least one group receiver is active
+- added diagnostics for PCM age, per-member queue depth, resync threshold and synchronization policy
+
 ## 0.5.7
 
 - added **Change Wi-Fi network** to the integration Configure menu

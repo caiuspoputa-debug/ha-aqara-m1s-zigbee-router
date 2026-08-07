@@ -42,15 +42,21 @@ CHUNK_SECONDS = 0.02
 CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
 SYNC_LEAD_SECONDS = 1.5
 SYNC_LEAD_CHUNKS = int(SYNC_LEAD_SECONDS / CHUNK_SECONDS)
-QUEUE_SECONDS = 1.0
+QUEUE_SECONDS = 0.25
 QUEUE_CHUNKS = int(QUEUE_SECONDS / CHUNK_SECONDS)
+QUEUE_RESYNC_SECONDS = 0.12
+QUEUE_RESYNC_CHUNKS = max(2, round(QUEUE_RESYNC_SECONDS / CHUNK_SECONDS))
 RECONCILE_SECONDS = 3.0
+RETURN_STABILIZE_SECONDS = 8.0
+PCM_HEALTH_CHECK_SECONDS = 2.0
+PCM_STALL_TIMEOUT = 12.0
+PCM_START_GRACE_SECONDS = 8.0
 WRITER_DRAIN_TIMEOUT = 1.0
 WATCHDOG_RESTART_DELAY = 5.0
 WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
 WATCHDOG_STABLE_SECONDS = 30.0
-FULL_RESYNC_RETRY_SECONDS = 30.0
+FULL_RESYNC_RETRY_SECONDS = 15.0
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 FFMPEG_NICE_TARGET = -5
@@ -100,6 +106,8 @@ class GroupMember:
     last_error: str | None = None
     generation: int = 0
     last_prepare_attempt_monotonic: float = 0.0
+    was_online: bool | None = None
+    online_since_monotonic: float | None = None
 
 
 class AqaraM1SMediaGroupManager:
@@ -126,11 +134,14 @@ class AqaraM1SMediaGroupManager:
         self.reconcile_task: asyncio.Task | None = None
         self.watchdog_task: asyncio.Task | None = None
         self.stable_task: asyncio.Task | None = None
+        self.health_task: asyncio.Task | None = None
+        self.resync_task: asyncio.Task | None = None
         self.slow_retry_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._generation = 0
         self._sequence = 0
         self._stream_started_monotonic: float | None = None
+        self._last_pcm_monotonic: float | None = None
         self._watchdog_attempts = 0
         self._last_failure: str | None = None
         self._full_resync_count = 0
@@ -147,6 +158,7 @@ class AqaraM1SMediaGroupManager:
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
         existing = self.members.get(entry_id)
         selected = existing.selected if existing else True
+        online = bool(coordinator.last_update_success)
         self.members[entry_id] = GroupMember(
             entry_id=entry_id,
             name=name,
@@ -154,6 +166,8 @@ class AqaraM1SMediaGroupManager:
             coordinator=coordinator,
             selected=selected,
             state="waiting" if selected else "excluded",
+            was_online=online,
+            online_since_monotonic=time.monotonic() if online else None,
         )
         self._signal_update()
 
@@ -294,6 +308,21 @@ class AqaraM1SMediaGroupManager:
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
+            "return_stabilize_seconds": RETURN_STABILIZE_SECONDS,
+            "pcm_health_check_seconds": PCM_HEALTH_CHECK_SECONDS,
+            "pcm_stall_timeout_seconds": PCM_STALL_TIMEOUT,
+            "pcm_age_seconds": (
+                round(time.monotonic() - self._last_pcm_monotonic, 3)
+                if self._last_pcm_monotonic is not None
+                else None
+            ),
+            "queue_resync_threshold_ms": int(QUEUE_RESYNC_SECONDS * 1000),
+            "member_queue_depth_ms": {
+                member.name: int(member.queue.qsize() * CHUNK_SECONDS * 1000)
+                for member in self.active_members
+                if member.queue is not None
+            },
+            "sync_policy": "interrupt_and_full_restart_on_rejoin_lag_or_pcm_stall",
             "volume_apply_mode": "live_pcm_software_gain",
             "volume_stream_restart": False,
             "volume_apply_pending": False,
@@ -441,7 +470,7 @@ class AqaraM1SMediaGroupManager:
         return samples.tobytes()
 
     async def _restart_stream_locked(self, reason: str) -> None:
-        if reason.startswith("member_rejoin:"):
+        if reason.startswith(("member_rejoin:", "member_lag:", "pcm_stall")):
             self._full_resync_count += 1
             self._last_full_resync_reason = reason
         await self._stop_stream_locked(stop_members=True, reason=reason)
@@ -513,6 +542,7 @@ class AqaraM1SMediaGroupManager:
         generation = self._generation
         self._sequence = 0
         self._stream_started_monotonic = time.monotonic()
+        self._last_pcm_monotonic = None
         for member in self.active_members:
             member.join_at_sequence = SYNC_LEAD_CHUNKS
             member.state = "waiting_for_sync"
@@ -528,6 +558,10 @@ class AqaraM1SMediaGroupManager:
         self.stable_task = self.hass.async_create_background_task(
             self._stable_watch(process, generation),
             "aqara_m1s_group_stable_watch",
+        )
+        self.health_task = self.hass.async_create_background_task(
+            self._pcm_health_watch(process, generation),
+            "aqara_m1s_group_pcm_health_watch",
         )
         _LOGGER.info(
             "M1S group FFmpeg started pid=%s source=%s members=%s",
@@ -554,7 +588,7 @@ class AqaraM1SMediaGroupManager:
     async def _stop_stream_locked(self, *, stop_members: bool, reason: str) -> None:
         self._generation += 1
         current = asyncio.current_task()
-        for attr in ("broadcast_task", "stderr_task", "stable_task"):
+        for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task"):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task and task is not current:
@@ -742,11 +776,15 @@ class AqaraM1SMediaGroupManager:
                     chunk = self._apply_live_pcm_gain(raw_chunk)
                     sequence = self._sequence
                     self._sequence += 1
+                    self._last_pcm_monotonic = time.monotonic()
                     failed: list[str] = []
+                    lagging: list[str] = []
                     for member in list(self.active_members):
                         queue = member.queue
                         if queue is None:
                             continue
+                        if queue.qsize() >= QUEUE_RESYNC_CHUNKS:
+                            lagging.append(member.name)
                         outgoing = (
                             SILENCE_CHUNK
                             if member.join_at_sequence is not None
@@ -764,6 +802,10 @@ class AqaraM1SMediaGroupManager:
                             queue.put_nowait(outgoing)
                         except asyncio.QueueFull:
                             failed.append(member.entry_id)
+                    if lagging:
+                        self._schedule_full_resync(
+                            "member_lag:" + ",".join(sorted(set(lagging)))
+                        )
                     for entry_id in failed:
                         member = self.members.get(entry_id)
                         if member:
@@ -778,6 +820,21 @@ class AqaraM1SMediaGroupManager:
                                 self._remote_group_stop(member),
                                 f"aqara_m1s_group_cleanup_{entry_id}",
                             )
+                    if failed:
+                        names = [
+                            self.members[e].name
+                            for e in failed
+                            if e in self.members
+                        ]
+                        self._schedule_full_resync(
+                            "member_lag:" + ",".join(sorted(names or failed))
+                        )
+                    # FFmpeg may deliver several 20 ms chunks in one pipe read.
+                    # Yield after each chunk so the per-hub writer tasks can
+                    # drain in real time; otherwise a healthy receiver could
+                    # appear artificially delayed simply because this loop kept
+                    # the event loop while unpacking a larger stdout block.
+                    await asyncio.sleep(0)
         except asyncio.CancelledError:
             raise
         except Exception as err:
@@ -828,6 +885,26 @@ class AqaraM1SMediaGroupManager:
                     self._schedule_watchdog_restart()
                     continue
 
+                now = time.monotonic()
+                for member in self.members.values():
+                    online = self._member_online(member)
+                    if member.was_online is None:
+                        member.was_online = online
+                        member.online_since_monotonic = now if online else None
+                    elif online and not member.was_online:
+                        member.was_online = True
+                        member.online_since_monotonic = now
+                        member.last_prepare_attempt_monotonic = 0.0
+                        member.state = "waiting_for_sync"
+                        _LOGGER.info(
+                            "M1S group member back online; waiting %.1fs before full sync: %s",
+                            RETURN_STABILIZE_SECONDS,
+                            member.name,
+                        )
+                    elif not online and member.was_online:
+                        member.was_online = False
+                        member.online_since_monotonic = None
+
                 # Remove members that are no longer eligible without disturbing
                 # the hubs that are still playing.  When such a hub becomes
                 # eligible again, the block below performs a deterministic full
@@ -841,7 +918,6 @@ class AqaraM1SMediaGroupManager:
                         )
 
                 if self.ffmpeg_running:
-                    now = time.monotonic()
                     missing = [
                         member
                         for member in self.members.values()
@@ -850,8 +926,16 @@ class AqaraM1SMediaGroupManager:
                     due = [
                         member
                         for member in missing
-                        if now - member.last_prepare_attempt_monotonic
-                        >= FULL_RESYNC_RETRY_SECONDS
+                        if (
+                            member.online_since_monotonic is None
+                            or now - member.online_since_monotonic
+                            >= RETURN_STABILIZE_SECONDS
+                        )
+                        and (
+                            member.last_prepare_attempt_monotonic <= 0.0
+                            or now - member.last_prepare_attempt_monotonic
+                            >= FULL_RESYNC_RETRY_SECONDS
+                        )
                     ]
                     if due:
                         names = ",".join(sorted(member.name for member in due))
@@ -877,6 +961,89 @@ class AqaraM1SMediaGroupManager:
         finally:
             if self.reconcile_task is asyncio.current_task():
                 self.reconcile_task = None
+
+    def _schedule_full_resync(self, reason: str) -> None:
+        """Restart every group receiver when synchronization can no longer be trusted."""
+        if self._shutting_down or not self.desired_playing or not self.media_url:
+            return
+        if self.resync_task and not self.resync_task.done():
+            return
+        self.resync_task = self.hass.async_create_background_task(
+            self._full_resync(reason), "aqara_m1s_group_forced_resync"
+        )
+
+    async def _full_resync(self, reason: str) -> None:
+        try:
+            # Yield once so the broadcaster/writer failure path can finish its
+            # current 20 ms chunk before we tear down every receiver.
+            await asyncio.sleep(0)
+            async with self._lock:
+                if self.desired_playing and self.media_url:
+                    _LOGGER.warning(
+                        "M1S group forcing full resynchronisation reason=%s", reason
+                    )
+                    await self._restart_stream_locked(reason=reason)
+            self._ensure_reconcile_task()
+            self._signal_update()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._last_failure = str(err)
+            _LOGGER.warning("M1S group forced resync failed: %s", err)
+            self._schedule_watchdog_restart()
+        finally:
+            if self.resync_task is asyncio.current_task():
+                self.resync_task = None
+
+    async def _pcm_health_watch(
+        self, process: asyncio.subprocess.Process, generation: int
+    ) -> None:
+        """Treat PCM progress, not merely a live FFmpeg PID, as stream health."""
+        try:
+            while generation == self._generation and self.desired_playing:
+                await asyncio.sleep(PCM_HEALTH_CHECK_SECONDS)
+                if (
+                    generation != self._generation
+                    or self.ffmpeg is not process
+                    or not self.desired_playing
+                ):
+                    return
+                now = time.monotonic()
+                if (
+                    self._stream_started_monotonic is not None
+                    and now - self._stream_started_monotonic < PCM_START_GRACE_SECONDS
+                ):
+                    continue
+                pcm_age = (
+                    None
+                    if self._last_pcm_monotonic is None
+                    else now - self._last_pcm_monotonic
+                )
+                if pcm_age is None or pcm_age >= PCM_STALL_TIMEOUT:
+                    age_text = "never" if pcm_age is None else f"{pcm_age:.1f}s"
+                    self._last_failure = f"pcm_stall:{age_text}"
+                    _LOGGER.warning(
+                        "M1S group PCM stalled while FFmpeg pid=%s is still alive; "
+                        "forcing full restart (last PCM=%s)",
+                        process.pid,
+                        age_text,
+                    )
+                    async with self._lock:
+                        if (
+                            generation == self._generation
+                            and self.ffmpeg is process
+                            and self.desired_playing
+                        ):
+                            await self._restart_stream_locked(reason="pcm_stall")
+                    self._ensure_reconcile_task()
+                    self._signal_update()
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._last_failure = str(err)
+            _LOGGER.warning("M1S group PCM health watchdog failed: %s", err)
+            self._schedule_watchdog_restart()
 
     def _schedule_watchdog_restart(self) -> None:
         if self._shutting_down or not self.desired_playing or not self.media_url:
@@ -956,10 +1123,17 @@ class AqaraM1SMediaGroupManager:
     ) -> None:
         try:
             await asyncio.sleep(WATCHDOG_STABLE_SECONDS)
+            now = time.monotonic()
+            pcm_recent = (
+                self._last_pcm_monotonic is not None
+                and now - self._last_pcm_monotonic < PCM_HEALTH_CHECK_SECONDS * 2
+            )
             if (
                 generation == self._generation
                 and self.ffmpeg is process
                 and process.returncode is None
+                and pcm_recent
+                and bool(self.active_members)
             ):
                 self._watchdog_attempts = 0
                 self._last_failure = None
@@ -972,7 +1146,7 @@ class AqaraM1SMediaGroupManager:
 
     async def _cancel_background_recovery(self) -> None:
         current = asyncio.current_task()
-        for attr in ("reconcile_task", "watchdog_task", "slow_retry_task"):
+        for attr in ("reconcile_task", "watchdog_task", "slow_retry_task", "resync_task"):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task and task is not current:

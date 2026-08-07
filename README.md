@@ -2,7 +2,7 @@
 
 [Română](README_RO.md) | **English**
 
-Release status: **v0.5.7 final package**
+Release status: **v0.5.8 synchronization/watchdog test build**
 
 This guide covers the complete path from a stock Aqara M1S Gen 1 (`lumi.gateway.aeu01`) to the project configuration: stock Linux/Wi-Fi/HomeKit/audio retained, persistent LAN-only Telnet, JN5189 BDB Zigbee Router firmware, RGB/lux UART control, local audio, physical-button bridge, safe Wi-Fi recovery and the Home Assistant integration.
 
@@ -22,6 +22,15 @@ If all three are false or empty, the Aqara boot logic may intentionally start AP
 
 `fw_manager.sh -r` is the normal service-start path. Do **not** confuse it with `fw_manager.sh -f -r`, which is the factory-reset path.
 
+## What changed in v0.5.8
+
+- synchronization has priority over continuity: lagging/recovered hubs trigger a controlled full-group restart
+- returned hubs receive an 8-second stabilization window before rejoining the synchronized group
+- per-hub PCM buffering is capped at 250 ms and a 120 ms queue-lag threshold triggers resynchronization
+- the broadcaster yields after each 20 ms PCM chunk so healthy writers can drain between FFmpeg stdout bursts
+- a new PCM-progress watchdog restarts the whole group if FFmpeg is still alive but produces no PCM for 12 seconds
+- watchdog stability is accepted only when PCM is flowing and at least one receiver is active
+
 ## What changed in v0.5.7
 
 - added **Change Wi-Fi network** to **Settings → Devices & services → Aqara M1S Zigbee Router → Configure**
@@ -40,7 +49,7 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.7 (final candidate)**
+Current version: **0.5.8 (test build)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write

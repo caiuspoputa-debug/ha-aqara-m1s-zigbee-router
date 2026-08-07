@@ -2,8 +2,8 @@
 
 # Aqara M1S Gen 1 — conversie completă în Zigbee Router + integrare Home Assistant
 
-Versiune documentație: **2026-08-07 — revizia FINAL v0.5.7**  
-Integrare Home Assistant inclusă: **0.5.7**  
+Versiune documentație: **2026-08-07 — test sincronizare/watchdog v0.5.8**  
+Integrare Home Assistant inclusă: **0.5.8 TEST**  
 Model țintă: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 Acesta este ghidul principal pentru refacerea unui hub stock în configurația folosită de proiect:
@@ -23,13 +23,26 @@ Revizia R2 integrează constatările din README-ul GitHub din 2026-08-07: aleger
 
 ---
 
+## Modificări v0.5.8 TEST — sincronizare și redare de lungă durată
+
+- sincronizarea are prioritate față de continuitate: dacă un hub revine sau acumulează latență, grupul este întrerupt scurt și repornit complet
+- un hub revenit online primește 8 secunde pentru stabilizare înainte de resynchronizare
+- coada PCM per hub este limitată la 250 ms; la aproximativ 120 ms de coadă se cere resync complet, în loc să fie acceptată redarea întârziată
+- broadcasterul cedează event loop-ul după fiecare chunk PCM de 20 ms, astfel încât writer-ele huburilor să poată goli cozile în timp real
+- un watchdog nou urmărește progresul PCM, nu doar existența procesului FFmpeg; dacă nu apare PCM timp de 12 secunde, întregul grup este repornit
+- starea „stabil” este acceptată numai când PCM-ul curge efectiv și există cel puțin un receiver activ
+
+Această versiune este intenționat **TEST** până la validarea pe huburi reale a scenariilor: oprire/pornire hub în timpul redării și redare continuă de mai multe ore.
+
+---
+
 ## 1. Ce este „curent” și ce este doar istoric
 
 Folosește pentru o instalare nouă numai următoarele componente:
 
 | Componentă | Versiune/fișier curent | Rol |
 |---|---|---|
-| Integrare Home Assistant | `custom_components/aqara_m1s_zigbee_router`, manifest `0.5.7` | control local, senzori, audio, grup, diagnostic și schimbare Wi-Fi sigură |
+| Integrare Home Assistant | `custom_components/aqara_m1s_zigbee_router`, manifest `0.5.8` | control local, senzori, audio, grup, diagnostic și schimbare Wi-Fi sigură |
 | Firmware JN5189 | `jn5189_router_rgb_lux_rejoin_test.bin` | Zigbee Router, RGB, lux PIO19/ADC5, comandă rejoin A7 |
 | Boot persistent | `scripts/hub/post_init.sh` | servicii stock, Telnet, UART liber, boot Router |
 | Diagnostic boot Wi-Fi stock | `scripts/hub/aqara_wifi_boot_state.sh` | verifică și, la cerere, corectează stările Aqara care aleg STA sau AP |
