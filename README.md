@@ -2,7 +2,7 @@
 
 [Română](README_RO.md) | **English**
 
-Release status: **v0.5.8 synchronization/watchdog test build**
+Release status: **v0.5.9 synchronization/watchdog + individual fine-trim test build**
 
 This guide covers the complete path from a stock Aqara M1S Gen 1 (`lumi.gateway.aeu01`) to the project configuration: stock Linux/Wi-Fi/HomeKit/audio retained, persistent LAN-only Telnet, JN5189 BDB Zigbee Router firmware, RGB/lux UART control, local audio, physical-button bridge, safe Wi-Fi recovery and the Home Assistant integration.
 
@@ -21,6 +21,15 @@ persist.app.hap_keepalive
 If all three are false or empty, the Aqara boot logic may intentionally start AP mode even when the SSID/password are still stored. `persist.app.user_paired=true` does not override that decision. The kit therefore includes `scripts/hub/aqara_wifi_boot_state.sh check|fix`, which diagnoses/corrects this state without printing the SSID, Wi-Fi password or MiIO token.
 
 `fw_manager.sh -r` is the normal service-start path. Do **not** confuse it with `fw_manager.sh -f -r`, which is the factory-reset path.
+
+## What changed in v0.5.9
+
+- every individual media player has a separate **Fine Volume Trim** slider
+- the main player volume remains 0-100% in 0.1% steps; trim is -1.00% to +1.00% in 0.01% absolute percentage-point steps
+- example: 6.0% main + 0.27% trim = 6.27% effective PCM gain
+- trim is applied live through the existing S32_LE software-gain path, with the same 40 ms anti-click ramp and no FFmpeg/TCP/aplay restart
+- main volume 0% and mute remain hard silence regardless of trim
+- v0.5.8 group synchronization/watchdog behavior is retained unchanged
 
 ## What changed in v0.5.8
 
@@ -49,7 +58,7 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.8 (test build)**
+Current version: **0.5.9 (test build)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write

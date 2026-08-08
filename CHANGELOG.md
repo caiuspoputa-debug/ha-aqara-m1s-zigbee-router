@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.9 - test
+
+- added a separate **Fine Volume Trim** slider to every individual media player
+- trim range is `-1.00%` to `+1.00%` in `0.01%` steps and is applied as absolute percentage points after the main 0.1%-step player volume
+- example: main volume `6.0%` plus trim `+0.27%` produces `6.27%` effective PCM gain
+- fine trim uses the existing interruption-free live S32_LE PCM gain path; changing it does not restart FFmpeg, TCP, `nc` or `aplay`
+- main volume `0%` remains hard silence even with a positive trim; mute also remains hard silence
+- the old pre-v0.5.6 absolute fine-volume entity is not reused; v0.5.9 creates a new `*_radio_fine_trim` entity to avoid semantic/state collisions
+- retains all v0.5.8 group resynchronization and PCM-progress watchdog changes unchanged
+
 ## 0.5.8 - test
 
 - group synchronization now has priority over uninterrupted playback: a recovered or lagging hub causes a controlled full-group restart instead of being allowed to continue with a permanent offset

@@ -2,8 +2,8 @@
 
 # Aqara M1S Gen 1 — conversie completă în Zigbee Router + integrare Home Assistant
 
-Versiune documentație: **2026-08-07 — test sincronizare/watchdog v0.5.8**  
-Integrare Home Assistant inclusă: **0.5.8 TEST**  
+Versiune documentație: **2026-08-08 — test sincronizare/watchdog + fine trim v0.5.9**  
+Integrare Home Assistant inclusă: **0.5.9 TEST**  
 Model țintă: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 Acesta este ghidul principal pentru refacerea unui hub stock în configurația folosită de proiect:
@@ -22,6 +22,15 @@ Revizia R2 integrează constatările din README-ul GitHub din 2026-08-07: aleger
 > **Operație avansată.** Conversia scrie memoria FLASH a JN5189. Nu continua fără două backupuri identice și verificate. Nu scrie niciodată EFUSE, ROM, Config, PSECT sau pFLASH și nu executa erase complet al cipului.
 
 ---
+
+## Modificări v0.5.9 TEST — reglaj fin individual
+
+- fiecare media player individual primește un al doilea slider **Fine Volume Trim**
+- volumul principal rămâne 0–100% cu pas de 0,1%; trim-ul este -1,00% … +1,00% cu pas de 0,01 puncte procentuale
+- exemplu: volum principal 6,0% + trim +0,27% = gain PCM efectiv 6,27%
+- trim-ul se aplică live pe PCM S32_LE prin aceeași rampă anti-click de 40 ms, fără restart FFmpeg, TCP, `nc` sau `aplay`
+- volum principal 0% rămâne tăcere completă chiar dacă trim-ul este pozitiv; mute rămâne de asemenea tăcere completă
+- logica de sincronizare și watchdog introdusă în v0.5.8 rămâne neschimbată
 
 ## Modificări v0.5.8 TEST — sincronizare și redare de lungă durată
 
@@ -42,7 +51,7 @@ Folosește pentru o instalare nouă numai următoarele componente:
 
 | Componentă | Versiune/fișier curent | Rol |
 |---|---|---|
-| Integrare Home Assistant | `custom_components/aqara_m1s_zigbee_router`, manifest `0.5.8` | control local, senzori, audio, grup, diagnostic și schimbare Wi-Fi sigură |
+| Integrare Home Assistant | `custom_components/aqara_m1s_zigbee_router`, manifest `0.5.9` | control local, senzori, audio, grup, diagnostic și schimbare Wi-Fi sigură |
 | Firmware JN5189 | `jn5189_router_rgb_lux_rejoin_test.bin` | Zigbee Router, RGB, lux PIO19/ADC5, comandă rejoin A7 |
 | Boot persistent | `scripts/hub/post_init.sh` | servicii stock, Telnet, UART liber, boot Router |
 | Diagnostic boot Wi-Fi stock | `scripts/hub/aqara_wifi_boot_state.sh` | verifică și, la cerere, corectează stările Aqara care aleg STA sau AP |

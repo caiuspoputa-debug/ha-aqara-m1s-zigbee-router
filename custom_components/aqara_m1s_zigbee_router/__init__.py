@@ -140,9 +140,9 @@ async def async_setup_entry(
     if obsolete_select_id is not None:
         entity_registry.async_remove(obsolete_select_id)
 
-    # v0.5.6 removes the separate fine-volume Number entities. Delete their
-    # registry entries as well, so they disappear instead of remaining as
-    # unavailable legacy entities after the integration reload.
+    # Remove the legacy absolute fine-volume Number entities from v0.5.0-v0.5.5.
+    # v0.5.9 reintroduces only an individual *trim* control with a new unique ID
+    # (*_radio_fine_trim), so the old entity must not be revived accidentally.
     obsolete_number_unique_ids = (
         f"{entry.entry_id}_radio_fine_volume",
         "aqara_m1s_media_group_fine_volume",
