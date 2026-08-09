@@ -20,25 +20,25 @@
         "title": "Aqara M1S management",
         "description": "Configure Wi-Fi, sounds and Zigbee rejoin. Choose Finish and close for a controlled full integration reload.",
         "menu_options": {
-          "upload_sound": "Încarcă WAV / Upload WAV",
-          "delete_sound": "Șterge WAV / Delete WAV",
+          "upload_sound": "Încarcă WAV sau ZIP / Upload WAV or ZIP",
+          "delete_sound": "Șterge WAV-uri / Delete WAV files",
           "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
           "finish": "Finalizare și închidere / Finish and close",
           "change_wifi": "Change Wi-Fi network"
         }
       },
       "upload_sound": {
-        "title": "Încărcare sunet WAV / Upload WAV sound",
-        "description": "Selectează un WAV PCM necomprimat: mono, 32000 Hz, 32-bit signed little-endian. Fișierul este încărcat în /data/musics/music-ch și lista este reîmprospătată imediat. / Select an uncompressed PCM WAV: mono, 32000 Hz, signed 32-bit little-endian. The file is uploaded to /data/musics/music-ch and the list refreshes immediately.",
+        "title": "Încărcare WAV / ZIP / Upload WAV / ZIP",
+        "description": "Selectează un WAV sau un ZIP cu până la 64 de fișiere WAV. Fiecare WAV are limita de 20 MiB, iar lotul ZIP are limita totală de 100 MiB. Fișierele ajung în /data/musics/music-ch și lista se reîmprospătează imediat. / Select one WAV or a ZIP containing up to 64 WAV files. Each WAV is limited to 20 MiB and the ZIP batch to 100 MiB total. Files are uploaded to /data/musics/music-ch and the list refreshes immediately.",
         "data": {
-          "source": "Fișier WAV / WAV file"
+          "source": "Fișier WAV sau ZIP / WAV or ZIP file"
         }
       },
       "delete_sound": {
-        "title": "Ștergere sunet WAV / Delete WAV sound",
-        "description": "Sunt afișate numai fișierele din /data/musics/music-ch. După ștergere lista este reîmprospătată imediat. / Only files in /data/musics/music-ch are shown. The list refreshes immediately after deletion.",
+        "title": "Ștergere multiplă WAV / Delete multiple WAV files",
+        "description": "Selectează unul sau mai multe fișiere din /data/musics/music-ch și șterge-le într-o singură operație. / Select one or more files from /data/musics/music-ch and delete them in one operation.",
         "data": {
-          "path": "Fișier audio / Sound file"
+          "path": "Fișiere audio / Sound files"
         }
       },
       "rejoin_zigbee": {

@@ -2,7 +2,7 @@
 
 [Română](README_RO.md) | **English**
 
-Release status: **v0.5.10 synchronization/watchdog hardening + individual fine-trim test build**
+Release status: **v0.5.11 sound-management batch test build; v0.5.10 audio hardening retained**
 
 This guide covers the complete path from a stock Aqara M1S Gen 1 (`lumi.gateway.aeu01`) to the project configuration: stock Linux/Wi-Fi/HomeKit/audio retained, persistent LAN-only Telnet, JN5189 BDB Zigbee Router firmware, RGB/lux UART control, local audio, physical-button bridge, safe Wi-Fi recovery and the Home Assistant integration.
 
@@ -21,6 +21,14 @@ persist.app.hap_keepalive
 If all three are false or empty, the Aqara boot logic may intentionally start AP mode even when the SSID/password are still stored. `persist.app.user_paired=true` does not override that decision. The kit therefore includes `scripts/hub/aqara_wifi_boot_state.sh check|fix`, which diagnoses/corrects this state without printing the SSID, Wi-Fi password or MiIO token.
 
 `fw_manager.sh -r` is the normal service-start path. Do **not** confuse it with `fw_manager.sh -f -r`, which is the factory-reset path.
+
+## What changed in v0.5.11
+
+- Configure → Delete WAV now supports selecting and deleting multiple managed WAV files in one operation
+- Home Assistant's native file selector accepts only one uploaded file, so Configure now accepts either one WAV or one ZIP batch
+- one ZIP batch may contain up to 64 WAV files, with a 20 MiB limit per WAV and 100 MiB total
+- ZIP processing stays in memory; non-WAV entries are ignored, encrypted entries and duplicate WAV basenames are rejected
+- all v0.5.10 audio synchronization/watchdog/backpressure behavior and Fine Volume Trim are retained unchanged
 
 ## What changed in v0.5.10
 
@@ -67,7 +75,7 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.10 (test build)**
+Current version: **0.5.11 (test build)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
@@ -825,15 +833,15 @@ Open:
 The management session uses bilingual labels, with Romanian first:
 
 - **Schimbă rețeaua Wi-Fi / Change Wi-Fi network**
-- **Încărcare sunet WAV / Upload WAV sound**
-- **Ștergere sunet WAV / Delete WAV sound**
+- **Încărcare WAV / ZIP / Upload WAV / ZIP**
+- **Ștergere multiplă WAV / Delete multiple WAV files**
 - **Conectare la alt coordonator Zigbee / Join a different Zigbee coordinator**
   (separate confirmed action)
 - **Finalizare și închidere / Finish and close**
 
-### Upload a WAV file
+### Upload one WAV or a ZIP batch
 
-1. Open **Configure** and select **Încărcare sunet WAV / Upload WAV sound**.
+1. Open **Configure** and select **Încărcare WAV / ZIP / Upload WAV / ZIP**.
 2. Select or drag the WAV file into the upload field.
 3. Wait for the success message. A successful upload is copied to:
 
@@ -841,8 +849,7 @@ The management session uses bilingual labels, with Romanian first:
    /data/musics/music-ch
    ```
 
-4. Repeat the operation for any other files needed. The management window stays
-   open after every upload.
+4. For a batch, place up to 64 WAV files in one ZIP. Non-WAV entries are ignored; encrypted ZIP entries and duplicate WAV basenames are rejected.
 5. When all operations are complete, return to the management menu and press
    **Finalizare și închidere / Finish and close**.
 
@@ -861,7 +868,8 @@ Accepted uploads:
 - mono
 - 32000 Hz
 - signed 32-bit little-endian (`pcm_s32le`)
-- maximum 20 MiB
+- maximum 20 MiB per WAV
+- ZIP batch: up to 64 WAV files and 100 MiB total
 
 Convert with FFmpeg:
 
@@ -875,7 +883,7 @@ protected sound directory. BusyBox `base64` is retained as a fallback.
 
 ### Delete a WAV file
 
-1. Open **Configure** and select **Ștergere sunet WAV / Delete WAV sound**.
+1. Open **Configure** and select **Ștergere multiplă WAV / Delete multiple WAV files**.
 2. Select the custom file to remove.
 3. Confirm the deletion.
 4. Repeat for any additional files.

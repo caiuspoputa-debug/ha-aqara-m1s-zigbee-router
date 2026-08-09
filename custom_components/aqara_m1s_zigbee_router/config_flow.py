@@ -35,7 +35,7 @@ from .const import (
     MANAGED_SOUND_ROOT,
     sound_list_signal,
 )
-from .sound_upload import destination_for_filename, read_uploaded_sound
+from .sound_upload import destination_for_filename, read_uploaded_sounds
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -186,17 +186,18 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         errors = {}
         if user_input is not None:
             try:
-                filename, content = await self.hass.async_add_executor_job(
-                    read_uploaded_sound,
+                uploads = await self.hass.async_add_executor_job(
+                    read_uploaded_sounds,
                     self.hass,
                     user_input["source"],
                 )
-                destination = destination_for_filename(filename)
-                await self.hass.async_add_executor_job(
-                    self._client.upload_sound,
-                    destination,
-                    content,
-                )
+                for filename, content in uploads:
+                    destination = destination_for_filename(filename)
+                    await self.hass.async_add_executor_job(
+                        self._client.upload_sound,
+                        destination,
+                        content,
+                    )
             except (OSError, ValueError, RuntimeError) as err:
                 _LOGGER.exception("WAV upload failed: %s", err)
                 errors["base"] = "upload_failed"
@@ -217,7 +218,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             data_schema=vol.Schema(
                 {
                     vol.Required("source"): FileSelector(
-                        FileSelectorConfig(accept="audio/wav,.wav")
+                        FileSelectorConfig(accept="audio/wav,.wav,application/zip,.zip")
                     )
                 }
             ),
@@ -228,10 +229,14 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         errors = {}
         if user_input is not None:
             try:
-                await self.hass.async_add_executor_job(
-                    self._client.delete_sound,
-                    user_input["path"],
-                )
+                selected_paths = user_input["path"]
+                if isinstance(selected_paths, str):
+                    selected_paths = [selected_paths]
+                for path in selected_paths:
+                    await self.hass.async_add_executor_job(
+                        self._client.delete_sound,
+                        path,
+                    )
             except (OSError, ValueError, RuntimeError):
                 errors["base"] = "delete_failed"
             else:
@@ -267,6 +272,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     vol.Required("path"): SelectSelector(
                         SelectSelectorConfig(
                             options=managed_sounds,
+                            multiple=True,
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     )

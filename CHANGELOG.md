@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.11 - test
+
+- Configure → Delete WAV now uses Home Assistant's native multi-select selector, so multiple managed WAV files can be selected and deleted in one operation
+- Home Assistant's native FileSelector still returns a single uploaded file; Configure therefore keeps a single file picker but now accepts either one WAV or one ZIP batch
+- a ZIP batch may contain up to 64 WAV files, with the existing 20 MiB limit per WAV and a 100 MiB total batch/archive safety limit
+- ZIP processing is in-memory, ignores non-WAV entries, rejects encrypted archives and duplicate WAV basenames, and never extracts paths onto the Home Assistant filesystem
+- all v0.5.10 audio synchronization, watchdog, TCP backpressure and Fine Volume Trim behavior is retained unchanged
+
 ## 0.5.10 - test
 
 - fixed false full-group resynchronisations caused by a single 120 ms queue spike
