@@ -63,7 +63,7 @@ PCM_CHUNK_BYTES = int(
 PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
-WRITER_DRAIN_TIMEOUT = 1.0
+WRITER_DRAIN_TIMEOUT = 2.0
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
 
@@ -286,6 +286,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "volume_stream_restart": False,
             "volume_step_percent": 0.1,
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
+            "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "ffmpeg_nice_target": FFMPEG_NICE_TARGET,
             "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
             "aplay_nice_target": APLAY_NICE_TARGET,
@@ -956,6 +957,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if not self.coordinator.last_update_success:
             failure_kind = "hub_offline"
             failure_detail = "The coordinator reports the hub offline"
+        elif isinstance(pump_error, asyncio.TimeoutError):
+            failure_kind = "tcp_pcm_backpressure"
+            failure_detail = (
+                f"PCM/TCP writer did not drain within "
+                f"{WRITER_DRAIN_TIMEOUT:.1f}s"
+            )
         elif pump_error is not None:
             failure_kind = "hub_audio"
             failure_detail = f"PCM/TCP writer failed: {pump_error}"
@@ -987,7 +994,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._attr_state = MediaPlayerState.IDLE
         self.async_write_ha_state()
 
-        if failure_kind in ("hub_audio", "unknown"):
+        if failure_kind in ("tcp_pcm_backpressure", "hub_audio", "unknown"):
             await self._log_remote_audio_snapshot(session)
         else:
             _LOGGER.info(

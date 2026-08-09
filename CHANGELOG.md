@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.10 - test
+
+- fixed false full-group resynchronisations caused by a single 120 ms queue spike
+- the 120 ms member-lag threshold must now persist continuously for 1.0 second before a full resync is requested
+- lag detection is suppressed for the first 8 seconds after every group stream start/resync so normal receiver startup cannot trigger another resync
+- a completely full 250 ms member queue still forces an immediate full-group resync because synchronization is already lost
+- group TCP writer drain timeout increased from 1.0 s to 2.0 s to tolerate brief LAN scheduling/backpressure spikes without hiding real stalls
+- group watchdog restart logs now include the last recorded failure reason
+- individual media-player TCP writer drain timeout increased from 1.0 s to 2.0 s
+- an individual writer timeout is now classified explicitly as `tcp_pcm_backpressure` instead of the misleading generic `hub_audio`; remote audio snapshots are still captured
+- retains the v0.5.9 Fine Volume Trim behavior unchanged
+
 ## 0.5.9 - test
 
 - added a separate **Fine Volume Trim** slider to every individual media player

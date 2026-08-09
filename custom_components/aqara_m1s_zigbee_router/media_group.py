@@ -46,12 +46,14 @@ QUEUE_SECONDS = 0.25
 QUEUE_CHUNKS = int(QUEUE_SECONDS / CHUNK_SECONDS)
 QUEUE_RESYNC_SECONDS = 0.12
 QUEUE_RESYNC_CHUNKS = max(2, round(QUEUE_RESYNC_SECONDS / CHUNK_SECONDS))
+QUEUE_RESYNC_PERSIST_SECONDS = 1.0
+LAG_RESYNC_GRACE_SECONDS = 8.0
 RECONCILE_SECONDS = 3.0
 RETURN_STABILIZE_SECONDS = 8.0
 PCM_HEALTH_CHECK_SECONDS = 2.0
 PCM_STALL_TIMEOUT = 12.0
 PCM_START_GRACE_SECONDS = 8.0
-WRITER_DRAIN_TIMEOUT = 1.0
+WRITER_DRAIN_TIMEOUT = 2.0
 WATCHDOG_RESTART_DELAY = 5.0
 WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
@@ -108,6 +110,8 @@ class GroupMember:
     last_prepare_attempt_monotonic: float = 0.0
     was_online: bool | None = None
     online_since_monotonic: float | None = None
+    lag_since_monotonic: float | None = None
+    lag_peak_chunks: int = 0
 
 
 class AqaraM1SMediaGroupManager:
@@ -317,12 +321,19 @@ class AqaraM1SMediaGroupManager:
                 else None
             ),
             "queue_resync_threshold_ms": int(QUEUE_RESYNC_SECONDS * 1000),
+            "queue_resync_persist_seconds": QUEUE_RESYNC_PERSIST_SECONDS,
+            "lag_resync_grace_seconds": LAG_RESYNC_GRACE_SECONDS,
             "member_queue_depth_ms": {
                 member.name: int(member.queue.qsize() * CHUNK_SECONDS * 1000)
                 for member in self.active_members
                 if member.queue is not None
             },
-            "sync_policy": "interrupt_and_full_restart_on_rejoin_lag_or_pcm_stall",
+            "member_lag_age_seconds": {
+                member.name: round(time.monotonic() - member.lag_since_monotonic, 3)
+                for member in self.active_members
+                if member.lag_since_monotonic is not None
+            },
+            "sync_policy": "interrupt_and_full_restart_on_rejoin_persistent_lag_queue_full_or_pcm_stall",
             "volume_apply_mode": "live_pcm_software_gain",
             "volume_stream_restart": False,
             "volume_apply_pending": False,
@@ -470,7 +481,7 @@ class AqaraM1SMediaGroupManager:
         return samples.tobytes()
 
     async def _restart_stream_locked(self, reason: str) -> None:
-        if reason.startswith(("member_rejoin:", "member_lag:", "pcm_stall")):
+        if reason.startswith(("member_rejoin:", "member_lag_persistent:", "member_queue_full:", "pcm_stall")):
             self._full_resync_count += 1
             self._last_full_resync_reason = reason
         await self._stop_stream_locked(stop_members=True, reason=reason)
@@ -544,6 +555,8 @@ class AqaraM1SMediaGroupManager:
         self._stream_started_monotonic = time.monotonic()
         self._last_pcm_monotonic = None
         for member in self.active_members:
+            member.lag_since_monotonic = None
+            member.lag_peak_chunks = 0
             member.join_at_sequence = SYNC_LEAD_CHUNKS
             member.state = "waiting_for_sync"
 
@@ -660,6 +673,8 @@ class AqaraM1SMediaGroupManager:
 
             member.writer = writer
             member.queue = asyncio.Queue(maxsize=QUEUE_CHUNKS)
+            member.lag_since_monotonic = None
+            member.lag_peak_chunks = 0
             member.join_at_sequence = (
                 SYNC_LEAD_CHUNKS
                 if initial or self._sequence == 0
@@ -731,6 +746,8 @@ class AqaraM1SMediaGroupManager:
         writer = member.writer
         member.writer = None
         member.join_at_sequence = None
+        member.lag_since_monotonic = None
+        member.lag_peak_chunks = 0
         if queue is not None:
             with suppress(asyncio.QueueFull):
                 queue.put_nowait(None)
@@ -776,15 +793,37 @@ class AqaraM1SMediaGroupManager:
                     chunk = self._apply_live_pcm_gain(raw_chunk)
                     sequence = self._sequence
                     self._sequence += 1
-                    self._last_pcm_monotonic = time.monotonic()
-                    failed: list[str] = []
-                    lagging: list[str] = []
+                    now = time.monotonic()
+                    self._last_pcm_monotonic = now
+                    queue_full: list[str] = []
+                    persistent_lag: list[str] = []
+                    lag_grace_active = (
+                        self._stream_started_monotonic is not None
+                        and now - self._stream_started_monotonic
+                        < LAG_RESYNC_GRACE_SECONDS
+                    )
                     for member in list(self.active_members):
                         queue = member.queue
                         if queue is None:
                             continue
-                        if queue.qsize() >= QUEUE_RESYNC_CHUNKS:
-                            lagging.append(member.name)
+                        queue_depth = queue.qsize()
+                        member.lag_peak_chunks = max(
+                            member.lag_peak_chunks, queue_depth
+                        )
+                        if lag_grace_active:
+                            member.lag_since_monotonic = None
+                        elif queue_depth >= QUEUE_RESYNC_CHUNKS:
+                            if member.lag_since_monotonic is None:
+                                member.lag_since_monotonic = now
+                            elif (
+                                now - member.lag_since_monotonic
+                                >= QUEUE_RESYNC_PERSIST_SECONDS
+                            ):
+                                persistent_lag.append(member.name)
+                        else:
+                            member.lag_since_monotonic = None
+                            member.lag_peak_chunks = queue_depth
+
                         outgoing = (
                             SILENCE_CHUNK
                             if member.join_at_sequence is not None
@@ -801,33 +840,25 @@ class AqaraM1SMediaGroupManager:
                         try:
                             queue.put_nowait(outgoing)
                         except asyncio.QueueFull:
-                            failed.append(member.entry_id)
-                    if lagging:
+                            queue_full.append(member.entry_id)
+
+                    if queue_full:
+                        names: list[str] = []
+                        for entry_id in queue_full:
+                            member = self.members.get(entry_id)
+                            if member is not None:
+                                member.last_error = (
+                                    f"PCM queue reached {int(QUEUE_SECONDS * 1000)} ms"
+                                )
+                                names.append(member.name)
                         self._schedule_full_resync(
-                            "member_lag:" + ",".join(sorted(set(lagging)))
+                            "member_queue_full:"
+                            + ",".join(sorted(set(names or queue_full)))
                         )
-                    for entry_id in failed:
-                        member = self.members.get(entry_id)
-                        if member:
-                            member.last_error = "PCM queue exceeded one second"
-                        await self._detach_member(
-                            entry_id,
-                            stop_remote=False,
-                            new_state="waiting_for_sync",
-                        )
-                        if member is not None and self._member_online(member):
-                            self.hass.async_create_background_task(
-                                self._remote_group_stop(member),
-                                f"aqara_m1s_group_cleanup_{entry_id}",
-                            )
-                    if failed:
-                        names = [
-                            self.members[e].name
-                            for e in failed
-                            if e in self.members
-                        ]
+                    elif persistent_lag:
                         self._schedule_full_resync(
-                            "member_lag:" + ",".join(sorted(names or failed))
+                            "member_lag_persistent:"
+                            + ",".join(sorted(set(persistent_lag)))
                         )
                     # FFmpeg may deliver several 20 ms chunks in one pipe read.
                     # Yield after each chunk so the per-hub writer tasks can
@@ -1064,9 +1095,10 @@ class AqaraM1SMediaGroupManager:
                 return
             self._watchdog_attempts += 1
             _LOGGER.warning(
-                "M1S group watchdog restart %s/%s",
+                "M1S group watchdog restart %s/%s last_failure=%s",
                 self._watchdog_attempts,
                 WATCHDOG_MAX_RESTARTS,
+                self._last_failure or "unknown",
             )
             async with self._lock:
                 await self._restart_stream_locked(reason="watchdog")
