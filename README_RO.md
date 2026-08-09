@@ -2,8 +2,8 @@
 
 # Aqara M1S Gen 1 — conversie completă în Zigbee Router + integrare Home Assistant
 
-Versiune documentație: **2026-08-09 — v0.5.11 batch sunete; audio v0.5.10 păstrat**  
-Integrare Home Assistant inclusă: **0.5.11 TEST**  
+Versiune documentație: **2026-08-09 — v0.5.13 TEST, resincronizare periodică + batch sunete**  
+Integrare Home Assistant inclusă: **0.5.13 TEST**  
 Model țintă: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 Acesta este ghidul principal pentru refacerea unui hub stock în configurația folosită de proiect:
@@ -23,7 +23,17 @@ Revizia R2 integrează constatările din README-ul GitHub din 2026-08-07: aleger
 
 ---
 
-## Modificări v0.5.11 TEST — administrare sunete în lot
+## Modificări v0.5.13 TEST — resincronizare periodică
+
+- redarea de grup de lungă durată are acum o resincronizare preventivă a receiverelor la fiecare 10 minute
+- mecanismul oprește broadcasterul PCM la limita unui cadru de 20 ms, repornește pe toate huburile active doar lanțul `nc`/`aplay`, aplică din nou lead-in-ul comun de 1,5 secunde și apoi continuă fluxul
+- FFmpeg nu este repornit de această resincronizare periodică; pentru fișiere finite redarea nu sare la început, deoarece sursa este ținută pe loc prin back-pressure cât timp receiverele sunt reconstruite
+- restarturile complete de siguranță pentru lag persistent, coadă plină, blocaj PCM și revenirea unui hub rămân neschimbate
+- batch management-ul de sunete din v0.5.11 rămâne inclus: un WAV sau un ZIP cu până la 64 WAV-uri, plus ștergere multiplă
+- aceasta este o versiune TEST deoarece decalajul intermitent trebuie urmărit în timp pe huburile fizice
+
+
+## Modificări v0.5.13 TEST — administrare sunete în lot
 
 - Configure → Ștergere WAV permite selectarea și ștergerea mai multor fișiere administrate într-o singură operație
 - selectorul nativ de fișier Home Assistant primește un singur upload; de aceea Configure acceptă acum fie un WAV, fie un ZIP cu mai multe WAV-uri
@@ -70,7 +80,7 @@ Folosește pentru o instalare nouă numai următoarele componente:
 
 | Componentă | Versiune/fișier curent | Rol |
 |---|---|---|
-| Integrare Home Assistant | `custom_components/aqara_m1s_zigbee_router`, manifest `0.5.11` | control local, senzori, audio, grup, diagnostic și schimbare Wi-Fi sigură |
+| Integrare Home Assistant | `custom_components/aqara_m1s_zigbee_router`, manifest `0.5.13` | control local, senzori, audio, grup, diagnostic și schimbare Wi-Fi sigură |
 | Firmware JN5189 | `jn5189_router_rgb_lux_rejoin_test.bin` | Zigbee Router, RGB, lux PIO19/ADC5, comandă rejoin A7 |
 | Boot persistent | `scripts/hub/post_init.sh` | servicii stock, Telnet, UART liber, boot Router |
 | Diagnostic boot Wi-Fi stock | `scripts/hub/aqara_wifi_boot_state.sh` | verifică și, la cerere, corectează stările Aqara care aleg STA sau AP |

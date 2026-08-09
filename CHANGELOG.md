@@ -1,3 +1,12 @@
+# v0.5.13 TEST
+
+- Added periodic 10-minute receiver-only drift guard for long-running M1S Media Group playback.
+- The guard pauses the shared PCM broadcaster at a 20 ms boundary, rebuilds active hub `nc`/`aplay` receivers, reapplies the 1.5 s common silent lead-in, and resumes the same FFmpeg process.
+- Periodic drift correction therefore preserves finite-media position instead of restarting the source from the beginning.
+- Existing full-resync recovery paths remain for persistent lag, queue overflow, PCM stall and member rejoin.
+- Retains v0.5.11 WAV/ZIP batch upload (up to 64 WAV files) and multi-delete.
+- TEST status retained pending long-run physical observation.
+
 # Changelog
 
 ## 0.5.11 - test

@@ -59,6 +59,9 @@ WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
 WATCHDOG_STABLE_SECONDS = 30.0
 FULL_RESYNC_RETRY_SECONDS = 15.0
+PERIODIC_RECEIVER_RESYNC_SECONDS = 10 * 60.0
+PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS = 2
+PERIODIC_RECEIVER_RESYNC_PAUSE_TIMEOUT = 2.0
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 FFMPEG_NICE_TARGET = -5
@@ -140,6 +143,7 @@ class AqaraM1SMediaGroupManager:
         self.stable_task: asyncio.Task | None = None
         self.health_task: asyncio.Task | None = None
         self.resync_task: asyncio.Task | None = None
+        self.periodic_receiver_resync_task: asyncio.Task | None = None
         self.slow_retry_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._generation = 0
@@ -150,6 +154,11 @@ class AqaraM1SMediaGroupManager:
         self._last_failure: str | None = None
         self._full_resync_count = 0
         self._last_full_resync_reason: str | None = None
+        self._receiver_resync_count = 0
+        self._last_receiver_resync_monotonic: float | None = None
+        self._last_receiver_resync_reason: str | None = None
+        self._broadcast_pause_requested = asyncio.Event()
+        self._broadcast_paused = asyncio.Event()
         self._applied_volume = self.volume
         self._applied_muted = self.muted
         self._gain_current = self._effective_gain()
@@ -312,6 +321,15 @@ class AqaraM1SMediaGroupManager:
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
+            "receiver_drift_guard_mode": "periodic_receiver_restart_preserve_ffmpeg",
+            "receiver_resync_interval_seconds": PERIODIC_RECEIVER_RESYNC_SECONDS,
+            "receiver_resync_count": self._receiver_resync_count,
+            "last_receiver_resync_reason": self._last_receiver_resync_reason,
+            "last_receiver_resync_age_seconds": (
+                None
+                if self._last_receiver_resync_monotonic is None
+                else round(time.monotonic() - self._last_receiver_resync_monotonic, 1)
+            ),
             "return_stabilize_seconds": RETURN_STABILIZE_SECONDS,
             "pcm_health_check_seconds": PCM_HEALTH_CHECK_SECONDS,
             "pcm_stall_timeout_seconds": PCM_STALL_TIMEOUT,
@@ -333,7 +351,7 @@ class AqaraM1SMediaGroupManager:
                 for member in self.active_members
                 if member.lag_since_monotonic is not None
             },
-            "sync_policy": "interrupt_and_full_restart_on_rejoin_persistent_lag_queue_full_or_pcm_stall",
+            "sync_policy": "periodic_receiver_resync_plus_full_restart_on_rejoin_persistent_lag_queue_full_or_pcm_stall",
             "volume_apply_mode": "live_pcm_software_gain",
             "volume_stream_restart": False,
             "volume_apply_pending": False,
@@ -362,6 +380,7 @@ class AqaraM1SMediaGroupManager:
             self._watchdog_attempts = 0
             await self._restart_stream_locked(reason="user_play")
         self._ensure_reconcile_task()
+        self._ensure_periodic_receiver_resync_task()
         self._signal_update()
 
     async def async_resume(self) -> None:
@@ -372,6 +391,7 @@ class AqaraM1SMediaGroupManager:
             if not self.ffmpeg_running:
                 await self._restart_stream_locked(reason="resume")
         self._ensure_reconcile_task()
+        self._ensure_periodic_receiver_resync_task()
         self._signal_update()
 
     async def async_stop(self, *, clear_intent: bool = True) -> None:
@@ -599,6 +619,8 @@ class AqaraM1SMediaGroupManager:
             return False
 
     async def _stop_stream_locked(self, *, stop_members: bool, reason: str) -> None:
+        self._broadcast_pause_requested.clear()
+        self._broadcast_paused.clear()
         self._generation += 1
         current = asyncio.current_task()
         for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task"):
@@ -783,6 +805,19 @@ class AqaraM1SMediaGroupManager:
         buffer = bytearray()
         try:
             while generation == self._generation and self.desired_playing:
+                if self._broadcast_pause_requested.is_set():
+                    self._broadcast_paused.set()
+                    try:
+                        while (
+                            self._broadcast_pause_requested.is_set()
+                            and generation == self._generation
+                            and self.desired_playing
+                        ):
+                            await asyncio.sleep(0.01)
+                    finally:
+                        self._broadcast_paused.clear()
+                    if generation != self._generation or not self.desired_playing:
+                        return
                 data = await process.stdout.read(32768)
                 if not data:
                     break
@@ -897,6 +932,124 @@ class AqaraM1SMediaGroupManager:
         finally:
             if process.returncode not in (None, 0) and lines:
                 _LOGGER.warning("M1S group FFmpeg stderr: %s", " | ".join(lines))
+
+    def _ensure_periodic_receiver_resync_task(self) -> None:
+        """Keep long-running group playback from accumulating inter-hub drift."""
+        if self._shutting_down or not self.desired_playing:
+            return
+        if (
+            self.periodic_receiver_resync_task is None
+            or self.periodic_receiver_resync_task.done()
+        ):
+            self.periodic_receiver_resync_task = self.hass.async_create_background_task(
+                self._periodic_receiver_resync_loop(),
+                "aqara_m1s_group_periodic_receiver_resync",
+            )
+
+    async def _periodic_receiver_resync_loop(self) -> None:
+        """Periodically restart only hub receivers while preserving FFmpeg position."""
+        try:
+            while self.desired_playing and not self._shutting_down:
+                await asyncio.sleep(5.0)
+                if not self.desired_playing or not self.ffmpeg_running:
+                    continue
+                if len(self.active_members) < PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS:
+                    continue
+                started = self._stream_started_monotonic
+                if started is None:
+                    continue
+                if time.monotonic() - started < PERIODIC_RECEIVER_RESYNC_SECONDS:
+                    continue
+                async with self._lock:
+                    if (
+                        self.desired_playing
+                        and self.ffmpeg_running
+                        and len(self.active_members)
+                        >= PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS
+                        and self._stream_started_monotonic is not None
+                        and time.monotonic() - self._stream_started_monotonic
+                        >= PERIODIC_RECEIVER_RESYNC_SECONDS
+                    ):
+                        await self._resync_receivers_preserve_source_locked(
+                            reason="periodic_drift_guard"
+                        )
+                self._signal_update()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._last_failure = str(err)
+            _LOGGER.warning("M1S periodic receiver resync failed: %s", err)
+        finally:
+            if self.periodic_receiver_resync_task is asyncio.current_task():
+                self.periodic_receiver_resync_task = None
+
+    async def _resync_receivers_preserve_source_locked(self, reason: str) -> None:
+        """Pause PCM at a frame boundary, rebuild all receivers, then resume.
+
+        FFmpeg is deliberately kept alive.  Its stdout back-pressure pauses the
+        source while the hub-side nc/aplay pipelines are recreated, so finite
+        media does not restart from the beginning and every receiver resumes
+        from the same PCM position after the common silent lead-in.
+        """
+        if not self.ffmpeg_running or not self.desired_playing:
+            return
+        eligible = [m for m in self.members.values() if self._eligible(m)]
+        if len(eligible) < PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS:
+            return
+
+        self._broadcast_pause_requested.set()
+        try:
+            await asyncio.wait_for(
+                self._broadcast_paused.wait(),
+                timeout=PERIODIC_RECEIVER_RESYNC_PAUSE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            self._broadcast_pause_requested.clear()
+            _LOGGER.warning(
+                "M1S receiver resync could not pause broadcaster; using full restart"
+            )
+            await self._restart_stream_locked(reason=f"receiver_pause_timeout:{reason}")
+            return
+
+        try:
+            active_ids = [m.entry_id for m in self.active_members]
+            await asyncio.gather(
+                *(
+                    self._detach_member(
+                        entry_id,
+                        stop_remote=True,
+                        new_state="waiting_for_sync",
+                    )
+                    for entry_id in active_ids
+                ),
+                return_exceptions=True,
+            )
+            active_members = [
+                self.members[entry_id]
+                for entry_id in active_ids
+                if entry_id in self.members and self._eligible(self.members[entry_id])
+            ]
+            if active_members:
+                await asyncio.gather(
+                    *(
+                        self._prepare_member(member, initial=False)
+                        for member in active_members
+                    ),
+                    return_exceptions=True,
+                )
+            self._receiver_resync_count += 1
+            self._last_receiver_resync_monotonic = time.monotonic()
+            self._last_receiver_resync_reason = reason
+            # Reset the interval without restarting FFmpeg or changing media position.
+            self._stream_started_monotonic = time.monotonic()
+            _LOGGER.info(
+                "M1S group receivers resynchronised without restarting FFmpeg "
+                "reason=%s active=%s",
+                reason,
+                [m.name for m in self.active_members],
+            )
+        finally:
+            self._broadcast_pause_requested.clear()
 
     def _ensure_reconcile_task(self) -> None:
         if self._shutting_down:
@@ -1178,7 +1331,13 @@ class AqaraM1SMediaGroupManager:
 
     async def _cancel_background_recovery(self) -> None:
         current = asyncio.current_task()
-        for attr in ("reconcile_task", "watchdog_task", "slow_retry_task", "resync_task"):
+        for attr in (
+            "reconcile_task",
+            "watchdog_task",
+            "slow_retry_task",
+            "resync_task",
+            "periodic_receiver_resync_task",
+        ):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task and task is not current:

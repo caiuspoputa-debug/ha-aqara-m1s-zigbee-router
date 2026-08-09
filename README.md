@@ -2,7 +2,7 @@
 
 [Română](README_RO.md) | **English**
 
-Release status: **v0.5.11 sound-management batch test build; v0.5.10 audio hardening retained**
+Release status: **v0.5.13 TEST — periodic receiver resynchronization + WAV/ZIP batch management**
 
 This guide covers the complete path from a stock Aqara M1S Gen 1 (`lumi.gateway.aeu01`) to the project configuration: stock Linux/Wi-Fi/HomeKit/audio retained, persistent LAN-only Telnet, JN5189 BDB Zigbee Router firmware, RGB/lux UART control, local audio, physical-button bridge, safe Wi-Fi recovery and the Home Assistant integration.
 
@@ -22,13 +22,22 @@ If all three are false or empty, the Aqara boot logic may intentionally start AP
 
 `fw_manager.sh -r` is the normal service-start path. Do **not** confuse it with `fw_manager.sh -f -r`, which is the factory-reset path.
 
-## What changed in v0.5.11
+## What changed in v0.5.13 TEST
 
-- Configure → Delete WAV now supports selecting and deleting multiple managed WAV files in one operation
-- Home Assistant's native file selector accepts only one uploaded file, so Configure now accepts either one WAV or one ZIP batch
+- long-running group playback now has a preventive receiver resynchronization every 10 minutes
+- the shared PCM broadcaster pauses at a 20 ms frame boundary while all currently active hub-side `nc`/`aplay` receivers are rebuilt
+- the existing common 1.5-second silent lead-in is applied again before audible PCM resumes
+- the periodic guard keeps the same FFmpeg process alive, so finite media does not restart from the beginning; stdout back-pressure holds the source while the receivers are rebuilt
+- existing emergency full restarts remain for persistent lag, a full queue, PCM stall and member rejoin
+- Configure keeps the v0.5.11 batch tools: one WAV or one ZIP with up to 64 WAV files, plus multi-delete
+- this remains a TEST build because intermittent long-run drift must be observed over time on the physical hubs
+
+### Retained batch sound management
+
+- Configure → Delete WAV supports selecting and deleting multiple managed WAV files in one operation
+- Home Assistant's native file selector accepts one uploaded file, so Configure accepts either one WAV or one ZIP batch
 - one ZIP batch may contain up to 64 WAV files, with a 20 MiB limit per WAV and 100 MiB total
 - ZIP processing stays in memory; non-WAV entries are ignored, encrypted entries and duplicate WAV basenames are rejected
-- all v0.5.10 audio synchronization/watchdog/backpressure behavior and Fine Volume Trim are retained unchanged
 
 ## What changed in v0.5.10
 
@@ -57,6 +66,7 @@ If all three are false or empty, the Aqara boot logic may intentionally start AP
 - a new PCM-progress watchdog restarts the whole group if FFmpeg is still alive but produces no PCM for 12 seconds
 - watchdog stability is accepted only when PCM is flowing and at least one receiver is active
 
+
 ## What changed in v0.5.7
 
 - added **Change Wi-Fi network** to **Settings → Devices & services → Aqara M1S Zigbee Router → Configure**
@@ -75,7 +85,7 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.11 (test build)**
+Current version: **0.5.13 (TEST)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
