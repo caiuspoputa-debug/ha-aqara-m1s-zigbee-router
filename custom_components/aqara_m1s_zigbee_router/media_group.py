@@ -62,6 +62,13 @@ FULL_RESYNC_RETRY_SECONDS = 15.0  # member retry interval; no longer restarts th
 FULL_RESYNC_HARD_TIMEOUT = 35.0
 MANUAL_RESET_NORMAL_STOP_TIMEOUT = 6.0
 MANUAL_RESET_REMOTE_TIMEOUT = 3.0
+MEMBER_REMOTE_START_TIMEOUT = 4.0
+MEMBER_REMOTE_STOP_TIMEOUT = 2.0
+MEMBER_CONNECT_ATTEMPTS = 8
+MEMBER_CONNECT_TIMEOUT = 0.5
+MEMBER_CONNECT_RETRY_DELAY = 0.10
+WRITER_CLOSE_TIMEOUT = 0.75
+TASK_CANCEL_TIMEOUT = 1.0
 PERIODIC_RECEIVER_RESYNC_ENABLED = False
 PERIODIC_RECEIVER_RESYNC_SECONDS = 10 * 60.0
 PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS = 2
@@ -111,6 +118,7 @@ class GroupMember:
     writer: asyncio.StreamWriter | None = None
     queue: asyncio.Queue[bytes | None] | None = None
     writer_task: asyncio.Task | None = None
+    prepare_task: asyncio.Task | None = None
     join_at_sequence: int | None = None
     last_error: str | None = None
     generation: int = 0
@@ -498,6 +506,10 @@ class AqaraM1SMediaGroupManager:
 
             for member in list(self.members.values()):
                 member.generation += 1
+                prepare_task = member.prepare_task
+                member.prepare_task = None
+                if prepare_task and prepare_task is not current and not prepare_task.done():
+                    prepare_task.cancel()
                 task = member.writer_task
                 member.writer_task = None
                 if task and task is not current and not task.done():
@@ -658,10 +670,21 @@ class AqaraM1SMediaGroupManager:
             return
 
         eligible = [m for m in self.members.values() if self._eligible(m)]
-        if eligible:
-            await asyncio.gather(
-                *(self._prepare_member(member, initial=True) for member in eligible),
-                return_exceptions=True,
+        prepare_tasks: list[asyncio.Task] = []
+        for member in eligible:
+            task = self._schedule_member_prepare(member, initial=True)
+            if task is not None:
+                prepare_tasks.append(task)
+
+        # Do not let one slow hub hold Play for the entire group.  Start the
+        # shared timeline as soon as the first receiver is ready; the remaining
+        # hubs finish preparation in the background and join at a future common
+        # sequence.  If every receiver fails, all preparation tasks are bounded
+        # by their own timeouts below, so Play cannot spin for minutes.
+        pending = set(prepare_tasks)
+        while pending and not self.active_members:
+            _, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
             )
 
         await self._start_ffmpeg_locked()
@@ -787,7 +810,8 @@ class AqaraM1SMediaGroupManager:
                 await asyncio.wait_for(process.wait(), timeout=2.0)
             if process.returncode is None:
                 process.kill()
-                await process.wait()
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=1.0)
         if stop_members:
             await asyncio.gather(
                 *(
@@ -811,6 +835,27 @@ class AqaraM1SMediaGroupManager:
             return "offline"
         return "waiting_for_sync" if self.desired_playing else "idle"
 
+    def _schedule_member_prepare(
+        self, member: GroupMember, *, initial: bool
+    ) -> asyncio.Task | None:
+        """Prepare one receiver without allowing it to block healthy members."""
+        existing = member.prepare_task
+        if existing is not None and not existing.done():
+            return existing
+
+        async def _runner() -> bool:
+            try:
+                return await self._prepare_member(member, initial=initial)
+            finally:
+                if member.prepare_task is asyncio.current_task():
+                    member.prepare_task = None
+
+        task = self.hass.async_create_background_task(
+            _runner(), f"aqara_m1s_group_prepare_{member.entry_id}"
+        )
+        member.prepare_task = task
+        return task
+
     async def _prepare_member(self, member: GroupMember, *, initial: bool) -> bool:
         if not self._eligible(member) or member.writer is not None:
             return False
@@ -818,21 +863,24 @@ class AqaraM1SMediaGroupManager:
         member.generation += 1
         generation = member.generation
         try:
-            await self.hass.async_add_executor_job(
-                member.client.run_command, GROUP_START_COMMAND
+            await asyncio.wait_for(
+                self.hass.async_add_executor_job(
+                    member.client.run_command, GROUP_START_COMMAND
+                ),
+                timeout=MEMBER_REMOTE_START_TIMEOUT,
             )
             writer: asyncio.StreamWriter | None = None
             last_error: Exception | None = None
-            for _ in range(12):
+            for _ in range(MEMBER_CONNECT_ATTEMPTS):
                 try:
                     _, writer = await asyncio.wait_for(
                         asyncio.open_connection(member.client.host, GROUP_PORT),
-                        timeout=1.0,
+                        timeout=MEMBER_CONNECT_TIMEOUT,
                     )
                     break
                 except (OSError, asyncio.TimeoutError) as err:
                     last_error = err
-                    await asyncio.sleep(0.15)
+                    await asyncio.sleep(MEMBER_CONNECT_RETRY_DELAY)
             if writer is None:
                 raise ConnectionError(f"group receiver unavailable: {last_error}")
 
@@ -846,9 +894,11 @@ class AqaraM1SMediaGroupManager:
             member.queue = asyncio.Queue(maxsize=QUEUE_CHUNKS)
             member.lag_since_monotonic = None
             member.lag_peak_chunks = 0
+            # A receiver that finishes preparation after FFmpeg has already
+            # started must join in the future, not at the original sequence 75.
             member.join_at_sequence = (
                 SYNC_LEAD_CHUNKS
-                if initial or self._sequence == 0
+                if self._sequence == 0
                 else self._sequence + SYNC_LEAD_CHUNKS
             )
             member.state = "waiting_for_sync"
@@ -870,8 +920,11 @@ class AqaraM1SMediaGroupManager:
             member.state = "offline" if not self._member_online(member) else "waiting_for_sync"
             _LOGGER.warning("M1S group skipped %s: %s", member.name, err)
             with suppress(Exception):
-                await self.hass.async_add_executor_job(
-                    member.client.run_command, GROUP_STOP_COMMAND
+                await asyncio.wait_for(
+                    self.hass.async_add_executor_job(
+                        member.client.run_command, GROUP_STOP_COMMAND
+                    ),
+                    timeout=MEMBER_REMOTE_STOP_TIMEOUT,
                 )
             self._signal_update()
             return False
@@ -910,6 +963,8 @@ class AqaraM1SMediaGroupManager:
         if member is None:
             return
         member.generation += 1
+        prepare_task = member.prepare_task
+        member.prepare_task = None
         task = member.writer_task
         member.writer_task = None
         queue = member.queue
@@ -922,16 +977,23 @@ class AqaraM1SMediaGroupManager:
         if queue is not None:
             with suppress(asyncio.QueueFull):
                 queue.put_nowait(None)
+        if prepare_task and prepare_task is not asyncio.current_task():
+            await self._cancel_task(prepare_task)
         if task and task is not asyncio.current_task():
             await self._cancel_task(task)
         if writer is not None:
             writer.close()
             with suppress(Exception):
-                await writer.wait_closed()
+                await asyncio.wait_for(
+                    writer.wait_closed(), timeout=WRITER_CLOSE_TIMEOUT
+                )
         if stop_remote and self._member_online(member):
             with suppress(Exception):
-                await self.hass.async_add_executor_job(
-                    member.client.run_command, GROUP_STOP_COMMAND
+                await asyncio.wait_for(
+                    self.hass.async_add_executor_job(
+                        member.client.run_command, GROUP_STOP_COMMAND
+                    ),
+                    timeout=MEMBER_REMOTE_STOP_TIMEOUT,
                 )
         member.state = new_state
         if new_state == "offline":
@@ -942,8 +1004,11 @@ class AqaraM1SMediaGroupManager:
 
     async def _remote_group_stop(self, member: GroupMember) -> None:
         with suppress(Exception):
-            await self.hass.async_add_executor_job(
-                member.client.run_command, GROUP_STOP_COMMAND
+            await asyncio.wait_for(
+                self.hass.async_add_executor_job(
+                    member.client.run_command, GROUP_STOP_COMMAND
+                ),
+                timeout=MEMBER_REMOTE_STOP_TIMEOUT,
             )
 
     async def _broadcast_loop(
@@ -1266,10 +1331,8 @@ class AqaraM1SMediaGroupManager:
                         # sequence and feeds silence until that sequence.  The
                         # returning hub therefore joins in sync without restarting
                         # FFmpeg or any healthy receiver.
-                        await asyncio.gather(
-                            *(self._prepare_member(member, initial=False) for member in due),
-                            return_exceptions=True,
-                        )
+                        for member in due:
+                            self._schedule_member_prepare(member, initial=False)
                         self._signal_update()
                         continue
 
@@ -1506,8 +1569,10 @@ class AqaraM1SMediaGroupManager:
             return
         if not task.done():
             task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        try:
+            await asyncio.wait_for(task, timeout=TASK_CANCEL_TIMEOUT)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
 
     @staticmethod
     def _safe_media_for_log(media_url: str | None) -> str:

@@ -1,12 +1,11 @@
-## 0.5.15 TEST - SAFE GROUP START
+# v0.5.15 TEST - Fast group start / slow-member isolation
 
-- Reworked group synchronization to stop one slow hub from restarting the whole group.
-- Restored the per-member PCM queue from 250 ms to 1.0 s.
-- Queue overflow now isolates only the slow member; healthy members continue on the same FFmpeg timeline.
-- Removed persistent 120 ms lag-triggered full-group resynchronisation.
-- Disabled the periodic 10-minute receiver restart guard.
-- Returning/isolated hubs now rejoin the running shared timeline at a future sequence after the common silent lead-in, without restarting healthy hubs or FFmpeg.
-- Retains v0.5.14 group-only hard reset / OFF recovery and the v0.5.13 feature set.
+- Group Play starts as soon as the first selected hub receiver is ready instead of waiting for every hub.
+- Slow or stuck hub preparation continues in background and joins on a future shared PCM sequence.
+- Group start/stop Telnet commands, TCP connect, writer close and task cancellation are bounded by explicit timeouts.
+- Queue overflow keeps the v0.5.14 isolation policy: only the slow member is detached; healthy hubs are not full-resynchronised.
+- Periodic receiver resync remains disabled.
+- Keeps the v0.5.14 group-only hard reset / OFF recovery path.
 
 ## 0.5.14 TEST
 

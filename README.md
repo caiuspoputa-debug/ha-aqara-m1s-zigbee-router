@@ -2,7 +2,7 @@
 
 [Română](README_RO.md) | **English**
 
-Release status: **v0.5.15 TEST — safe group start + member isolation + group reset**
+Release status: **v0.5.13 TEST — periodic receiver resynchronization + WAV/ZIP batch management**
 
 This guide covers the complete path from a stock Aqara M1S Gen 1 (`lumi.gateway.aeu01`) to the project configuration: stock Linux/Wi-Fi/HomeKit/audio retained, persistent LAN-only Telnet, JN5189 BDB Zigbee Router firmware, RGB/lux UART control, local audio, physical-button bridge, safe Wi-Fi recovery and the Home Assistant integration.
 
@@ -21,15 +21,6 @@ persist.app.hap_keepalive
 If all three are false or empty, the Aqara boot logic may intentionally start AP mode even when the SSID/password are still stored. `persist.app.user_paired=true` does not override that decision. The kit therefore includes `scripts/hub/aqara_wifi_boot_state.sh check|fix`, which diagnoses/corrects this state without printing the SSID, Wi-Fi password or MiIO token.
 
 `fw_manager.sh -r` is the normal service-start path. Do **not** confuse it with `fw_manager.sh -f -r`, which is the factory-reset path.
-
-## What changed in v0.5.15 TEST
-
-- Group start no longer sacrifices every healthy hub when one member is slow.
-- Per-member PCM queue restored to 1.0 s.
-- Queue overflow isolates only the affected receiver; the shared FFmpeg timeline keeps playing.
-- Removed the 120 ms persistent-lag full-group restart policy and disabled the periodic 10-minute receiver restart.
-- A recovered member rejoins the existing timeline at a future synchronized sequence after the common silent lead-in.
-- Retains the v0.5.14 group-only hard reset / OFF recovery.
 
 ## What changed in v0.5.13 TEST
 
@@ -94,7 +85,7 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.15 (TEST)**
+Current version: **0.5.13 (TEST)**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write
