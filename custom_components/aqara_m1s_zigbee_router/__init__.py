@@ -30,6 +30,7 @@ from .const import (
     SERVICE_UPLOAD_SOUND,
     SERVICE_DELETE_SOUND,
     SERVICE_REFRESH_SOUNDS,
+    SERVICE_RESET_MEDIA_GROUP,
     sound_list_signal,
 )
 from .coordinator import AqaraM1SRouterCoordinator
@@ -246,6 +247,12 @@ async def async_setup_entry(
         selected_entry_id, _ = await _get_target(call)
         async_dispatcher_send(hass, sound_list_signal(selected_entry_id))
 
+    async def reset_media_group(call: ServiceCall) -> None:
+        """Hard-reset only the shared M1S group audio transport."""
+        group_manager = hass.data[DOMAIN].get(DATA_MEDIA_GROUP)
+        if group_manager is not None:
+            await group_manager.async_force_reset(reason="service_reset")
+
     if not hass.services.has_service(DOMAIN, SERVICE_PLAY_URL):
         hass.services.async_register(DOMAIN, SERVICE_PLAY_URL, play_url)
         hass.services.async_register(DOMAIN, SERVICE_PLAY_SOUND, play_sound)
@@ -253,6 +260,7 @@ async def async_setup_entry(
         hass.services.async_register(DOMAIN, SERVICE_UPLOAD_SOUND, upload_sound)
         hass.services.async_register(DOMAIN, SERVICE_DELETE_SOUND, delete_sound)
         hass.services.async_register(DOMAIN, SERVICE_REFRESH_SOUNDS, refresh_sounds)
+        hass.services.async_register(DOMAIN, SERVICE_RESET_MEDIA_GROUP, reset_media_group)
 
     return True
 

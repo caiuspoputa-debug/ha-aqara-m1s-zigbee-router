@@ -1,3 +1,21 @@
+## 0.5.15 TEST - SAFE GROUP START
+
+- Reworked group synchronization to stop one slow hub from restarting the whole group.
+- Restored the per-member PCM queue from 250 ms to 1.0 s.
+- Queue overflow now isolates only the slow member; healthy members continue on the same FFmpeg timeline.
+- Removed persistent 120 ms lag-triggered full-group resynchronisation.
+- Disabled the periodic 10-minute receiver restart guard.
+- Returning/isolated hubs now rejoin the running shared timeline at a future sequence after the common silent lead-in, without restarting healthy hubs or FFmpeg.
+- Retains v0.5.14 group-only hard reset / OFF recovery and the v0.5.13 feature set.
+
+## 0.5.14 TEST
+
+- Added `aqara_m1s_zigbee_router.reset_media_group` for group-only recovery without restarting Home Assistant.
+- Group STOP now falls back to a hard transport reset if normal shutdown wedges.
+- Group OFF performs an immediate hard group-only reset.
+- A full resynchronisation that hangs for 35 seconds is aborted and the group is returned to idle instead of spinning indefinitely.
+- Hard reset only targets group FFmpeg/tasks/queues/sockets and hub port 12347; individual audio 12346 and Zigbee UART 1886 are untouched.
+
 # v0.5.13 TEST
 
 - Added periodic 10-minute receiver-only drift guard for long-running M1S Media Group playback.

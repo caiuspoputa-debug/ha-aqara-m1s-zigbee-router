@@ -110,3 +110,7 @@ refresh_sounds:
       required: false
       selector:
         text:
+
+reset_media_group:
+  name: Restart Media Group
+  description: Hard-reset only the shared M1S group audio transport without restarting Home Assistant or touching individual players / Zigbee UART.
