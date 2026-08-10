@@ -1,3 +1,16 @@
+# v0.6.0 TEST — clocked multi-room group transport
+
+- Reworked the M1S Media Group around a single Home Assistant monotonic playout clock.
+- Initial playback uses a bounded startup cohort instead of waiting for every selected hub.
+- All ready hubs receive a common scheduled silence pre-roll before source audio; source samples are no longer discarded for startup synchronization.
+- Late hubs join on a future common clock boundary after a short silent lead-in.
+- FFmpeg pipe bursts are paced into 20 ms frames by the HA playout clock; FFmpeg `-re` is no longer the synchronization mechanism.
+- A slow/offline receiver is isolated without stopping FFmpeg or healthy hubs.
+- Per-member reconnect uses short stabilization plus exponential retry backoff.
+- TCP/asyncio write buffering is bounded so stalled receivers are detected before seconds of audio accumulate.
+- Legacy member-triggered full group resynchronisation is disabled; global restart is reserved for source/FFmpeg health failure or explicit user Play/Reset.
+- Existing group hard-reset/OFF path remains scoped to port 12347 and does not touch individual 12346 or Zigbee 1886.
+
 # v0.5.15 TEST - Fast group start / slow-member isolation
 
 - Group Play starts as soon as the first selected hub receiver is ready instead of waiting for every hub.
