@@ -14,10 +14,12 @@ from .client import AqaraM1SClient
 
 _LOGGER = logging.getLogger(__name__)
 
-# 12346 = individual media player, 12347 = media group, 12349 = upload.
-# Priority sounds deliberately use their own pair so they can never collide
-# with the group listener.
-SOURCE_PORT = 12350
+# 12346 = individual media player, 12347 = group receiver / temporary sound source,
+# 12348 = priority-sound PCM sink, 12349 = upload.
+# The priority arbiter removes this hub from the group before sound playback,
+# therefore 12347 is free and is also the already-proven source port used by
+# the original sound pipeline.
+SOURCE_PORT = 12347
 SINK_PORT = 12348
 REMOTE_FIFO = "/tmp/aqara_m1s_sound_fifo"
 REMOTE_SOURCE_PID = "/tmp/aqara_m1s_sound_source_nc.pid"
@@ -25,6 +27,13 @@ REMOTE_SINK_PID = "/tmp/aqara_m1s_sound_sink_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_sound_aplay.pid"
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
+
+AUDIO_PREEMPT_COMMAND = (
+    "for p in $(ps w | grep '[n]c -l -p 12346' | awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "
+    "for p in $(ps w | grep '[n]c -l -p 12347' | awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "
+    "for p in $(ps w | grep '[a]play .*aqara_m1s_radio_fifo' | awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "
+    "for p in $(ps w | grep '[a]play .*aqara_m1s_group_fifo' | awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done"
+)
 
 REMOTE_STOP_COMMAND = (
     f"for f in {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID}; do "
@@ -44,8 +53,9 @@ def remote_start_command(path: str) -> str:
     """Build the hub-side one-shot source and sink pipeline."""
     source = shlex.quote(path)
     return (
-        REMOTE_STOP_COMMAND
-        + f"; mkfifo {REMOTE_FIFO}; "
+        AUDIO_PREEMPT_COMMAND
+        + "; " + REMOTE_STOP_COMMAND
+        + f"; rm -f {REMOTE_FIFO}; mkfifo {REMOTE_FIFO}; "
         + f"nc -l -p {SINK_PORT} < /dev/null > {REMOTE_FIFO} "
           "2>/tmp/aqara_m1s_sound_sink_nc.log & "
         + f"echo $! > {REMOTE_SINK_PID}; "
@@ -93,8 +103,10 @@ class AqaraM1SSoundPlayer:
         # playback intent so it can resume after the notification sound.
         self._resume_radio = await self.radio_player.async_suspend_for_priority_sound()
         self._interruption_active = True
-        # Give killed aplay/nc processes a tiny scheduling window to release ALSA.
-        await asyncio.sleep(0.05)
+        # The hub is small and ALSA does not always become reusable immediately
+        # after killing the previous aplay.  Give it a real release window before
+        # creating the priority-sound pipeline.
+        await asyncio.sleep(0.20)
 
     async def _finish_priority(self) -> None:
         if not self._interruption_active:
@@ -125,7 +137,10 @@ class AqaraM1SSoundPlayer:
                     ),
                     timeout=4.0,
                 )
-                await asyncio.sleep(0.20)
+                # Allow BusyBox nc + FIFO + aplay to settle.  0.20 s was too
+                # aggressive on some M1S units and FFmpeg could connect before
+                # the one-shot listeners were actually ready.
+                await asyncio.sleep(0.45)
 
                 ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
                 input_url = f"tcp://{self.client.host}:{SOURCE_PORT}?tcp_nodelay=1"
