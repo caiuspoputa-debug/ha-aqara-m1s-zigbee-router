@@ -1,3 +1,13 @@
+# v0.7.0 TEST STABLE COHORT
+
+- Replaced late-join/clock-rebase group logic with a fixed startup cohort.
+- 500 ms common paced-silence warm-up before the shared source starts.
+- FFmpeg `-re` + exact 20 ms reads; no 32 KB burst fan-out.
+- Slow members are isolated and remain out until the next Play; no automatic rejoin/full-resync churn.
+- Group cleanup on port 12347 is transport-specific and no longer kills the priority-sound source that shares that port.
+- Priority sound can rebuild the group once, deliberately, after the interrupted hub is released.
+- Automatic source restart is bounded to one attempt.
+
 # v0.6.0 TEST — clocked multi-room group transport
 
 - Reworked the M1S Media Group around a single Home Assistant monotonic playout clock.
