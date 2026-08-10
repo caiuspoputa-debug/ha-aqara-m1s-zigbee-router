@@ -14,11 +14,8 @@ from .client import AqaraM1SClient
 
 _LOGGER = logging.getLogger(__name__)
 
-# 12346 = individual media player, 12347 = group receiver / temporary sound source,
-# 12348 = priority-sound PCM sink, 12349 = upload.
-# The priority arbiter removes this hub from the group before sound playback,
-# therefore 12347 is free and is also the already-proven source port used by
-# the original sound pipeline.
+# IMPORTANT: This transport block intentionally matches the known-good v0.6.0
+# sound pipeline. Audio priority is handled only by the HA-side arbiter around it.
 SOURCE_PORT = 12347
 SINK_PORT = 12348
 REMOTE_FIFO = "/tmp/aqara_m1s_sound_fifo"
@@ -28,34 +25,20 @@ REMOTE_APLAY_PID = "/tmp/aqara_m1s_sound_aplay.pid"
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
 
-AUDIO_PREEMPT_COMMAND = (
-    "for p in $(ps w | grep '[n]c -l -p 12346' | awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "
-    "for p in $(ps w | grep '[n]c -l -p 12347' | awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "
-    "for p in $(ps w | grep '[a]play .*aqara_m1s_radio_fifo' | awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "
-    "for p in $(ps w | grep '[a]play .*aqara_m1s_group_fifo' | awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done"
-)
-
 REMOTE_STOP_COMMAND = (
     f"for f in {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID}; do "
         '[ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; '
     "done; "
-    f"for p in $(ps w | grep '[n]c -l -p {SOURCE_PORT}' | awk '{{print $1}}'); do "
-        'kill -9 "$p" 2>/dev/null; done; '
-    f"for p in $(ps w | grep '[n]c -l -p {SINK_PORT}' | awk '{{print $1}}'); do "
-        'kill -9 "$p" 2>/dev/null; done; '
-    f"for p in $(ps w | grep '[a]play .*{REMOTE_FIFO}' | awk '{{print $1}}'); do "
-        'kill -9 "$p" 2>/dev/null; done; '
     f"rm -f {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID} {REMOTE_FIFO}"
 )
 
 
 def remote_start_command(path: str) -> str:
-    """Build the hub-side one-shot source and sink pipeline."""
+    """Build the original known-good hub-side one-shot source/sink pipeline."""
     source = shlex.quote(path)
     return (
-        AUDIO_PREEMPT_COMMAND
-        + "; " + REMOTE_STOP_COMMAND
-        + f"; rm -f {REMOTE_FIFO}; mkfifo {REMOTE_FIFO}; "
+        REMOTE_STOP_COMMAND
+        + f"; mkfifo {REMOTE_FIFO}; "
         + f"nc -l -p {SINK_PORT} < /dev/null > {REMOTE_FIFO} "
           "2>/tmp/aqara_m1s_sound_sink_nc.log & "
         + f"echo $! > {REMOTE_SINK_PID}; "
@@ -72,7 +55,7 @@ def remote_start_command(path: str) -> str:
 
 
 class AqaraM1SSoundPlayer:
-    """Play one hub WAV with absolute priority over that hub's media transport."""
+    """Play one hub WAV, with HA-side priority but the original sound transport."""
 
     def __init__(
         self,
@@ -94,19 +77,14 @@ class AqaraM1SSoundPlayer:
         self._resume_radio = False
 
     async def _begin_priority_locked(self) -> None:
+        """Release group/individual ownership before starting the proven sound path."""
         if self._interruption_active:
             return
-        # First remove this hub from group playback. This frees the physical ALSA
-        # device if the group currently owns it, while every other hub continues.
         await self.group_manager.async_claim_sound(self.entry_id)
-        # Then suspend the individual media transport, preserving its source and
-        # playback intent so it can resume after the notification sound.
         self._resume_radio = await self.radio_player.async_suspend_for_priority_sound()
         self._interruption_active = True
-        # The hub is small and ALSA does not always become reusable immediately
-        # after killing the previous aplay.  Give it a real release window before
-        # creating the priority-sound pipeline.
-        await asyncio.sleep(0.20)
+        # Only a short ALSA settle delay. Do not manipulate hub sound transport here.
+        await asyncio.sleep(0.25)
 
     async def _finish_priority(self) -> None:
         if not self._interruption_active:
@@ -118,29 +96,21 @@ class AqaraM1SSoundPlayer:
             if resume_radio:
                 await self.radio_player.async_resume_after_priority_sound(True)
         finally:
-            # If the individual player resumed it still owns its normal individual
-            # claim; otherwise release the sound claim and let the group rejoin this
-            # hub on its future common clock boundary.
             await self.group_manager.async_release_sound(self.entry_id)
 
     async def async_play(self, path: str, volume: int) -> None:
-        """Play exactly one WAV, preempting media only on this hub."""
+        """Play exactly one WAV using the known-good v0.6.0 transport."""
         safe_volume = max(0, min(100, int(volume))) / 100.0
         async with self._lock:
             await self._stop_locked(restore_previous=False)
             await self._begin_priority_locked()
             try:
-                await asyncio.wait_for(
-                    self.hass.async_add_executor_job(
-                        self.client.run_command,
-                        remote_start_command(path),
-                    ),
-                    timeout=4.0,
+                # Keep this sequence identical to v0.6.0 after focus arbitration.
+                await self.hass.async_add_executor_job(
+                    self.client.run_command,
+                    remote_start_command(path),
                 )
-                # Allow BusyBox nc + FIFO + aplay to settle.  0.20 s was too
-                # aggressive on some M1S units and FFmpeg could connect before
-                # the one-shot listeners were actually ready.
-                await asyncio.sleep(0.45)
+                await asyncio.sleep(0.35)
 
                 ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
                 input_url = f"tcp://{self.client.host}:{SOURCE_PORT}?tcp_nodelay=1"
@@ -168,21 +138,28 @@ class AqaraM1SSoundPlayer:
                     output_url,
                 ]
 
-                process = await asyncio.create_subprocess_exec(
-                    *args,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        *args,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                except FileNotFoundError as err:
+                    await self._remote_stop()
+                    await self._finish_priority()
+                    raise RuntimeError("FFmpeg was not found on Home Assistant") from err
+
                 self._ffmpeg = process
                 self._try_set_ffmpeg_priority(process.pid)
                 self._watch_task = self.hass.async_create_task(self._watch(process))
             except Exception:
-                await self._remote_stop()
-                await self._finish_priority()
+                if self._ffmpeg is None:
+                    await self._remote_stop()
+                    await self._finish_priority()
                 raise
 
     async def async_play_url(self, url: str) -> None:
-        """Play a URL on the hub with the same priority/restore policy."""
+        """Play URL with the same focus policy; does not alter normal WAV transport."""
         async with self._lock:
             await self._stop_locked(restore_previous=False)
             await self._begin_priority_locked()
@@ -264,12 +241,9 @@ class AqaraM1SSoundPlayer:
 
     async def _remote_stop(self) -> None:
         try:
-            await asyncio.wait_for(
-                self.hass.async_add_executor_job(
-                    self.client.run_command,
-                    REMOTE_STOP_COMMAND,
-                ),
-                timeout=3.0,
+            await self.hass.async_add_executor_job(
+                self.client.run_command,
+                REMOTE_STOP_COMMAND,
             )
         except Exception as err:
-            _LOGGER.debug("Could not stop Aqara priority sound pipeline: %s", err)
+            _LOGGER.debug("Could not stop Aqara sound pipeline: %s", err)
