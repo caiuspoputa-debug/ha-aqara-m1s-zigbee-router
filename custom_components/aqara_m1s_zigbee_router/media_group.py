@@ -103,7 +103,7 @@ GROUP_STOP_COMMAND = (
     # integration sound source also listens on 12347 but writes to /dev/null;
     # this test deliberately leaves that process alone.
     f"for p in $(ps w | grep '[n]c -l -p {GROUP_PORT}' | awk '{{print $1}}'); do "
-    f"[ "$(readlink /proc/$p/fd/1 2>/dev/null)" = "{GROUP_FIFO}" ] && "
+    f'[ "$(readlink /proc/$p/fd/1 2>/dev/null)" = "{GROUP_FIFO}" ] && '
     'kill -9 "$p" 2>/dev/null; done; '
     f"for p in $(ps w | grep '[a]play .*{GROUP_FIFO}' | awk '{{print $1}}'); do "
     'kill -9 "$p" 2>/dev/null; done; '
