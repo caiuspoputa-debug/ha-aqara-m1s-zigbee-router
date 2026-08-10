@@ -180,6 +180,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._recovery_pending = False
         self._shutting_down = False
         self._group_manager = None
+        self._priority_sound_suspended = False
         self._attr_device_info = {
             "identifiers": {(DOMAIN, client.host)},
             "name": entry.data.get("name", f"Aqara M1S {client.host}"),
@@ -202,6 +203,61 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     async def _release_individual_audio(self) -> None:
         if self._group_manager is not None:
             await self._group_manager.async_release_individual(self.entry.entry_id)
+
+    async def async_suspend_for_priority_sound(self) -> bool:
+        """Temporarily stop this player's transport without forgetting its source."""
+        if self._shutting_down:
+            return False
+        should_resume = bool(
+            self._resume_after_reconnect
+            and (
+                self._ffmpeg is not None
+                or self._stream_writer is not None
+                or self._attr_state in (MediaPlayerState.PLAYING, MediaPlayerState.BUFFERING)
+            )
+        )
+        if not should_resume:
+            return False
+
+        self._priority_sound_suspended = True
+        for attr in (
+            "_watchdog_restart_task",
+            "_watchdog_stable_task",
+            "_watchdog_slow_retry_task",
+            "_resume_task",
+        ):
+            task = getattr(self, attr, None)
+            setattr(self, attr, None)
+            if task and task is not asyncio.current_task():
+                task.cancel()
+
+        async with self._lock:
+            await self._stop_locked(update_state=True, reason="priority_sound")
+        # Keep _resume_after_reconnect and the individual group claim intact.
+        return True
+
+    async def async_resume_after_priority_sound(self, should_resume: bool) -> None:
+        """Resume media that was temporarily displaced by an integration sound."""
+        self._priority_sound_suspended = False
+        if (
+            not should_resume
+            or self._shutting_down
+            or not self._resume_after_reconnect
+            or not self._media_url
+        ):
+            return
+        try:
+            async with self._lock:
+                if self._ffmpeg is None:
+                    await self._start_locked()
+        except Exception as err:
+            _LOGGER.warning(
+                "Aqara media could not resume after priority sound entity=%s host=%s: %s",
+                self.entity_id,
+                self.client.host,
+                err,
+            )
+            self._schedule_watchdog_restart()
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

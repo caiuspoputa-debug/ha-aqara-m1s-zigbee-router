@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 from contextlib import suppress
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 
@@ -13,7 +14,10 @@ from .client import AqaraM1SClient
 
 _LOGGER = logging.getLogger(__name__)
 
-SOURCE_PORT = 12347
+# 12346 = individual media player, 12347 = media group, 12349 = upload.
+# Priority sounds deliberately use their own pair so they can never collide
+# with the group listener.
+SOURCE_PORT = 12350
 SINK_PORT = 12348
 REMOTE_FIFO = "/tmp/aqara_m1s_sound_fifo"
 REMOTE_SOURCE_PID = "/tmp/aqara_m1s_sound_source_nc.pid"
@@ -26,6 +30,12 @@ REMOTE_STOP_COMMAND = (
     f"for f in {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID}; do "
         '[ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; '
     "done; "
+    f"for p in $(ps w | grep '[n]c -l -p {SOURCE_PORT}' | awk '{{print $1}}'); do "
+        'kill -9 "$p" 2>/dev/null; done; '
+    f"for p in $(ps w | grep '[n]c -l -p {SINK_PORT}' | awk '{{print $1}}'); do "
+        'kill -9 "$p" 2>/dev/null; done; '
+    f"for p in $(ps w | grep '[a]play .*{REMOTE_FIFO}' | awk '{{print $1}}'); do "
+        'kill -9 "$p" 2>/dev/null; done; '
     f"rm -f {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID} {REMOTE_FIFO}"
 )
 
@@ -52,75 +62,131 @@ def remote_start_command(path: str) -> str:
 
 
 class AqaraM1SSoundPlayer:
-    """Play one hub WAV through local FFmpeg volume filtering."""
+    """Play one hub WAV with absolute priority over that hub's media transport."""
 
     def __init__(
         self,
         hass: HomeAssistant,
         client: AqaraM1SClient,
+        entry_id: str,
+        radio_player: Any,
+        group_manager: Any,
     ) -> None:
         self.hass = hass
         self.client = client
+        self.entry_id = entry_id
+        self.radio_player = radio_player
+        self.group_manager = group_manager
         self._lock = asyncio.Lock()
         self._ffmpeg: asyncio.subprocess.Process | None = None
         self._watch_task: asyncio.Task | None = None
+        self._interruption_active = False
+        self._resume_radio = False
+
+    async def _begin_priority_locked(self) -> None:
+        if self._interruption_active:
+            return
+        # First remove this hub from group playback. This frees the physical ALSA
+        # device if the group currently owns it, while every other hub continues.
+        await self.group_manager.async_claim_sound(self.entry_id)
+        # Then suspend the individual media transport, preserving its source and
+        # playback intent so it can resume after the notification sound.
+        self._resume_radio = await self.radio_player.async_suspend_for_priority_sound()
+        self._interruption_active = True
+        # Give killed aplay/nc processes a tiny scheduling window to release ALSA.
+        await asyncio.sleep(0.05)
+
+    async def _finish_priority(self) -> None:
+        if not self._interruption_active:
+            return
+        resume_radio = self._resume_radio
+        self._resume_radio = False
+        self._interruption_active = False
+        try:
+            if resume_radio:
+                await self.radio_player.async_resume_after_priority_sound(True)
+        finally:
+            # If the individual player resumed it still owns its normal individual
+            # claim; otherwise release the sound claim and let the group rejoin this
+            # hub on its future common clock boundary.
+            await self.group_manager.async_release_sound(self.entry_id)
 
     async def async_play(self, path: str, volume: int) -> None:
-        """Play exactly one WAV with software volume and no LED effect."""
+        """Play exactly one WAV, preempting media only on this hub."""
         safe_volume = max(0, min(100, int(volume))) / 100.0
         async with self._lock:
-            await self._stop_locked()
-            await self.hass.async_add_executor_job(
-                self.client.run_command,
-                remote_start_command(path),
-            )
-            await asyncio.sleep(0.35)
-
-            ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-            input_url = f"tcp://{self.client.host}:{SOURCE_PORT}?tcp_nodelay=1"
-            output_url = f"tcp://{self.client.host}:{SINK_PORT}?tcp_nodelay=1"
-            args = [
-                ffmpeg,
-                "-nostdin",
-                "-hide_banner",
-                "-loglevel",
-                "warning",
-                "-re",
-                "-i",
-                input_url,
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "32000",
-                "-filter:a",
-                f"volume={safe_volume:.4f}",
-                "-c:a",
-                "pcm_s32le",
-                "-f",
-                "s32le",
-                output_url,
-            ]
-
+            await self._stop_locked(restore_previous=False)
+            await self._begin_priority_locked()
             try:
+                await asyncio.wait_for(
+                    self.hass.async_add_executor_job(
+                        self.client.run_command,
+                        remote_start_command(path),
+                    ),
+                    timeout=4.0,
+                )
+                await asyncio.sleep(0.20)
+
+                ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+                input_url = f"tcp://{self.client.host}:{SOURCE_PORT}?tcp_nodelay=1"
+                output_url = f"tcp://{self.client.host}:{SINK_PORT}?tcp_nodelay=1"
+                args = [
+                    ffmpeg,
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "warning",
+                    "-re",
+                    "-i",
+                    input_url,
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "32000",
+                    "-filter:a",
+                    f"volume={safe_volume:.4f}",
+                    "-c:a",
+                    "pcm_s32le",
+                    "-f",
+                    "s32le",
+                    output_url,
+                ]
+
                 process = await asyncio.create_subprocess_exec(
                     *args,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.PIPE,
                 )
-            except FileNotFoundError as err:
+                self._ffmpeg = process
+                self._try_set_ffmpeg_priority(process.pid)
+                self._watch_task = self.hass.async_create_task(self._watch(process))
+            except Exception:
                 await self._remote_stop()
-                raise RuntimeError("FFmpeg was not found on Home Assistant") from err
+                await self._finish_priority()
+                raise
 
-            self._ffmpeg = process
-            self._try_set_ffmpeg_priority(process.pid)
-            self._watch_task = self.hass.async_create_task(
-                self._watch(process)
-            )
+    async def async_play_url(self, url: str) -> None:
+        """Play a URL on the hub with the same priority/restore policy."""
+        async with self._lock:
+            await self._stop_locked(restore_previous=False)
+            await self._begin_priority_locked()
+        quoted = shlex.quote(url)
+        command = (
+            f"wget -q {quoted} -O /tmp/ha_audio.wav "
+            "&& (aplay -x 1 /tmp/ha_audio.wav & "
+            "APID=$!; renice -3 -p \"$APID\" "
+            ">/tmp/aqara_m1s_play_url_aplay_renice.log 2>&1 || true; "
+            "wait \"$APID\")"
+        )
+        try:
+            await self.hass.async_add_executor_job(self.client.run_command, command)
+        finally:
+            async with self._lock:
+                await self._finish_priority()
 
     @staticmethod
     def _try_set_ffmpeg_priority(pid: int) -> bool:
-        """Best-effort normal Linux niceness; never fail sound playback."""
         try:
             os.setpriority(os.PRIO_PROCESS, pid, FFMPEG_NICE_TARGET)
             return os.getpriority(os.PRIO_PROCESS, pid) <= FFMPEG_NICE_TARGET
@@ -147,25 +213,29 @@ class AqaraM1SSoundPlayer:
         self._watch_task = None
         if process.returncode not in (0, -15):
             _LOGGER.warning(
-                "Aqara M1S sound FFmpeg exited with code %s: %s",
+                "Aqara M1S priority sound FFmpeg exited with code %s: %s",
                 process.returncode,
                 stderr.decode(errors="ignore")[-1000:],
             )
         elif process.returncode == 0:
-            # Let aplay drain its final buffered PCM frames before cleanup.
             await asyncio.sleep(0.2)
         await self._remote_stop()
+        async with self._lock:
+            await self._finish_priority()
 
     async def async_stop(self) -> None:
         async with self._lock:
-            await self._stop_locked()
+            await self._stop_locked(restore_previous=True)
 
-    async def _stop_locked(self) -> None:
+    async def _stop_locked(self, *, restore_previous: bool) -> None:
         process = self._ffmpeg
         self._ffmpeg = None
-        if self._watch_task:
-            self._watch_task.cancel()
-            self._watch_task = None
+        watch_task = self._watch_task
+        self._watch_task = None
+        if watch_task and watch_task is not asyncio.current_task():
+            watch_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await watch_task
         if process is not None and process.returncode is None:
             process.terminate()
             with suppress(asyncio.TimeoutError):
@@ -174,12 +244,17 @@ class AqaraM1SSoundPlayer:
                 process.kill()
                 await process.wait()
         await self._remote_stop()
+        if restore_previous:
+            await self._finish_priority()
 
     async def _remote_stop(self) -> None:
         try:
-            await self.hass.async_add_executor_job(
-                self.client.run_command,
-                REMOTE_STOP_COMMAND,
+            await asyncio.wait_for(
+                self.hass.async_add_executor_job(
+                    self.client.run_command,
+                    REMOTE_STOP_COMMAND,
+                ),
+                timeout=3.0,
             )
         except Exception as err:
-            _LOGGER.debug("Could not stop Aqara sound pipeline: %s", err)
+            _LOGGER.debug("Could not stop Aqara priority sound pipeline: %s", err)

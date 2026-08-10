@@ -104,9 +104,6 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][
         entry.entry_id
     ] = 50
-    hass.data[DOMAIN][DATA_SOUND_PLAYERS][entry.entry_id] = AqaraM1SSoundPlayer(
-        hass, client
-    )
     radio_player = AqaraM1SRadioPlayer(
         hass, entry, client, coordinator
     )
@@ -119,6 +116,9 @@ async def async_setup_entry(
         coordinator,
     )
     radio_player.set_group_manager(group_manager)
+    hass.data[DOMAIN][DATA_SOUND_PLAYERS][entry.entry_id] = AqaraM1SSoundPlayer(
+        hass, client, entry.entry_id, radio_player, group_manager
+    )
 
     device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(
@@ -189,8 +189,13 @@ async def async_setup_entry(
         return entry.entry_id, hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
 
     async def play_url(call: ServiceCall) -> None:
-        _, selected_client = await _get_target(call)
+        selected_entry_id, selected_client = await _get_target(call)
         url = call.data["url"]
+        sound_player = hass.data[DOMAIN][DATA_SOUND_PLAYERS].get(selected_entry_id)
+        if sound_player is not None:
+            await sound_player.async_play_url(url)
+            return
+        # Fallback for an ad-hoc host that is not a configured integration entry.
         command = (
             f'wget -q "{url}" '
             "-O /tmp/ha_audio.wav "
@@ -199,10 +204,7 @@ async def async_setup_entry(
             ">/tmp/aqara_m1s_play_url_aplay_renice.log 2>&1 || true; "
             "wait \"$APID\")"
         )
-        await hass.async_add_executor_job(
-            selected_client.run_command,
-            command,
-        )
+        await hass.async_add_executor_job(selected_client.run_command, command)
 
     async def play_sound(
         call: ServiceCall,

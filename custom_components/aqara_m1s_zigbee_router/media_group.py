@@ -152,6 +152,7 @@ class AqaraM1SMediaGroupManager:
         self.hass = hass
         self.members: dict[str, GroupMember] = {}
         self.individual_intent: set[str] = set()
+        self.sound_intent: set[str] = set()
         self.entity: AqaraM1SMediaGroup | None = None
         self.media_entity_added = False
 
@@ -223,6 +224,7 @@ class AqaraM1SMediaGroupManager:
         )
         self.members.pop(entry_id, None)
         self.individual_intent.discard(entry_id)
+        self.sound_intent.discard(entry_id)
         self._signal_update()
 
     def set_selected(self, entry_id: str, selected: bool) -> None:
@@ -232,6 +234,8 @@ class AqaraM1SMediaGroupManager:
         member.selected = selected
         if not selected:
             member.state = "excluded"
+        elif entry_id in self.sound_intent:
+            member.state = "playing_sound"
         elif entry_id in self.individual_intent:
             member.state = "playing_individual"
         else:
@@ -270,21 +274,58 @@ class AqaraM1SMediaGroupManager:
         await self._detach_member(
             entry_id,
             stop_remote=had_group_session,
-            new_state="playing_individual",
+            new_state=("playing_sound" if entry_id in self.sound_intent else "playing_individual"),
         )
         self._signal_update()
+
+    async def async_claim_sound(self, entry_id: str) -> None:
+        """Give an integration sound absolute priority on exactly one hub."""
+        member = self.members.get(entry_id)
+        had_group_session = bool(
+            member
+            and (
+                member.writer is not None
+                or (self.desired_playing and member.state in ("playing_group", "waiting_for_sync"))
+            )
+        )
+        self.sound_intent.add(entry_id)
+        await self._detach_member(
+            entry_id,
+            stop_remote=had_group_session,
+            new_state="playing_sound",
+        )
+        self._signal_update()
+
+    async def async_release_sound(self, entry_id: str) -> None:
+        """Release a priority sound and let the previous owner resume/rejoin."""
+        self.sound_intent.discard(entry_id)
+        member = self.members.get(entry_id)
+        if member is not None:
+            if entry_id in self.individual_intent:
+                member.state = "playing_individual"
+            elif member.selected:
+                member.state = "waiting_for_sync" if self.desired_playing else "idle"
+                member.last_prepare_attempt_monotonic = 0.0
+                member.prepare_failures = 0
+                member.next_prepare_monotonic = 0.0
+        self._signal_update()
+        if self.desired_playing:
+            self._ensure_reconcile_task()
+
+    def member_is_sound(self, entry_id: str) -> bool:
+        return entry_id in self.sound_intent
 
     def mark_individual_intent(self, entry_id: str, active: bool) -> None:
         if active:
             self.individual_intent.add(entry_id)
             member = self.members.get(entry_id)
-            if member and member.writer is None:
+            if member and member.writer is None and entry_id not in self.sound_intent:
                 member.state = "playing_individual"
         else:
             self.individual_intent.discard(entry_id)
             member = self.members.get(entry_id)
             if member and member.selected:
-                member.state = "waiting_for_sync"
+                member.state = "playing_sound" if entry_id in self.sound_intent else "waiting_for_sync"
                 member.last_prepare_attempt_monotonic = 0.0
                 member.prepare_failures = 0
                 member.next_prepare_monotonic = 0.0
@@ -305,6 +346,7 @@ class AqaraM1SMediaGroupManager:
         return (
             member.selected
             and member.entry_id not in self.individual_intent
+            and member.entry_id not in self.sound_intent
             and self._member_online(member)
         )
 
@@ -355,6 +397,7 @@ class AqaraM1SMediaGroupManager:
             },
             "offline_hubs": sorted(by_state.get("offline", [])),
             "individual_hubs": sorted(by_state.get("playing_individual", [])),
+            "priority_sound_hubs": sorted(by_state.get("playing_sound", [])),
             "excluded_hubs": sorted(by_state.get("excluded", [])),
             "last_failure": self._last_failure,
             "watchdog_restart_attempts": self._watchdog_attempts,
@@ -889,6 +932,8 @@ class AqaraM1SMediaGroupManager:
     def _idle_member_state(self, member: GroupMember) -> str:
         if not member.selected:
             return "excluded"
+        if member.entry_id in self.sound_intent:
+            return "playing_sound"
         if member.entry_id in self.individual_intent:
             return "playing_individual"
         if not self._member_online(member):
