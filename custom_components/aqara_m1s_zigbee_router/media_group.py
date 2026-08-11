@@ -63,10 +63,13 @@ QUEUE_CHUNKS = int(QUEUE_SECONDS / CHUNK_SECONDS)
 QUEUE_TRIM_KEEP_SECONDS = 0.50
 QUEUE_TRIM_KEEP_CHUNKS = max(2, int(QUEUE_TRIM_KEEP_SECONDS / CHUNK_SECONDS))
 WARMUP_MAX_BACKLOG_CHUNKS = 3  # <=60 ms queued after 500 ms warm-up
-RECONCILE_SECONDS = 2.0
+RECONCILE_SECONDS = 1.0
 RETURN_STABILIZE_SECONDS = 0.0
-MEMBER_RETRY_BASE_SECONDS = 0.0
-MEMBER_RETRY_MAX_SECONDS = 0.0
+# Local receiver recovery. A member that was already in the running cohort may
+# rebuild only its own nc/aplay/TCP chain without restarting healthy members.
+LOCAL_RECOVERY_DELAY_SECONDS = 0.35
+MEMBER_RETRY_BASE_SECONDS = 1.0
+MEMBER_RETRY_MAX_SECONDS = 15.0
 PCM_HEALTH_CHECK_SECONDS = 2.0
 PCM_STALL_TIMEOUT = 12.0
 PCM_START_GRACE_SECONDS = 8.0
@@ -339,7 +342,7 @@ class AqaraM1SMediaGroupManager:
         self._signal_update()
 
     async def async_release_sound(self, entry_id: str) -> None:
-        """Release sound focus; resynchronise the fixed cohort if needed."""
+        """Release sound focus and locally rejoin only the interrupted hub."""
         resume_group = entry_id in self._sound_group_resume
         self._sound_group_resume.discard(entry_id)
         self.sound_intent.discard(entry_id)
@@ -347,41 +350,14 @@ class AqaraM1SMediaGroupManager:
         if member is not None:
             if entry_id in self.individual_intent:
                 member.state = "playing_individual"
+            elif member.selected and resume_group and self.desired_playing and self.media_url:
+                member.state = "recovering_after_sound"
+                member.prepare_failures = 0
+                member.next_prepare_monotonic = time.monotonic() + LOCAL_RECOVERY_DELAY_SECONDS
+                self._ensure_reconcile_task()
             elif member.selected:
-                member.state = "waiting_for_next_cohort" if self.desired_playing else "idle"
+                member.state = "idle"
         self._signal_update()
-        if resume_group and self.desired_playing and self.media_url:
-            self._schedule_restart_after_priority_sound()
-
-    def _schedule_restart_after_priority_sound(self) -> None:
-        """One controlled restart restores the interrupted hub in sync."""
-        task = self._sound_return_restart_task
-        if task is not None and not task.done():
-            return
-
-        async def _runner() -> None:
-            try:
-                await asyncio.sleep(0.25)
-                async with self._lock:
-                    if self.desired_playing and self.media_url:
-                        await self._restart_stream_locked(
-                            reason="priority_sound_return"
-                        )
-                self._signal_update()
-            except asyncio.CancelledError:
-                raise
-            except Exception as err:
-                self._last_failure = f"priority_sound_return:{err}"
-                _LOGGER.warning(
-                    "M1S group could not rebuild cohort after priority sound: %s", err
-                )
-            finally:
-                if self._sound_return_restart_task is asyncio.current_task():
-                    self._sound_return_restart_task = None
-
-        self._sound_return_restart_task = self.hass.async_create_background_task(
-            _runner(), "aqara_m1s_group_priority_sound_return"
-        )
 
     def member_is_sound(self, entry_id: str) -> bool:
         return entry_id in self.sound_intent
@@ -472,7 +448,10 @@ class AqaraM1SMediaGroupManager:
             "excluded_hubs": sorted(by_state.get("excluded", [])),
             "last_failure": self._last_failure,
             "watchdog_restart_attempts": self._watchdog_attempts,
-            "rejoin_sync_mode": "disabled_until_next_play",
+            "rejoin_sync_mode": "local_recovery_only_no_manual_late_join",
+            "recovering_hubs": sorted(
+                by_state.get("recovering", []) + by_state.get("recovering_after_sound", [])
+            ),
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
@@ -1210,6 +1189,39 @@ class AqaraM1SMediaGroupManager:
         if delay > 0:
             await asyncio.sleep(delay)
 
+    def _schedule_recover_member(self, member: GroupMember, *, reason: str) -> None:
+        """Recover one failed cohort receiver without touching healthy members."""
+        if member.detaching:
+            return
+        member.detaching = True
+        member.last_error = reason
+        member.state = "recovering"
+
+        async def _runner() -> None:
+            try:
+                await self._detach_member(
+                    member.entry_id,
+                    stop_remote=True,
+                    new_state=("offline" if not self._member_online(member) else "recovering"),
+                )
+                if (
+                    self.desired_playing
+                    and self.media_url
+                    and self._eligible(member)
+                    and member.entry_id not in self.sound_intent
+                    and member.entry_id not in self.individual_intent
+                ):
+                    member.state = "recovering"
+                    member.next_prepare_monotonic = time.monotonic() + LOCAL_RECOVERY_DELAY_SECONDS
+                    self._ensure_reconcile_task()
+            finally:
+                member.detaching = False
+                self._signal_update()
+
+        self.hass.async_create_background_task(
+            _runner(), f"aqara_m1s_group_recover_{member.entry_id}"
+        )
+
     def _schedule_isolate_member(self, member: GroupMember, *, reason: str) -> None:
         if member.detaching:
             return
@@ -1330,9 +1342,11 @@ class AqaraM1SMediaGroupManager:
             member.detaching = False
             member.lag_since_monotonic = None
             member.lag_peak_chunks = 0
-            member.join_at_sequence = None
-            member.state = "prepared"
+            member.join_at_sequence = self._sequence if (not initial and self.ffmpeg_running) else None
+            member.state = "playing_group" if (not initial and self.ffmpeg_running) else "prepared"
             member.last_error = None
+            member.prepare_failures = 0
+            member.next_prepare_monotonic = 0.0
             member.writer_task = self.hass.async_create_background_task(
                 self._member_writer_loop(member, generation),
                 f"aqara_m1s_group_writer_{member.entry_id}",
@@ -1344,7 +1358,13 @@ class AqaraM1SMediaGroupManager:
             raise
         except Exception as err:
             member.last_error = str(err)
-            member.state = "offline" if not self._member_online(member) else "waiting_for_next_play"
+            if not self._member_online(member):
+                member.state = "offline"
+            elif not initial and self.desired_playing and self._eligible(member):
+                member.state = "recovering"
+                self._mark_prepare_result(member, False)
+            else:
+                member.state = "waiting_for_next_play"
             _LOGGER.warning("M1S group skipped %s: %s", member.name, err)
             # Precise cleanup cannot kill the priority-sound source on 12347.
             with suppress(Exception):
@@ -1421,7 +1441,7 @@ class AqaraM1SMediaGroupManager:
             _LOGGER.warning("M1S group member writer failed %s: %s", member.name, err)
         finally:
             if member.generation == generation and not member.detaching:
-                self._schedule_isolate_member(
+                self._schedule_recover_member(
                     member, reason=member.last_error or "writer_ended"
                 )
 
@@ -1714,9 +1734,13 @@ class AqaraM1SMediaGroupManager:
                             member, reason="member_no_longer_eligible"
                         )
                     elif member.writer is None and self._eligible(member):
-                        # Deliberately no late join. Preserve the fixed-cohort
-                        # synchronisation policy during healthy playback.
-                        if member.state not in (
+                        # Manual late join remains disabled. Only a receiver that
+                        # was already part of this session (or was interrupted by
+                        # a priority sound) may rebuild itself locally.
+                        if member.state in ("recovering", "recovering_after_sound"):
+                            if time.monotonic() >= member.next_prepare_monotonic:
+                                self._schedule_member_prepare(member, initial=False)
+                        elif member.state not in (
                             "dropped_until_next_play",
                             "waiting_for_next_play",
                             "playing_sound",

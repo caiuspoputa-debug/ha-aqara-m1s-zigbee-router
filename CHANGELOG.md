@@ -1,3 +1,12 @@
+# v0.8.3 TEST — Local Receiver Recovery
+
+- Keeps the stable v0.8.1 fanout transport.
+- A failed group receiver now enters `recovering` and rebuilds only its own `nc`/`aplay`/TCP chain.
+- Healthy group members are not stopped when one hub drops.
+- A hub returning after a priority integration sound uses the same local recovery path instead of restarting the whole group.
+- Manual late join remains disabled; only members that were interrupted during the current session auto-rejoin.
+- Individual media player and sound-player transport are unchanged.
+
 ## 0.7.4 TEST - Radio Browser metadata on individual players
 - Individual M1S media players now cache Media Browser labels exactly like Media Group.
 - Radio Browser station names are exposed as `media_title` / restored as `last_media_title`.
