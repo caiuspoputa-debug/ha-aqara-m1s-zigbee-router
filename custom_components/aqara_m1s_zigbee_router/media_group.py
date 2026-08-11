@@ -42,8 +42,10 @@ CHUNK_SECONDS = 0.02
 CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
 # Stable-cohort multi-room transport.  Every Play creates one fixed cohort of
 # receivers.  Audio starts only after the cohort has been warmed with the same
-# paced silence.  A slow receiver is isolated and is NOT rejoined mid-stream;
-# this prevents echo, duplicate/stale receiver races and repeated resync loops.
+# paced silence.  A single 20 ms playout clock now sits between FFmpeg and every
+# member, so source gaps become silence and post-stall bursts cannot overflow
+# individual queues.  A genuinely slow receiver is still isolated and is NOT
+# rejoined mid-stream; this preserves the fixed-cohort phase relationship.
 SYNC_LEAD_SECONDS = 0.0  # compatibility attribute; late join is intentionally disabled
 SYNC_LEAD_CHUNKS = 0
 JOIN_BOUNDARY_SECONDS = 0.0
@@ -53,8 +55,17 @@ INITIAL_PREROLL_CHUNKS = max(1, round(INITIAL_PREROLL_SECONDS / CHUNK_SECONDS))
 START_COHORT_GRACE_SECONDS = 3.0
 START_FIRST_MEMBER_TIMEOUT = START_COHORT_GRACE_SECONDS
 PLAYOUT_START_MARGIN_SECONDS = 0.0
-PLAYOUT_REBASE_THRESHOLD_SECONDS = 0.0
+PLAYOUT_REBASE_THRESHOLD_SECONDS = 0.08
 PLAYOUT_REBASE_MARGIN_SECONDS = 0.0
+# Keep FFmpeg/source jitter away from the hub writers.  The source reader may
+# arrive in bursts or pause briefly; one paced broadcaster is the only task
+# allowed to feed the fixed cohort.  Empty source slots become silence instead
+# of starving aplay, while buffered source frames can never be dumped as a
+# catch-up burst after a stall.
+SOURCE_JITTER_QUEUE_SECONDS = 0.60
+SOURCE_JITTER_QUEUE_CHUNKS = max(4, int(SOURCE_JITTER_QUEUE_SECONDS / CHUNK_SECONDS))
+SOURCE_UNDERFLOW_LOG_AFTER_SECONDS = 0.10
+SOURCE_UNDERFLOW_LOG_AFTER_CHUNKS = max(1, int(SOURCE_UNDERFLOW_LOG_AFTER_SECONDS / CHUNK_SECONDS))
 QUEUE_SECONDS = 1.0
 QUEUE_CHUNKS = int(QUEUE_SECONDS / CHUNK_SECONDS)
 WARMUP_MAX_BACKLOG_CHUNKS = 3  # <=60 ms queued after 500 ms warm-up
@@ -191,6 +202,8 @@ class AqaraM1SMediaGroupManager:
 
         self.ffmpeg: asyncio.subprocess.Process | None = None
         self.broadcast_task: asyncio.Task | None = None
+        self.source_reader_task: asyncio.Task | None = None
+        self.source_queue: asyncio.Queue[bytes] | None = None
         self.stderr_task: asyncio.Task | None = None
         self.reconcile_task: asyncio.Task | None = None
         self.watchdog_task: asyncio.Task | None = None
@@ -231,6 +244,10 @@ class AqaraM1SMediaGroupManager:
         self._transport_self_heal_count = 0
         self._diag_source_gap_max_ms = 0.0
         self._diag_source_gap_count = 0
+        self._source_underflow_count = 0
+        self._source_underflow_streak = 0
+        self._source_queue_peak_chunks = 0
+        self._broadcast_rebase_count = 0
         self._diag_event_loop_lag_max_ms = 0.0
         self._diag_event_loop_lag_count = 0
         self._diag_events: list[str] = []
@@ -442,8 +459,8 @@ class AqaraM1SMediaGroupManager:
         if self._stream_started_monotonic is not None:
             timestamp = round(self._sequence * CHUNK_SECONDS, 3)
         return {
-            "transport": "stable_fixed_cohort_pcm",
-            "architecture": "fixed_start_cohort_common_silence_preroll",
+            "transport": "stable_fixed_cohort_paced_pcm",
+            "architecture": "fixed_start_cohort_paced_source_guard",
             "stream_sequence": self._sequence,
             "stream_timestamp_seconds": timestamp,
             "sync_lead_seconds": SYNC_LEAD_SECONDS,
@@ -513,6 +530,16 @@ class AqaraM1SMediaGroupManager:
             },
             "pcm_diag_source_gap_max_ms": round(self._diag_source_gap_max_ms, 1),
             "pcm_diag_source_gap_count": self._diag_source_gap_count,
+            "pcm_source_jitter_buffer_ms": int(SOURCE_JITTER_QUEUE_SECONDS * 1000),
+            "pcm_source_queue_depth_ms": (
+                int(self.source_queue.qsize() * CHUNK_SECONDS * 1000)
+                if self.source_queue is not None
+                else 0
+            ),
+            "pcm_source_queue_peak_ms": int(self._source_queue_peak_chunks * CHUNK_SECONDS * 1000),
+            "pcm_source_underflow_count": self._source_underflow_count,
+            "pcm_broadcast_rebase_count": self._broadcast_rebase_count,
+            "pcm_broadcast_policy": "paced_20ms_silence_on_source_gap_no_catchup_burst",
             "pcm_diag_event_loop_lag_max_ms": round(self._diag_event_loop_lag_max_ms, 1),
             "pcm_diag_event_loop_lag_count": self._diag_event_loop_lag_count,
             "pcm_diag_member_feed_gap_max_ms": {
@@ -1055,6 +1082,10 @@ class AqaraM1SMediaGroupManager:
         self._no_active_since_monotonic = None
         self._diag_source_gap_max_ms = 0.0
         self._diag_source_gap_count = 0
+        self._source_underflow_count = 0
+        self._source_underflow_streak = 0
+        self._source_queue_peak_chunks = 0
+        self._broadcast_rebase_count = 0
         self._diag_event_loop_lag_max_ms = 0.0
         self._diag_event_loop_lag_count = 0
         self._diag_events.clear()
@@ -1069,6 +1100,11 @@ class AqaraM1SMediaGroupManager:
             member.diag_queue_peak_chunks = 0
             member.diag_last_log_monotonic = 0.0
 
+        self.source_queue = asyncio.Queue(maxsize=SOURCE_JITTER_QUEUE_CHUNKS)
+        self.source_reader_task = self.hass.async_create_background_task(
+            self._source_reader_loop(process, generation, self.source_queue),
+            "aqara_m1s_group_pcm_source_reader",
+        )
         self.broadcast_task = self.hass.async_create_background_task(
             self._broadcast_loop(process, generation),
             "aqara_m1s_group_pcm_broadcast",
@@ -1119,12 +1155,13 @@ class AqaraM1SMediaGroupManager:
         self._no_active_since_monotonic = None
         self._generation += 1
         current = asyncio.current_task()
-        for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task", "diag_task"):
+        for attr in ("broadcast_task", "source_reader_task", "stderr_task", "stable_task", "health_task", "diag_task"):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task and task is not current:
                 await self._cancel_task(task)
 
+        self.source_queue = None
         process = self.ffmpeg
         self.ffmpeg = None
         self._ffmpeg_nice_applied = False
@@ -1480,9 +1517,18 @@ class AqaraM1SMediaGroupManager:
                     member, reason=f"queue_full:{int(QUEUE_SECONDS * 1000)}ms"
                 )
 
-    async def _broadcast_loop(
-        self, process: asyncio.subprocess.Process, generation: int
+    async def _source_reader_loop(
+        self,
+        process: asyncio.subprocess.Process,
+        generation: int,
+        source_queue: asyncio.Queue[bytes],
     ) -> None:
+        """Read FFmpeg independently from the 20 ms cohort playout clock.
+
+        This task is deliberately allowed to block on the bounded jitter queue.
+        That back-pressures FFmpeg instead of letting a post-stall burst reach
+        the per-hub queues.
+        """
         if process.stdout is None:
             return
         try:
@@ -1495,8 +1541,8 @@ class AqaraM1SMediaGroupManager:
                             "M1S group source ended with partial PCM frame bytes=%s",
                             len(err.partial),
                         )
-                    break
-                chunk = self._apply_live_pcm_gain(raw_chunk)
+                    return
+
                 now = time.monotonic()
                 if self._last_pcm_monotonic is not None:
                     source_gap_ms = (now - self._last_pcm_monotonic) * 1000.0
@@ -1510,11 +1556,81 @@ class AqaraM1SMediaGroupManager:
                             f"gap={source_gap_ms:.1f}ms sequence={self._sequence} "
                             f"active={len(self.active_members)}",
                         )
+                self._last_pcm_monotonic = now
+                await source_queue.put(raw_chunk)
+                self._source_queue_peak_chunks = max(
+                    self._source_queue_peak_chunks, source_queue.qsize()
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._last_failure = str(err)
+            _LOGGER.warning("M1S group source reader failed: %s", err)
+
+    async def _broadcast_loop(
+        self, process: asyncio.subprocess.Process, generation: int
+    ) -> None:
+        """Feed every hub from one strict 20 ms playout clock.
+
+        Source stalls are filled with silence so hub-side aplay is not starved.
+        If Home Assistant itself wakes up late, the clock is rebased instead of
+        emitting a catch-up burst that would overflow member queues.
+        """
+        try:
+            while generation == self._generation and self.desired_playing:
+                before_rebases = self._clock_rebase_count
+                await self._pace_frame(self._sequence)
+                if self._clock_rebase_count != before_rebases:
+                    self._broadcast_rebase_count += 1
+                    self._diag_record(
+                        "broadcast_rebase",
+                        f"sequence={self._sequence} active={len(self.active_members)}",
+                    )
+
+                source_queue = self.source_queue
+                raw_chunk: bytes | None = None
+                if source_queue is not None:
+                    try:
+                        raw_chunk = source_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        raw_chunk = None
+
+                if raw_chunk is None:
+                    reader_done = (
+                        self.source_reader_task is None
+                        or self.source_reader_task.done()
+                    )
+                    if reader_done and process.returncode is not None:
+                        break
+                    self._source_underflow_count += 1
+                    self._source_underflow_streak += 1
+                    if (
+                        self._source_underflow_streak == SOURCE_UNDERFLOW_LOG_AFTER_CHUNKS
+                        or self._source_underflow_streak
+                        % max(1, int(1.0 / CHUNK_SECONDS))
+                        == 0
+                    ):
+                        self._diag_record(
+                            "source_underflow_silence",
+                            f"streak={self._source_underflow_streak * CHUNK_SECONDS:.2f}s "
+                            f"sequence={self._sequence} active={len(self.active_members)}",
+                        )
+                    chunk = SILENCE_CHUNK
+                else:
+                    if self._source_underflow_streak >= SOURCE_UNDERFLOW_LOG_AFTER_CHUNKS:
+                        self._diag_record(
+                            "source_recovered",
+                            f"after={self._source_underflow_streak * CHUNK_SECONDS:.2f}s "
+                            f"sequence={self._sequence}",
+                            warning=False,
+                        )
+                    self._source_underflow_streak = 0
+                    chunk = self._apply_live_pcm_gain(raw_chunk)
+
                 sequence = self._sequence
                 self._sequence += 1
-                self._last_pcm_monotonic = now
                 await self._fanout_frame(chunk, sequence)
-                # Let every per-hub writer run before requesting the next frame.
+                # Give per-hub writer tasks one scheduling point each frame.
                 await asyncio.sleep(0)
         except asyncio.CancelledError:
             raise

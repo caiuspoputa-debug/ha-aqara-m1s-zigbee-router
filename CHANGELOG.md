@@ -1,3 +1,13 @@
+# v0.7.5 TEST - Paced PCM Source Guard
+
+- Keeps the v0.7.4 fixed-cohort start/synchronisation policy and radio metadata.
+- Splits FFmpeg reading from cohort playout with a bounded shared PCM jitter queue.
+- Feeds the cohort from one strict 20 ms monotonic clock.
+- Replaces short source gaps with silence so hub-side `aplay` stays fed.
+- Rebases after scheduler stalls instead of dumping catch-up PCM bursts into member queues.
+- Adds source-underflow, source-buffer and broadcaster-rebase diagnostics.
+- Slow-member isolation remains per-member; there is still no risky late join during normal playback.
+
 ## 0.7.4 TEST - Radio Browser metadata on individual players
 - Individual M1S media players now cache Media Browser labels exactly like Media Group.
 - Radio Browser station names are exposed as `media_title` / restored as `last_media_title`.
