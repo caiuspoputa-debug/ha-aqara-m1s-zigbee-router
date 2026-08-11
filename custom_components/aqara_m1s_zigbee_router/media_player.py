@@ -154,6 +154,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._fine_volume_trim_percent = 0.0
         self._attr_media_content_type = MediaType.MUSIC
         self._attr_media_title = None
+        # Cache labels returned by Home Assistant's Media Browser.  Radio Browser
+        # play_media calls often contain only the media-source id, so keep the
+        # user-facing station name here exactly like the group player does.
+        self._browse_title_cache: dict[str, str] = {}
         self._media_url: str | None = None
         self._resume_media_id: str | None = None
         self._resume_media_type: str = MediaType.MUSIC
@@ -386,17 +390,93 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 update_state=False, reason="integration_shutdown"
             )
 
+    def _remember_browse_titles(self, root: Any) -> None:
+        """Cache Media Browser labels for later play_media calls."""
+        stack = [root]
+        seen = 0
+        while stack and seen < 5000:
+            item = stack.pop()
+            seen += 1
+            if isinstance(item, dict):
+                media_id = item.get("media_content_id")
+                title = item.get("title")
+                children = item.get("children") or []
+            else:
+                media_id = getattr(item, "media_content_id", None)
+                title = getattr(item, "title", None)
+                children = getattr(item, "children", None) or []
+            if media_id and title:
+                self._browse_title_cache[str(media_id)] = str(title)
+            with suppress(TypeError):
+                stack.extend(children)
+        if len(self._browse_title_cache) > 10000:
+            self._browse_title_cache = dict(
+                list(self._browse_title_cache.items())[-5000:]
+            )
+
+    def _media_title_for(
+        self, media_id: str, resolved_id: str, kwargs: dict[str, Any]
+    ) -> str:
+        """Choose the best user-facing label for the selected media."""
+        extra = kwargs.get("extra") or {}
+        candidates: list[Any] = []
+        if isinstance(extra, dict):
+            candidates.extend(
+                (extra.get("title"), extra.get("media_title"), extra.get("name"))
+            )
+        metadata = kwargs.get("metadata") or {}
+        if isinstance(metadata, dict):
+            candidates.extend(
+                (
+                    metadata.get("title"),
+                    metadata.get("media_title"),
+                    metadata.get("name"),
+                )
+            )
+        candidates.extend(
+            (
+                kwargs.get("title"),
+                kwargs.get("media_title"),
+                self._browse_title_cache.get(media_id),
+                self._browse_title_cache.get(resolved_id),
+            )
+        )
+        for candidate in candidates:
+            if candidate and str(candidate).strip():
+                return str(candidate).strip()
+
+        # Direct stream URLs do not carry a Media Browser label. Keep a useful
+        # fallback rather than overwriting a previous station name.
+        try:
+            parts = urlsplit(resolved_id)
+            filename = parts.path.rsplit("/", 1)[-1]
+            stem = (
+                filename.rsplit(".", 1)[0]
+                .replace("_", " ")
+                .replace("-", " ")
+                .strip()
+            )
+            if stem and len(stem) <= 80:
+                return stem
+            if parts.hostname:
+                return parts.hostname
+        except Exception:
+            pass
+        return "Radio stream"
+
     async def async_browse_media(
         self,
         media_content_type: str | None = None,
         media_content_id: str | None = None,
     ):
         """Expose Home Assistant audio sources in the native media browser."""
-        return await media_source.async_browse_media(
+        result = await media_source.async_browse_media(
             self.hass,
             media_content_id,
             content_filter=lambda item: item.media_content_type.startswith("audio/"),
         )
+        self._remember_browse_titles(result)
+        return result
 
     async def async_play_media(
         self,
@@ -422,10 +502,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             allow_relative_url=False,
         )
 
-        title = None
-        extra = kwargs.get("extra") or {}
-        if isinstance(extra, dict):
-            title = extra.get("title")
+        title = self._media_title_for(
+            original_media_id, resolved_media_id, kwargs
+        )
 
         async with self._lock:
             self._resume_media_id = original_media_id
@@ -433,7 +512,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._media_url = media_url
             self._attr_media_content_id = original_media_id
             self._attr_media_content_type = self._resume_media_type
-            self._attr_media_title = title or self._attr_media_title or "Radio stream"
+            self._attr_media_title = title
             self._resume_after_reconnect = True
             await self._start_locked()
 

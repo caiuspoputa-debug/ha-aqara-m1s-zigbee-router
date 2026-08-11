@@ -1,3 +1,8 @@
+## 0.7.4 TEST - Radio Browser metadata on individual players
+- Individual M1S media players now cache Media Browser labels exactly like Media Group.
+- Radio Browser station names are exposed as `media_title` / restored as `last_media_title`.
+- PCM diagnostics and stable-cohort synchronization are unchanged from 0.7.3.
+
 # v0.7.3 TEST PCM DIAGNOSTICS
 
 - Diagnostic-only build based on v0.7.2; group synchronization and transport thresholds are unchanged.
