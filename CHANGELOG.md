@@ -1,3 +1,10 @@
+# v0.7.2 TEST — STABLE COHORT SELF-HEAL + MEDIA TITLE
+
+- Keeps the v0.7.1 fixed-cohort synchronization timing unchanged.
+- Detects a lost whole cohort (FFmpeg alive but zero active receivers) and performs one bounded self-heal instead of buffering forever.
+- Play/restart paths now have hard deadlines; repeated failure returns the group to IDLE instead of requiring a Home Assistant restart.
+- Media Browser titles are cached and exposed as `media_title`; direct URLs get a readable fallback.
+
 # v0.7.0 TEST STABLE COHORT
 
 - Replaced late-join/clock-rebase group logic with a fixed startup cohort.

@@ -84,6 +84,10 @@ MEMBER_CONNECT_TIMEOUT = 0.50
 MEMBER_CONNECT_RETRY_DELAY = 0.10
 WRITER_CLOSE_TIMEOUT = 0.75
 TASK_CANCEL_TIMEOUT = 1.0
+# Transport liveness guards. These do not change cohort timing/synchronisation.
+NO_ACTIVE_MEMBERS_TIMEOUT = 8.0
+USER_PLAY_HARD_TIMEOUT = 14.0
+WATCHDOG_RESTART_HARD_TIMEOUT = 14.0
 PERIODIC_RECEIVER_RESYNC_ENABLED = False
 PERIODIC_RECEIVER_RESYNC_SECONDS = 10 * 60.0
 PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS = 2
@@ -207,6 +211,9 @@ class AqaraM1SMediaGroupManager:
         self._accept_initial_prepares = False
         self._sound_group_resume: set[str] = set()
         self._sound_return_restart_task: asyncio.Task | None = None
+        self._no_active_since_monotonic: float | None = None
+        self._transport_self_heal_count = 0
+        self._browse_title_cache: dict[str, str] = {}
 
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
         existing = self.members.get(entry_id)
@@ -452,6 +459,13 @@ class AqaraM1SMediaGroupManager:
             "return_stabilize_seconds": RETURN_STABILIZE_SECONDS,
             "pcm_health_check_seconds": PCM_HEALTH_CHECK_SECONDS,
             "pcm_stall_timeout_seconds": PCM_STALL_TIMEOUT,
+            "no_active_members_timeout_seconds": NO_ACTIVE_MEMBERS_TIMEOUT,
+            "no_active_members_age_seconds": (
+                None
+                if self._no_active_since_monotonic is None
+                else round(time.monotonic() - self._no_active_since_monotonic, 1)
+            ),
+            "transport_self_heal_count": self._transport_self_heal_count,
             "pcm_age_seconds": (
                 round(time.monotonic() - self._last_pcm_monotonic, 3)
                 if self._last_pcm_monotonic is not None
@@ -492,6 +506,46 @@ class AqaraM1SMediaGroupManager:
             "aplay_nice_target": APLAY_NICE_TARGET,
         }
 
+    async def _bounded_restart(self, *, reason: str, allow_hard_reset_retry: bool) -> bool:
+        """Restart the transport with a hard deadline so HA controls never wedge."""
+
+        async def _run() -> None:
+            async with self._lock:
+                await self._restart_stream_locked(reason=reason)
+
+        try:
+            await asyncio.wait_for(_run(), timeout=USER_PLAY_HARD_TIMEOUT)
+            return True
+        except asyncio.TimeoutError:
+            self._last_failure = f"{reason}_timeout"
+            _LOGGER.error(
+                "M1S group %s exceeded %.1fs; hard-resetting transport",
+                reason,
+                USER_PLAY_HARD_TIMEOUT,
+            )
+
+        await self.async_force_reset(reason=f"{reason}_timeout")
+        if not allow_hard_reset_retry or not self.media_url:
+            return False
+
+        # The hard reset deliberately clears desired_playing. Restore the user's
+        # intent and attempt one clean bounded start. A second timeout returns the
+        # entity to IDLE instead of leaving it buffering indefinitely.
+        self.desired_playing = True
+        try:
+            await asyncio.wait_for(_run(), timeout=USER_PLAY_HARD_TIMEOUT)
+            self._transport_self_heal_count += 1
+            return True
+        except asyncio.TimeoutError:
+            self._last_failure = f"{reason}_retry_timeout"
+            _LOGGER.error(
+                "M1S group %s retry also exceeded %.1fs; returning to idle",
+                reason,
+                USER_PLAY_HARD_TIMEOUT,
+            )
+            await self.async_force_reset(reason=f"{reason}_retry_timeout")
+            return False
+
     async def async_start(
         self,
         media_url: str,
@@ -499,25 +553,27 @@ class AqaraM1SMediaGroupManager:
         media_type: str,
         title: str | None,
     ) -> None:
-        async with self._lock:
-            self.media_url = media_url
-            self.media_id = media_id
-            self.media_type = media_type or MediaType.MUSIC
-            self.media_title = title
-            self.desired_playing = True
-            self._watchdog_attempts = 0
-            await self._restart_stream_locked(reason="user_play")
-        self._ensure_reconcile_task()
+        self.media_url = media_url
+        self.media_id = media_id
+        self.media_type = media_type or MediaType.MUSIC
+        self.media_title = title
+        self.desired_playing = True
+        self._watchdog_attempts = 0
+        self._no_active_since_monotonic = None
+        await self._bounded_restart(reason="user_play", allow_hard_reset_retry=True)
+        if self.desired_playing:
+            self._ensure_reconcile_task()
         self._signal_update()
 
     async def async_resume(self) -> None:
         if not self.media_url:
             return
         self.desired_playing = True
-        async with self._lock:
-            if not self.ffmpeg_running:
-                await self._restart_stream_locked(reason="resume")
-        self._ensure_reconcile_task()
+        self._no_active_since_monotonic = None
+        if not self.ffmpeg_running:
+            await self._bounded_restart(reason="resume", allow_hard_reset_retry=True)
+        if self.desired_playing:
+            self._ensure_reconcile_task()
         self._signal_update()
 
     async def async_stop(self, *, clear_intent: bool = True) -> None:
@@ -563,6 +619,7 @@ class AqaraM1SMediaGroupManager:
         self._broadcast_pause_requested.clear()
         self._broadcast_paused.clear()
         self._playout_epoch_monotonic = None
+        self._no_active_since_monotonic = None
         self._generation += 1
 
         try:
@@ -903,6 +960,7 @@ class AqaraM1SMediaGroupManager:
         self._stream_started_monotonic = time.monotonic()
         self._playout_epoch_monotonic = None
         self._last_pcm_monotonic = None
+        self._no_active_since_monotonic = None
         for member in self.active_members:
             member.join_at_sequence = None
             member.state = "playing_group"
@@ -950,6 +1008,7 @@ class AqaraM1SMediaGroupManager:
         self._broadcast_pause_requested.clear()
         self._broadcast_paused.clear()
         self._playout_epoch_monotonic = None
+        self._no_active_since_monotonic = None
         self._generation += 1
         current = asyncio.current_task()
         for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task"):
@@ -1460,14 +1519,41 @@ class AqaraM1SMediaGroupManager:
                             member, reason="member_no_longer_eligible"
                         )
                     elif member.writer is None and self._eligible(member):
-                        # Deliberately no late join.  Preserve explicit diagnostic
-                        # state instead of repeatedly starting nc/aplay.
+                        # Deliberately no late join. Preserve the fixed-cohort
+                        # synchronisation policy during healthy playback.
                         if member.state not in (
                             "dropped_until_next_play",
                             "waiting_for_next_play",
                             "playing_sound",
                         ):
                             member.state = "waiting_for_next_play"
+
+                # If every receiver disappears while FFmpeg is still healthy,
+                # the old code could remain BUFFERING forever because PCM itself
+                # continued to advance. This is the one case where the whole
+                # transport is already lost, so a fresh cohort cannot disturb any
+                # audible member. Trigger one bounded watchdog recovery.
+                if self.ffmpeg_running and not self.active_members and not self.sound_intent:
+                    now = time.monotonic()
+                    if self._no_active_since_monotonic is None:
+                        self._no_active_since_monotonic = now
+                    elif now - self._no_active_since_monotonic >= NO_ACTIVE_MEMBERS_TIMEOUT:
+                        self._last_failure = "no_active_group_members"
+                        _LOGGER.warning(
+                            "M1S group has no active receivers for %.1fs; restarting transport",
+                            now - self._no_active_since_monotonic,
+                        )
+                        process = self.ffmpeg
+                        if process is not None and process.returncode is None:
+                            with suppress(ProcessLookupError):
+                                process.terminate()
+                        self._no_active_since_monotonic = None
+                        self._transport_self_heal_count += 1
+                        self._signal_update()
+                        return
+                else:
+                    self._no_active_since_monotonic = None
+
                 self._signal_update()
         except asyncio.CancelledError:
             raise
@@ -1547,8 +1633,21 @@ class AqaraM1SMediaGroupManager:
                 WATCHDOG_MAX_RESTARTS,
                 self._last_failure or "unknown",
             )
-            async with self._lock:
-                await self._restart_stream_locked(reason="watchdog")
+            async def _run_restart() -> None:
+                async with self._lock:
+                    await self._restart_stream_locked(reason="watchdog")
+
+            try:
+                await asyncio.wait_for(
+                    _run_restart(), timeout=WATCHDOG_RESTART_HARD_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.error(
+                    "M1S group watchdog restart exceeded %.1fs; forcing idle reset",
+                    WATCHDOG_RESTART_HARD_TIMEOUT,
+                )
+                await self.async_force_reset(reason="watchdog_restart_timeout")
+                return
             self._ensure_reconcile_task()
             await asyncio.sleep(0.5)
             if self.desired_playing and not self.ffmpeg_running:
@@ -1660,6 +1759,63 @@ class AqaraM1SMediaGroupManager:
             return urlunsplit((parts.scheme, host, parts.path, "", ""))
         except Exception:
             return "<unparseable>"
+
+
+    def remember_browse_titles(self, root: Any) -> None:
+        """Cache Media Browser labels so Play can expose the selected station name."""
+        stack = [root]
+        seen = 0
+        while stack and seen < 5000:
+            item = stack.pop()
+            seen += 1
+            if isinstance(item, dict):
+                media_id = item.get("media_content_id")
+                title = item.get("title")
+                children = item.get("children") or []
+            else:
+                media_id = getattr(item, "media_content_id", None)
+                title = getattr(item, "title", None)
+                children = getattr(item, "children", None) or []
+            if media_id and title:
+                self._browse_title_cache[str(media_id)] = str(title)
+            with suppress(TypeError):
+                stack.extend(children)
+        if len(self._browse_title_cache) > 10000:
+            # Keep recent browser navigation only; titles are convenience metadata.
+            self._browse_title_cache = dict(list(self._browse_title_cache.items())[-5000:])
+
+    def media_title_for(self, media_id: str, resolved_id: str, kwargs: dict[str, Any]) -> str:
+        """Choose the best available user-facing label for the selected media."""
+        extra = kwargs.get("extra") or {}
+        candidates: list[Any] = []
+        if isinstance(extra, dict):
+            candidates.extend((extra.get("title"), extra.get("media_title"), extra.get("name")))
+        metadata = kwargs.get("metadata") or {}
+        if isinstance(metadata, dict):
+            candidates.extend((metadata.get("title"), metadata.get("media_title"), metadata.get("name")))
+        candidates.extend((
+            kwargs.get("title"),
+            kwargs.get("media_title"),
+            self._browse_title_cache.get(media_id),
+            self._browse_title_cache.get(resolved_id),
+        ))
+        for candidate in candidates:
+            if candidate and str(candidate).strip():
+                return str(candidate).strip()
+
+        # Direct stream URLs do not carry Home Assistant browser labels. Produce
+        # a harmless readable fallback rather than the generic "M1S group stream".
+        try:
+            parts = urlsplit(resolved_id)
+            filename = parts.path.rsplit("/", 1)[-1]
+            stem = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").strip()
+            if stem and len(stem) <= 80:
+                return stem
+            if parts.hostname:
+                return parts.hostname
+        except Exception:
+            pass
+        return "M1S Media Group"
 
 
 class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
@@ -1792,11 +1948,13 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
     async def async_browse_media(
         self, media_content_type: str | None = None, media_content_id: str | None = None
     ):
-        return await media_source.async_browse_media(
+        result = await media_source.async_browse_media(
             self.hass,
             media_content_id,
             content_filter=lambda item: item.media_content_type.startswith("audio/"),
         )
+        self.manager.remember_browse_titles(result)
+        return result
 
     async def async_play_media(self, media_type: str, media_id: str, **kwargs: Any) -> None:
         original = media_id
@@ -1809,10 +1967,9 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
         url = async_process_play_media_url(
             self.hass, resolved_id, allow_relative_url=False
         )
-        extra = kwargs.get("extra") or {}
-        title = extra.get("title") if isinstance(extra, dict) else None
+        title = self.manager.media_title_for(original, resolved_id, kwargs)
         await self.manager.async_start(
-            url, original, media_type or MediaType.MUSIC, title or "M1S group stream"
+            url, original, media_type or MediaType.MUSIC, title
         )
         self.async_write_ha_state()
 
