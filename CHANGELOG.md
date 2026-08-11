@@ -1,3 +1,10 @@
+# v0.7.3 TEST PCM DIAGNOSTICS
+
+- Diagnostic-only build based on v0.7.2; group synchronization and transport thresholds are unchanged.
+- Logs source PCM gaps, Home Assistant event-loop stalls, per-hub feed gaps, slow TCP `writer.drain()`, and queue-full events.
+- Exposes rolling diagnostic counters/maxima and the last 16 anomaly events as Media Group state attributes (`pcm_diag_*`).
+- Intended to identify whether an underrun starts at FFmpeg/source, HA scheduling, or the TCP/hub writer path.
+
 # v0.7.2 TEST — STABLE COHORT SELF-HEAL + MEDIA TITLE
 
 - Keeps the v0.7.1 fixed-cohort synchronization timing unchanged.

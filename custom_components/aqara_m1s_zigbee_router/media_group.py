@@ -84,6 +84,14 @@ MEMBER_CONNECT_TIMEOUT = 0.50
 MEMBER_CONNECT_RETRY_DELAY = 0.10
 WRITER_CLOSE_TIMEOUT = 0.75
 TASK_CANCEL_TIMEOUT = 1.0
+# Diagnostic-only thresholds. These DO NOT change buffering, timing, cohort
+# membership, writer limits, or any synchronisation behavior.
+PCM_DIAG_SOURCE_GAP_WARN_MS = 80.0
+PCM_DIAG_MEMBER_FEED_GAP_WARN_MS = 80.0
+PCM_DIAG_DRAIN_WARN_MS = 80.0
+PCM_DIAG_EVENT_LOOP_INTERVAL_SECONDS = 0.10
+PCM_DIAG_EVENT_LOOP_WARN_MS = 100.0
+PCM_DIAG_EVENT_HISTORY = 16
 # Transport liveness guards. These do not change cohort timing/synchronisation.
 NO_ACTIVE_MEMBERS_TIMEOUT = 8.0
 USER_PLAY_HARD_TIMEOUT = 14.0
@@ -153,6 +161,13 @@ class GroupMember:
     lag_since_monotonic: float | None = None
     lag_peak_chunks: int = 0
     detaching: bool = False
+    diag_last_feed_monotonic: float | None = None
+    diag_feed_gap_max_ms: float = 0.0
+    diag_feed_gap_count: int = 0
+    diag_drain_max_ms: float = 0.0
+    diag_slow_drain_count: int = 0
+    diag_queue_peak_chunks: int = 0
+    diag_last_log_monotonic: float = 0.0
 
 
 class AqaraM1SMediaGroupManager:
@@ -181,6 +196,7 @@ class AqaraM1SMediaGroupManager:
         self.watchdog_task: asyncio.Task | None = None
         self.stable_task: asyncio.Task | None = None
         self.health_task: asyncio.Task | None = None
+        self.diag_task: asyncio.Task | None = None
         self.resync_task: asyncio.Task | None = None
         self.periodic_receiver_resync_task: asyncio.Task | None = None
         self.slow_retry_task: asyncio.Task | None = None
@@ -213,6 +229,11 @@ class AqaraM1SMediaGroupManager:
         self._sound_return_restart_task: asyncio.Task | None = None
         self._no_active_since_monotonic: float | None = None
         self._transport_self_heal_count = 0
+        self._diag_source_gap_max_ms = 0.0
+        self._diag_source_gap_count = 0
+        self._diag_event_loop_lag_max_ms = 0.0
+        self._diag_event_loop_lag_count = 0
+        self._diag_events: list[str] = []
         self._browse_title_cache: dict[str, str] = {}
 
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
@@ -490,6 +511,36 @@ class AqaraM1SMediaGroupManager:
                 for member in self.active_members
                 if member.lag_since_monotonic is not None
             },
+            "pcm_diag_source_gap_max_ms": round(self._diag_source_gap_max_ms, 1),
+            "pcm_diag_source_gap_count": self._diag_source_gap_count,
+            "pcm_diag_event_loop_lag_max_ms": round(self._diag_event_loop_lag_max_ms, 1),
+            "pcm_diag_event_loop_lag_count": self._diag_event_loop_lag_count,
+            "pcm_diag_member_feed_gap_max_ms": {
+                member.name: round(member.diag_feed_gap_max_ms, 1)
+                for member in self.members.values()
+                if member.diag_feed_gap_max_ms > 0
+            },
+            "pcm_diag_member_feed_gap_count": {
+                member.name: member.diag_feed_gap_count
+                for member in self.members.values()
+                if member.diag_feed_gap_count > 0
+            },
+            "pcm_diag_member_drain_max_ms": {
+                member.name: round(member.diag_drain_max_ms, 1)
+                for member in self.members.values()
+                if member.diag_drain_max_ms > 0
+            },
+            "pcm_diag_member_slow_drain_count": {
+                member.name: member.diag_slow_drain_count
+                for member in self.members.values()
+                if member.diag_slow_drain_count > 0
+            },
+            "pcm_diag_member_queue_peak_ms": {
+                member.name: int(member.diag_queue_peak_chunks * CHUNK_SECONDS * 1000)
+                for member in self.members.values()
+                if member.diag_queue_peak_chunks > 0
+            },
+            "pcm_diag_last_events": list(self._diag_events),
             "sync_policy": "fixed_cohort_isolate_member_no_late_join",
             "queue_overflow_policy": "detach_only_slow_member",
             "writer_high_water_ms": int(WRITER_HIGH_WATER_BYTES / (PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES) * 1000),
@@ -505,6 +556,47 @@ class AqaraM1SMediaGroupManager:
             "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
             "aplay_nice_target": APLAY_NICE_TARGET,
         }
+
+    def _diag_record(self, kind: str, detail: str, *, warning: bool = True) -> None:
+        """Keep a short in-entity history and emit one HA log line per anomaly."""
+        event = f"{time.strftime('%H:%M:%S')} {kind} {detail}"
+        self._diag_events.append(event)
+        if len(self._diag_events) > PCM_DIAG_EVENT_HISTORY:
+            del self._diag_events[:-PCM_DIAG_EVENT_HISTORY]
+        if warning:
+            _LOGGER.warning("M1S PCM DIAG %s %s", kind, detail)
+        else:
+            _LOGGER.info("M1S PCM DIAG %s %s", kind, detail)
+        self._signal_update()
+
+    async def _diagnostic_event_loop_watch(self, generation: int) -> None:
+        """Measure HA event-loop scheduling stalls without touching audio timing."""
+        last = time.monotonic()
+        try:
+            while generation == self._generation and self.desired_playing:
+                await asyncio.sleep(PCM_DIAG_EVENT_LOOP_INTERVAL_SECONDS)
+                now = time.monotonic()
+                lag_ms = max(
+                    0.0,
+                    (now - last - PCM_DIAG_EVENT_LOOP_INTERVAL_SECONDS) * 1000.0,
+                )
+                last = now
+                self._diag_event_loop_lag_max_ms = max(
+                    self._diag_event_loop_lag_max_ms, lag_ms
+                )
+                if lag_ms >= PCM_DIAG_EVENT_LOOP_WARN_MS:
+                    self._diag_event_loop_lag_count += 1
+                    self._diag_record(
+                        "event_loop_lag",
+                        f"lag={lag_ms:.1f}ms sequence={self._sequence}",
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            _LOGGER.debug("M1S PCM diagnostic heartbeat failed: %s", err)
+        finally:
+            if self.diag_task is asyncio.current_task():
+                self.diag_task = None
 
     async def _bounded_restart(self, *, reason: str, allow_hard_reset_retry: bool) -> bool:
         """Restart the transport with a hard deadline so HA controls never wedge."""
@@ -961,9 +1053,21 @@ class AqaraM1SMediaGroupManager:
         self._playout_epoch_monotonic = None
         self._last_pcm_monotonic = None
         self._no_active_since_monotonic = None
+        self._diag_source_gap_max_ms = 0.0
+        self._diag_source_gap_count = 0
+        self._diag_event_loop_lag_max_ms = 0.0
+        self._diag_event_loop_lag_count = 0
+        self._diag_events.clear()
         for member in self.active_members:
             member.join_at_sequence = None
             member.state = "playing_group"
+            member.diag_last_feed_monotonic = None
+            member.diag_feed_gap_max_ms = 0.0
+            member.diag_feed_gap_count = 0
+            member.diag_drain_max_ms = 0.0
+            member.diag_slow_drain_count = 0
+            member.diag_queue_peak_chunks = 0
+            member.diag_last_log_monotonic = 0.0
 
         self.broadcast_task = self.hass.async_create_background_task(
             self._broadcast_loop(process, generation),
@@ -980,6 +1084,10 @@ class AqaraM1SMediaGroupManager:
         self.health_task = self.hass.async_create_background_task(
             self._pcm_health_watch(process, generation),
             "aqara_m1s_group_pcm_health_watch",
+        )
+        self.diag_task = self.hass.async_create_background_task(
+            self._diagnostic_event_loop_watch(generation),
+            "aqara_m1s_group_pcm_diag_heartbeat",
         )
         _LOGGER.info(
             "M1S stable cohort source started pid=%s source=%s members=%s",
@@ -1011,7 +1119,7 @@ class AqaraM1SMediaGroupManager:
         self._no_active_since_monotonic = None
         self._generation += 1
         current = asyncio.current_task()
-        for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task"):
+        for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task", "diag_task"):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task and task is not current:
@@ -1248,8 +1356,48 @@ class AqaraM1SMediaGroupManager:
                 chunk = await queue.get()
                 if chunk is None:
                     return
+                now = time.monotonic()
+                if member.diag_last_feed_monotonic is not None:
+                    feed_gap_ms = (now - member.diag_last_feed_monotonic) * 1000.0
+                    member.diag_feed_gap_max_ms = max(
+                        member.diag_feed_gap_max_ms, feed_gap_ms
+                    )
+                    if feed_gap_ms >= PCM_DIAG_MEMBER_FEED_GAP_WARN_MS:
+                        member.diag_feed_gap_count += 1
+                        # Rate-limit repeated warnings caused by one continuous stall.
+                        if now - member.diag_last_log_monotonic >= 0.25:
+                            member.diag_last_log_monotonic = now
+                            self._diag_record(
+                                "member_feed_gap",
+                                f"hub={member.name} gap={feed_gap_ms:.1f}ms "
+                                f"queue={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
+                            )
+                member.diag_last_feed_monotonic = now
+                member.diag_queue_peak_chunks = max(
+                    member.diag_queue_peak_chunks, queue.qsize()
+                )
                 writer.write(chunk)
+                drain_started = time.monotonic()
                 await asyncio.wait_for(writer.drain(), timeout=WRITER_DRAIN_TIMEOUT)
+                drain_ms = (time.monotonic() - drain_started) * 1000.0
+                member.diag_drain_max_ms = max(member.diag_drain_max_ms, drain_ms)
+                if drain_ms >= PCM_DIAG_DRAIN_WARN_MS:
+                    member.diag_slow_drain_count += 1
+                    now2 = time.monotonic()
+                    if now2 - member.diag_last_log_monotonic >= 0.25:
+                        member.diag_last_log_monotonic = now2
+                        transport = getattr(writer, "transport", None)
+                        write_buffer = (
+                            transport.get_write_buffer_size()
+                            if transport is not None
+                            else -1
+                        )
+                        self._diag_record(
+                            "slow_drain",
+                            f"hub={member.name} drain={drain_ms:.1f}ms "
+                            f"write_buffer={write_buffer}B "
+                            f"queue={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
+                        )
         except asyncio.CancelledError:
             raise
         except Exception as err:
@@ -1313,9 +1461,16 @@ class AqaraM1SMediaGroupManager:
                 continue
             depth = queue.qsize()
             member.lag_peak_chunks = max(member.lag_peak_chunks, depth)
+            member.diag_queue_peak_chunks = max(member.diag_queue_peak_chunks, depth)
             try:
                 queue.put_nowait(chunk)
             except asyncio.QueueFull:
+                self._diag_record(
+                    "queue_full",
+                    f"hub={member.name} backlog={int(QUEUE_SECONDS * 1000)}ms "
+                    f"feed_gap_max={member.diag_feed_gap_max_ms:.1f}ms "
+                    f"drain_max={member.diag_drain_max_ms:.1f}ms",
+                )
                 _LOGGER.warning(
                     "M1S group dropping slow cohort member after %sms backlog: %s",
                     int(QUEUE_SECONDS * 1000),
@@ -1342,9 +1497,22 @@ class AqaraM1SMediaGroupManager:
                         )
                     break
                 chunk = self._apply_live_pcm_gain(raw_chunk)
+                now = time.monotonic()
+                if self._last_pcm_monotonic is not None:
+                    source_gap_ms = (now - self._last_pcm_monotonic) * 1000.0
+                    self._diag_source_gap_max_ms = max(
+                        self._diag_source_gap_max_ms, source_gap_ms
+                    )
+                    if source_gap_ms >= PCM_DIAG_SOURCE_GAP_WARN_MS:
+                        self._diag_source_gap_count += 1
+                        self._diag_record(
+                            "source_gap",
+                            f"gap={source_gap_ms:.1f}ms sequence={self._sequence} "
+                            f"active={len(self.active_members)}",
+                        )
                 sequence = self._sequence
                 self._sequence += 1
-                self._last_pcm_monotonic = time.monotonic()
+                self._last_pcm_monotonic = now
                 await self._fanout_frame(chunk, sequence)
                 # Let every per-hub writer run before requesting the next frame.
                 await asyncio.sleep(0)
