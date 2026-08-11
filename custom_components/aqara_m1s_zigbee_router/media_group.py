@@ -40,10 +40,10 @@ PCM_CHANNELS = 1
 PCM_SAMPLE_BYTES = 4
 CHUNK_SECONDS = 0.02
 CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
-# Stable-master multi-room transport. Every Play still creates one fixed cohort
-# (preserving the good phase alignment from 0.7.x), but source timing is now
-# decoupled through one bounded jitter buffer and one monotonic playout clock.
-# A transient backlog trims stale PCM instead of ejecting the hub.
+# Stable-cohort multi-room transport.  Every Play creates one fixed cohort of
+# receivers.  Audio starts only after the cohort has been warmed with the same
+# paced silence.  A slow receiver is isolated and is NOT rejoined mid-stream;
+# this prevents echo, duplicate/stale receiver races and repeated resync loops.
 SYNC_LEAD_SECONDS = 0.0  # compatibility attribute; late join is intentionally disabled
 SYNC_LEAD_CHUNKS = 0
 JOIN_BOUNDARY_SECONDS = 0.0
@@ -55,20 +55,13 @@ START_FIRST_MEMBER_TIMEOUT = START_COHORT_GRACE_SECONDS
 PLAYOUT_START_MARGIN_SECONDS = 0.0
 PLAYOUT_REBASE_THRESHOLD_SECONDS = 0.0
 PLAYOUT_REBASE_MARGIN_SECONDS = 0.0
-# v0.8 transport: one bounded master jitter buffer feeds one 20 ms playout
-# clock. Source bursts/reconnect catch-up can no longer flood per-hub queues.
-MASTER_BUFFER_SECONDS = 8.0
-MASTER_BUFFER_CHUNKS = int(MASTER_BUFFER_SECONDS / CHUNK_SECONDS)
-MASTER_PREBUFFER_SECONDS = 4.0
-MASTER_PREBUFFER_CHUNKS = int(MASTER_PREBUFFER_SECONDS / CHUNK_SECONDS)
-MASTER_MIN_START_SECONDS = 1.0
-MASTER_MIN_START_CHUNKS = int(MASTER_MIN_START_SECONDS / CHUNK_SECONDS)
-MASTER_PREBUFFER_MAX_WAIT = 8.0
-PLAYOUT_LATE_REBASE_SECONDS = 0.12
-QUEUE_SECONDS = 1.0
+QUEUE_SECONDS = 4.0
 QUEUE_CHUNKS = int(QUEUE_SECONDS / CHUNK_SECONDS)
-MEMBER_CATCHUP_THRESHOLD_CHUNKS = int(0.30 / CHUNK_SECONDS)
-MEMBER_CATCHUP_TARGET_CHUNKS = int(0.06 / CHUNK_SECONDS)
+# A temporarily slow hub is allowed to recover without being expelled.  If its
+# private queue ever fills, stale PCM is trimmed and the hub catches up to the
+# current shared timeline instead of being detached from the group.
+QUEUE_TRIM_KEEP_SECONDS = 0.50
+QUEUE_TRIM_KEEP_CHUNKS = max(2, int(QUEUE_TRIM_KEEP_SECONDS / CHUNK_SECONDS))
 WARMUP_MAX_BACKLOG_CHUNKS = 3  # <=60 ms queued after 500 ms warm-up
 RECONCILE_SECONDS = 2.0
 RETURN_STABILIZE_SECONDS = 0.0
@@ -77,11 +70,13 @@ MEMBER_RETRY_MAX_SECONDS = 0.0
 PCM_HEALTH_CHECK_SECONDS = 2.0
 PCM_STALL_TIMEOUT = 12.0
 PCM_START_GRACE_SECONDS = 8.0
-WRITER_DRAIN_TIMEOUT = 5.0
-WRITER_HIGH_WATER_BYTES = CHUNK_BYTES * 16
-WRITER_LOW_WATER_BYTES = CHUNK_BYTES * 4
-SOCKET_SNDBUF_BYTES = CHUNK_BYTES * 16
-SOURCE_RESTART_DELAY = 1.0
+WRITER_DRAIN_TIMEOUT = 4.0
+# Do not call drain() for every 20 ms frame.  Let asyncio/TCP absorb normal
+# scheduler and Wi-Fi jitter and only back-pressure a writer when its own
+# socket buffer is genuinely building up.
+WRITER_HIGH_WATER_BYTES = CHUNK_BYTES * 32   # ~640 ms
+WRITER_LOW_WATER_BYTES = CHUNK_BYTES * 8     # ~160 ms
+SOCKET_SNDBUF_BYTES = CHUNK_BYTES * 64       # ~1.28 s
 WATCHDOG_RESTART_DELAY = 4.0
 WATCHDOG_MAX_RESTARTS = 1
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
@@ -180,7 +175,6 @@ class GroupMember:
     diag_drain_max_ms: float = 0.0
     diag_slow_drain_count: int = 0
     diag_queue_peak_chunks: int = 0
-    diag_stale_drop_chunks: int = 0
     diag_last_log_monotonic: float = 0.0
 
 
@@ -204,11 +198,8 @@ class AqaraM1SMediaGroupManager:
         self.desired_playing = False
 
         self.ffmpeg: asyncio.subprocess.Process | None = None
-        self.source_task: asyncio.Task | None = None
-        self.source_restart_task: asyncio.Task | None = None
         self.broadcast_task: asyncio.Task | None = None
         self.stderr_task: asyncio.Task | None = None
-        self.source_queue: asyncio.Queue[bytes] | None = None
         self.reconcile_task: asyncio.Task | None = None
         self.watchdog_task: asyncio.Task | None = None
         self.stable_task: asyncio.Task | None = None
@@ -219,7 +210,6 @@ class AqaraM1SMediaGroupManager:
         self.slow_retry_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._generation = 0
-        self._source_serial = 0
         self._sequence = 0
         self._stream_started_monotonic: float | None = None
         self._playout_epoch_monotonic: float | None = None
@@ -247,17 +237,12 @@ class AqaraM1SMediaGroupManager:
         self._sound_return_restart_task: asyncio.Task | None = None
         self._no_active_since_monotonic: float | None = None
         self._transport_self_heal_count = 0
-        self._source_restart_count = 0
-        self._master_silence_frames = 0
-        self._master_prebuffer_started_monotonic: float | None = None
-        self._master_audio_started = False
         self._diag_source_gap_max_ms = 0.0
         self._diag_source_gap_count = 0
         self._diag_event_loop_lag_max_ms = 0.0
         self._diag_event_loop_lag_count = 0
         self._diag_events: list[str] = []
         self._browse_title_cache: dict[str, str] = {}
-        self._source_lock = asyncio.Lock()
 
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
         existing = self.members.get(entry_id)
@@ -453,8 +438,8 @@ class AqaraM1SMediaGroupManager:
     def group_state(self) -> MediaPlayerState:
         if not self.desired_playing:
             return MediaPlayerState.IDLE
-        if self.active_members and self.broadcast_task is not None and not self.broadcast_task.done():
-            return MediaPlayerState.PLAYING if self._master_audio_started else MediaPlayerState.BUFFERING
+        if self.ffmpeg_running and self.active_members:
+            return MediaPlayerState.PLAYING
         return MediaPlayerState.BUFFERING
 
     def attributes(self) -> dict[str, Any]:
@@ -465,8 +450,8 @@ class AqaraM1SMediaGroupManager:
         if self._stream_started_monotonic is not None:
             timestamp = round(self._sequence * CHUNK_SECONDS, 3)
         return {
-            "transport": "stable_master_buffer_pcm",
-            "architecture": "shared_source_jitter_buffer_paced_fixed_cohort",
+            "transport": "stable_fixed_cohort_elastic_fanout",
+            "architecture": "fixed_cohort_conditional_tcp_backpressure",
             "stream_sequence": self._sequence,
             "stream_timestamp_seconds": timestamp,
             "sync_lead_seconds": SYNC_LEAD_SECONDS,
@@ -487,7 +472,7 @@ class AqaraM1SMediaGroupManager:
             "excluded_hubs": sorted(by_state.get("excluded", [])),
             "last_failure": self._last_failure,
             "watchdog_restart_attempts": self._watchdog_attempts,
-            "rejoin_sync_mode": "hard_disconnect_waits_for_next_play; priority_sound_rebuild_preserved",
+            "rejoin_sync_mode": "disabled_until_next_play",
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
@@ -510,15 +495,6 @@ class AqaraM1SMediaGroupManager:
                 else round(time.monotonic() - self._no_active_since_monotonic, 1)
             ),
             "transport_self_heal_count": self._transport_self_heal_count,
-            "source_restart_count": self._source_restart_count,
-            "master_buffer_target_seconds": MASTER_PREBUFFER_SECONDS,
-            "master_buffer_max_seconds": MASTER_BUFFER_SECONDS,
-            "master_buffer_depth_ms": (
-                int(self.source_queue.qsize() * CHUNK_SECONDS * 1000)
-                if self.source_queue is not None else 0
-            ),
-            "master_audio_started": self._master_audio_started,
-            "master_silence_inserted_ms": int(self._master_silence_frames * CHUNK_SECONDS * 1000),
             "pcm_age_seconds": (
                 round(time.monotonic() - self._last_pcm_monotonic, 3)
                 if self._last_pcm_monotonic is not None
@@ -572,14 +548,9 @@ class AqaraM1SMediaGroupManager:
                 for member in self.members.values()
                 if member.diag_queue_peak_chunks > 0
             },
-            "pcm_diag_member_stale_drop_ms": {
-                member.name: int(member.diag_stale_drop_chunks * CHUNK_SECONDS * 1000)
-                for member in self.members.values()
-                if member.diag_stale_drop_chunks > 0
-            },
             "pcm_diag_last_events": list(self._diag_events),
-            "sync_policy": "fixed_cohort_paced_playout_drop_stale_not_member",
-            "queue_overflow_policy": "drop_stale_frames_keep_member",
+            "sync_policy": "fixed_cohort_isolate_member_no_late_join",
+            "queue_overflow_policy": "detach_only_slow_member",
             "writer_high_water_ms": int(WRITER_HIGH_WATER_BYTES / (PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES) * 1000),
             "periodic_receiver_resync_enabled": PERIODIC_RECEIVER_RESYNC_ENABLED,
             "volume_apply_mode": "live_pcm_software_gain",
@@ -781,8 +752,6 @@ class AqaraM1SMediaGroupManager:
             # tasks, kill FFmpeg, and forget every queue/socket reference.
             current = asyncio.current_task()
             for attr in (
-                "source_task",
-                "source_restart_task",
                 "broadcast_task",
                 "stderr_task",
                 "stable_task",
@@ -799,9 +768,6 @@ class AqaraM1SMediaGroupManager:
                     task.cancel()
 
             process = self.ffmpeg
-            self.source_queue = None
-            self._master_audio_started = False
-            self._master_prebuffer_started_monotonic = None
             self.ffmpeg = None
             self._ffmpeg_nice_applied = False
             if process is not None and process.returncode is None:
@@ -1047,16 +1013,47 @@ class AqaraM1SMediaGroupManager:
         await asyncio.sleep(0.08)
 
     async def _start_ffmpeg_locked(self) -> None:
-        """Start the resilient master transport and its first source process.
-
-        Receivers are already synchronised by the common warm-up.  From here on
-        one HA playout clock sends exactly one 20 ms frame per tick.  FFmpeg may
-        burst or pause; those variations are absorbed by source_queue instead of
-        being copied into every member queue.
-        """
         if not self.media_url or not self.desired_playing or not self.active_members:
             return
+        ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+        args = [
+            ffmpeg,
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-re",
+        ]
+        if urlsplit(self.media_url).scheme.lower() in ("http", "https"):
+            args.extend(
+                [
+                    "-reconnect",
+                    "1",
+                    "-reconnect_streamed",
+                    "1",
+                    "-reconnect_delay_max",
+                    "5",
+                ]
+            )
+        args.extend([
+            "-i", self.media_url, "-vn", "-ac", "1", "-ar", str(PCM_RATE),
+            "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1",
+        ])
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as err:
+            self._last_failure = "ffmpeg_not_found"
+            raise RuntimeError("FFmpeg was not found") from err
 
+        self.ffmpeg = process
+        self._ffmpeg_nice_applied = self._try_set_ffmpeg_priority(process.pid)
+        self._applied_volume = self.volume
+        self._applied_muted = self.muted
+        self._reset_live_gain()
         self._generation += 1
         generation = self._generation
         self._sequence = 0
@@ -1069,14 +1066,6 @@ class AqaraM1SMediaGroupManager:
         self._diag_event_loop_lag_max_ms = 0.0
         self._diag_event_loop_lag_count = 0
         self._diag_events.clear()
-        self._master_silence_frames = 0
-        self._master_audio_started = False
-        self._master_prebuffer_started_monotonic = time.monotonic()
-        self.source_queue = asyncio.Queue(maxsize=MASTER_BUFFER_CHUNKS)
-        self._applied_volume = self.volume
-        self._applied_muted = self.muted
-        self._reset_live_gain()
-
         for member in self.active_members:
             member.join_at_sequence = None
             member.state = "playing_group"
@@ -1086,187 +1075,33 @@ class AqaraM1SMediaGroupManager:
             member.diag_drain_max_ms = 0.0
             member.diag_slow_drain_count = 0
             member.diag_queue_peak_chunks = 0
-            member.diag_stale_drop_chunks = 0
             member.diag_last_log_monotonic = 0.0
 
         self.broadcast_task = self.hass.async_create_background_task(
-            self._broadcast_loop(generation),
-            "aqara_m1s_group_master_playout",
+            self._broadcast_loop(process, generation),
+            "aqara_m1s_group_pcm_broadcast",
+        )
+        self.stderr_task = self.hass.async_create_background_task(
+            self._stderr_loop(process, generation),
+            "aqara_m1s_group_ffmpeg_stderr",
+        )
+        self.stable_task = self.hass.async_create_background_task(
+            self._stable_watch(process, generation),
+            "aqara_m1s_group_stable_watch",
         )
         self.health_task = self.hass.async_create_background_task(
-            self._pcm_health_watch(generation),
+            self._pcm_health_watch(process, generation),
             "aqara_m1s_group_pcm_health_watch",
         )
         self.diag_task = self.hass.async_create_background_task(
             self._diagnostic_event_loop_watch(generation),
             "aqara_m1s_group_pcm_diag_heartbeat",
         )
-        await self._start_source_only(generation, reason="initial")
         _LOGGER.info(
-            "M1S master-buffer transport started source=%s members=%s prebuffer=%.1fs",
+            "M1S stable cohort source started pid=%s source=%s members=%s",
+            process.pid,
             self._safe_media_for_log(self.media_url),
             [m.name for m in self.active_members],
-            MASTER_PREBUFFER_SECONDS,
-        )
-
-    async def _start_source_only(self, generation: int, *, reason: str) -> bool:
-        """(Re)start FFmpeg without touching receivers or the playout clock."""
-        if generation != self._generation or not self.desired_playing or not self.media_url:
-            return False
-        async with self._source_lock:
-            if generation != self._generation or not self.desired_playing or not self.media_url:
-                return False
-
-            old_task = self.source_task
-            self.source_task = None
-            if old_task and old_task is not asyncio.current_task():
-                await self._cancel_task(old_task)
-            old_stderr = self.stderr_task
-            self.stderr_task = None
-            if old_stderr and old_stderr is not asyncio.current_task():
-                await self._cancel_task(old_stderr)
-            old_stable = self.stable_task
-            self.stable_task = None
-            if old_stable and old_stable is not asyncio.current_task():
-                await self._cancel_task(old_stable)
-            process = self.ffmpeg
-            self.ffmpeg = None
-            self._ffmpeg_nice_applied = False
-            if process is not None and process.returncode is None:
-                with suppress(ProcessLookupError):
-                    process.terminate()
-                with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(process.wait(), timeout=1.5)
-                if process.returncode is None:
-                    with suppress(ProcessLookupError):
-                        process.kill()
-
-            ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-            args = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning"]
-            if urlsplit(self.media_url).scheme.lower() in ("http", "https"):
-                args.extend([
-                    "-reconnect", "1",
-                    "-reconnect_streamed", "1",
-                    "-reconnect_delay_max", "5",
-                ])
-            # Intentionally no -re. The bounded source queue can read ahead and
-            # our own monotonic playout clock is the only timing authority.
-            args.extend([
-                "-i", self.media_url, "-vn", "-ac", "1", "-ar", str(PCM_RATE),
-                "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1",
-            ])
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                )
-            except FileNotFoundError as err:
-                self._last_failure = "ffmpeg_not_found"
-                raise RuntimeError("FFmpeg was not found") from err
-
-            self.ffmpeg = process
-            self._ffmpeg_nice_applied = self._try_set_ffmpeg_priority(process.pid)
-            self._source_serial += 1
-            serial = self._source_serial
-            self.source_task = self.hass.async_create_background_task(
-                self._source_reader_loop(process, generation, serial),
-                "aqara_m1s_group_source_reader",
-            )
-            self.stderr_task = self.hass.async_create_background_task(
-                self._stderr_loop(process, generation, serial),
-                "aqara_m1s_group_ffmpeg_stderr",
-            )
-            self.stable_task = self.hass.async_create_background_task(
-                self._stable_watch(process, generation),
-                "aqara_m1s_group_stable_watch",
-            )
-            _LOGGER.info(
-                "M1S group source started pid=%s reason=%s source=%s",
-                process.pid, reason, self._safe_media_for_log(self.media_url),
-            )
-            return True
-
-    async def _source_reader_loop(
-        self, process: asyncio.subprocess.Process, generation: int, serial: int
-    ) -> None:
-        queue = self.source_queue
-        if process.stdout is None or queue is None:
-            return
-        last_read: float | None = None
-        try:
-            while (
-                generation == self._generation
-                and serial == self._source_serial
-                and self.desired_playing
-                and self.source_queue is queue
-            ):
-                try:
-                    raw_chunk = await process.stdout.readexactly(CHUNK_BYTES)
-                except asyncio.IncompleteReadError as err:
-                    if err.partial:
-                        _LOGGER.debug(
-                            "M1S group source ended with partial PCM frame bytes=%s",
-                            len(err.partial),
-                        )
-                    break
-                now = time.monotonic()
-                self._last_pcm_monotonic = now
-                if last_read is not None:
-                    gap_ms = (now - last_read) * 1000.0
-                    # When our own master queue is nearly full, a large interval
-                    # can simply be intentional backpressure and is not a source fault.
-                    if gap_ms >= PCM_DIAG_SOURCE_GAP_WARN_MS and queue.qsize() < MASTER_PREBUFFER_CHUNKS:
-                        self._diag_source_gap_max_ms = max(self._diag_source_gap_max_ms, gap_ms)
-                        self._diag_source_gap_count += 1
-                        self._diag_record(
-                            "source_gap",
-                            f"gap={gap_ms:.1f}ms master={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
-                        )
-                last_read = now
-                await queue.put(raw_chunk)
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:
-            self._last_failure = f"source_reader:{err}"
-            _LOGGER.warning("M1S group source reader failed: %s", err)
-        finally:
-            if (
-                generation == self._generation
-                and serial == self._source_serial
-                and self.desired_playing
-            ):
-                self._last_failure = self._last_failure or "ffmpeg_stream_ended"
-                self._schedule_source_restart(generation)
-                self._signal_update()
-
-    def _schedule_source_restart(self, generation: int) -> None:
-        if self._shutting_down or not self.desired_playing or not self.media_url:
-            return
-        task = self.source_restart_task
-        if task is not None and not task.done():
-            return
-
-        async def _runner() -> None:
-            try:
-                await asyncio.sleep(SOURCE_RESTART_DELAY)
-                if generation != self._generation or not self.desired_playing:
-                    return
-                self._source_restart_count += 1
-                await self._start_source_only(generation, reason="source_recovery")
-                self._signal_update()
-            except asyncio.CancelledError:
-                raise
-            except Exception as err:
-                self._last_failure = f"source_restart:{err}"
-                _LOGGER.warning("M1S group source-only restart failed: %s", err)
-                if generation == self._generation and self.desired_playing:
-                    self.source_restart_task = None
-                    self._schedule_source_restart(generation)
-            finally:
-                if self.source_restart_task is asyncio.current_task():
-                    self.source_restart_task = None
-
-        self.source_restart_task = self.hass.async_create_background_task(
-            _runner(), "aqara_m1s_group_source_restart"
         )
 
     @staticmethod
@@ -1292,18 +1127,12 @@ class AqaraM1SMediaGroupManager:
         self._no_active_since_monotonic = None
         self._generation += 1
         current = asyncio.current_task()
-        for attr in (
-            "source_task", "source_restart_task", "broadcast_task", "stderr_task",
-            "stable_task", "health_task", "diag_task"
-        ):
+        for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task", "diag_task"):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task and task is not current:
                 await self._cancel_task(task)
 
-        self.source_queue = None
-        self._master_audio_started = False
-        self._master_prebuffer_started_monotonic = None
         process = self.ffmpeg
         self.ffmpeg = None
         self._ffmpeg_nice_applied = False
@@ -1538,9 +1367,12 @@ class AqaraM1SMediaGroupManager:
                 now = time.monotonic()
                 if member.diag_last_feed_monotonic is not None:
                     feed_gap_ms = (now - member.diag_last_feed_monotonic) * 1000.0
-                    member.diag_feed_gap_max_ms = max(member.diag_feed_gap_max_ms, feed_gap_ms)
+                    member.diag_feed_gap_max_ms = max(
+                        member.diag_feed_gap_max_ms, feed_gap_ms
+                    )
                     if feed_gap_ms >= PCM_DIAG_MEMBER_FEED_GAP_WARN_MS:
                         member.diag_feed_gap_count += 1
+                        # Rate-limit repeated warnings caused by one continuous stall.
                         if now - member.diag_last_log_monotonic >= 0.25:
                             member.diag_last_log_monotonic = now
                             self._diag_record(
@@ -1549,45 +1381,39 @@ class AqaraM1SMediaGroupManager:
                                 f"queue={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
                             )
                 member.diag_last_feed_monotonic = now
-                member.diag_queue_peak_chunks = max(member.diag_queue_peak_chunks, queue.qsize())
+                member.diag_queue_peak_chunks = max(
+                    member.diag_queue_peak_chunks, queue.qsize()
+                )
                 writer.write(chunk)
-                drain_started = time.monotonic()
-                await asyncio.wait_for(writer.drain(), timeout=WRITER_DRAIN_TIMEOUT)
-                drain_ms = (time.monotonic() - drain_started) * 1000.0
-                member.diag_drain_max_ms = max(member.diag_drain_max_ms, drain_ms)
-                if drain_ms >= PCM_DIAG_DRAIN_WARN_MS:
-                    member.diag_slow_drain_count += 1
-                    now2 = time.monotonic()
-                    if now2 - member.diag_last_log_monotonic >= 0.25:
-                        member.diag_last_log_monotonic = now2
-                        transport = getattr(writer, "transport", None)
-                        write_buffer = transport.get_write_buffer_size() if transport is not None else -1
-                        self._diag_record(
-                            "slow_drain",
-                            f"hub={member.name} drain={drain_ms:.1f}ms "
-                            f"write_buffer={write_buffer}B queue={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
-                        )
-
-                # Never replay a seconds-old backlog after a scheduling/network
-                # pause: that is what creates the audible echo. Keep this member
-                # on the current shared timeline by dropping stale queued frames.
-                if queue.qsize() > MEMBER_CATCHUP_THRESHOLD_CHUNKS:
-                    dropped = 0
-                    while queue.qsize() > MEMBER_CATCHUP_TARGET_CHUNKS:
-                        try:
-                            stale = queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                        if stale is None:
-                            return
-                        dropped += 1
-                    if dropped:
-                        member.diag_stale_drop_chunks += dropped
-                        self._diag_record(
-                            "member_catchup_drop",
-                            f"hub={member.name} dropped={dropped * CHUNK_SECONDS * 1000:.0f}ms "
-                            f"remain={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
-                        )
+                transport = getattr(writer, "transport", None)
+                write_buffer = (
+                    transport.get_write_buffer_size()
+                    if transport is not None
+                    else 0
+                )
+                # drain() is intentionally conditional.  Awaiting it on every
+                # 20 ms frame was able to stall one member writer long enough
+                # to create multi-second feed gaps and ALSA underruns.
+                if write_buffer >= WRITER_HIGH_WATER_BYTES:
+                    drain_started = time.monotonic()
+                    await asyncio.wait_for(
+                        writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                    )
+                    drain_ms = (time.monotonic() - drain_started) * 1000.0
+                    member.diag_drain_max_ms = max(
+                        member.diag_drain_max_ms, drain_ms
+                    )
+                    if drain_ms >= PCM_DIAG_DRAIN_WARN_MS:
+                        member.diag_slow_drain_count += 1
+                        now2 = time.monotonic()
+                        if now2 - member.diag_last_log_monotonic >= 0.25:
+                            member.diag_last_log_monotonic = now2
+                            self._diag_record(
+                                "slow_drain",
+                                f"hub={member.name} drain={drain_ms:.1f}ms "
+                                f"write_buffer={write_buffer}B "
+                                f"queue={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
+                            )
         except asyncio.CancelledError:
             raise
         except Exception as err:
@@ -1595,9 +1421,9 @@ class AqaraM1SMediaGroupManager:
             _LOGGER.warning("M1S group member writer failed %s: %s", member.name, err)
         finally:
             if member.generation == generation and not member.detaching:
-                # Only a real writer/socket failure removes the member. Queue
-                # pressure alone is handled above without killing its receiver.
-                self._schedule_isolate_member(member, reason=member.last_error or "writer_ended")
+                self._schedule_isolate_member(
+                    member, reason=member.last_error or "writer_ended"
+                )
 
     async def _detach_member(
         self, entry_id: str, *, stop_remote: bool, new_state: str
@@ -1644,7 +1470,7 @@ class AqaraM1SMediaGroupManager:
             _LOGGER.debug("M1S group remote cleanup failed %s: %s", member.name, err)
 
     async def _fanout_frame(self, chunk: bytes, sequence: int) -> None:
-        """Queue one paced frame for each member without letting backlog create echo."""
+        """Queue the same 20 ms frame for every member in the fixed cohort."""
         for member in list(self.active_members):
             queue = member.queue
             if queue is None:
@@ -1654,112 +1480,88 @@ class AqaraM1SMediaGroupManager:
             member.diag_queue_peak_chunks = max(member.diag_queue_peak_chunks, depth)
             try:
                 queue.put_nowait(chunk)
-                continue
             except asyncio.QueueFull:
-                pass
-
-            # A full member queue no longer ejects the hub. Drop stale PCM from
-            # only that member and keep the newest shared-timeline frame.
-            dropped = 0
-            while queue.qsize() > MEMBER_CATCHUP_TARGET_CHUNKS:
-                try:
-                    stale = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if stale is None:
-                    break
-                dropped += 1
-            try:
-                queue.put_nowait(chunk)
-            except asyncio.QueueFull:
-                # Should be extremely rare; the writer will retry next tick.
-                dropped += 1
-            member.diag_stale_drop_chunks += dropped
-            now = time.monotonic()
-            if now - member.diag_last_log_monotonic >= 0.5:
-                member.diag_last_log_monotonic = now
+                # Keep the member in the fixed cohort.  Discard stale audio only
+                # from this member until roughly 500 ms remains, then queue the
+                # newest shared frame.  This makes a short Wi-Fi/TCP stall an
+                # audible catch-up at worst, not a permanent group ejection.
+                dropped = 0
+                while queue.qsize() > QUEUE_TRIM_KEEP_CHUNKS:
+                    try:
+                        queue.get_nowait()
+                        dropped += 1
+                    except asyncio.QueueEmpty:
+                        break
+                with suppress(asyncio.QueueFull):
+                    queue.put_nowait(chunk)
                 self._diag_record(
-                    "member_queue_trim",
+                    "queue_trim",
                     f"hub={member.name} dropped={dropped * CHUNK_SECONDS * 1000:.0f}ms "
-                    f"queue={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
+                    f"kept={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms "
+                    f"feed_gap_max={member.diag_feed_gap_max_ms:.1f}ms "
+                    f"drain_max={member.diag_drain_max_ms:.1f}ms",
+                )
+                _LOGGER.warning(
+                    "M1S group trimmed stale PCM for slow member %s: dropped=%sms",
+                    member.name,
+                    int(dropped * CHUNK_SECONDS * 1000),
                 )
 
-    async def _broadcast_loop(self, generation: int) -> None:
-        queue = self.source_queue
-        if queue is None:
+    async def _broadcast_loop(
+        self, process: asyncio.subprocess.Process, generation: int
+    ) -> None:
+        if process.stdout is None:
             return
-        next_deadline = time.monotonic()
-        last_silence_log = 0.0
         try:
             while generation == self._generation and self.desired_playing:
+                try:
+                    raw_chunk = await process.stdout.readexactly(CHUNK_BYTES)
+                except asyncio.IncompleteReadError as err:
+                    if err.partial:
+                        _LOGGER.debug(
+                            "M1S group source ended with partial PCM frame bytes=%s",
+                            len(err.partial),
+                        )
+                    break
+                chunk = self._apply_live_pcm_gain(raw_chunk)
                 now = time.monotonic()
-                delay = next_deadline - now
-                if delay > 0:
-                    await asyncio.sleep(delay)
-                else:
-                    late = -delay
-                    if late >= PLAYOUT_LATE_REBASE_SECONDS:
-                        # Never catch up by blasting many frames into TCP. Rebase
-                        # the common clock and keep every hub on the same cadence.
-                        next_deadline = time.monotonic()
-                        self._clock_rebase_count += 1
-                now = time.monotonic()
-
-                if not self._master_audio_started:
-                    age = (
-                        0.0 if self._master_prebuffer_started_monotonic is None
-                        else now - self._master_prebuffer_started_monotonic
+                if self._last_pcm_monotonic is not None:
+                    source_gap_ms = (now - self._last_pcm_monotonic) * 1000.0
+                    self._diag_source_gap_max_ms = max(
+                        self._diag_source_gap_max_ms, source_gap_ms
                     )
-                    if queue.qsize() >= MASTER_PREBUFFER_CHUNKS or (
-                        age >= MASTER_PREBUFFER_MAX_WAIT and queue.qsize() >= MASTER_MIN_START_CHUNKS
-                    ):
-                        self._master_audio_started = True
-                        _LOGGER.info(
-                            "M1S group master buffer ready depth=%sms wait=%.2fs",
-                            int(queue.qsize() * CHUNK_SECONDS * 1000), age,
-                        )
-                        self._signal_update()
-
-                raw_chunk: bytes | None = None
-                if self._master_audio_started:
-                    with suppress(asyncio.QueueEmpty):
-                        raw_chunk = queue.get_nowait()
-
-                if raw_chunk is None:
-                    chunk = SILENCE_CHUNK
-                    self._master_silence_frames += 1
-                    if self._master_audio_started and now - last_silence_log >= 1.0:
-                        last_silence_log = now
+                    if source_gap_ms >= PCM_DIAG_SOURCE_GAP_WARN_MS:
+                        self._diag_source_gap_count += 1
                         self._diag_record(
-                            "master_buffer_empty",
-                            f"inserted_silence sequence={self._sequence} source_running={self.ffmpeg_running}",
+                            "source_gap",
+                            f"gap={source_gap_ms:.1f}ms sequence={self._sequence} "
+                            f"active={len(self.active_members)}",
                         )
-                else:
-                    chunk = self._apply_live_pcm_gain(raw_chunk)
-
                 sequence = self._sequence
                 self._sequence += 1
+                self._last_pcm_monotonic = now
                 await self._fanout_frame(chunk, sequence)
-                next_deadline += CHUNK_SECONDS
+                # Let every per-hub writer run before requesting the next frame.
+                await asyncio.sleep(0)
         except asyncio.CancelledError:
             raise
         except Exception as err:
-            self._last_failure = f"master_playout:{err}"
-            _LOGGER.exception("M1S group master playout failed")
+            self._last_failure = str(err)
+            _LOGGER.warning("M1S group broadcaster failed: %s", err)
         finally:
             if generation == self._generation and self.desired_playing:
-                self._last_failure = self._last_failure or "master_playout_ended"
+                self._last_failure = self._last_failure or "ffmpeg_stream_ended"
                 self._schedule_watchdog_restart()
                 self._signal_update()
 
     async def _stderr_loop(
-        self, process: asyncio.subprocess.Process, generation: int, serial: int
+        self, process: asyncio.subprocess.Process, generation: int
     ) -> None:
         if process.stderr is None:
             return
         lines: list[str] = []
         try:
-            while generation == self._generation and serial == self._source_serial:
+            while generation == self._generation:
                 line = await process.stderr.readline()
                 if not line:
                     break
@@ -1926,7 +1728,7 @@ class AqaraM1SMediaGroupManager:
                 # continued to advance. This is the one case where the whole
                 # transport is already lost, so a fresh cohort cannot disturb any
                 # audible member. Trigger one bounded watchdog recovery.
-                if self.desired_playing and not self.active_members and not self.sound_intent:
+                if self.ffmpeg_running and not self.active_members and not self.sound_intent:
                     now = time.monotonic()
                     if self._no_active_since_monotonic is None:
                         self._no_active_since_monotonic = now
@@ -1936,10 +1738,13 @@ class AqaraM1SMediaGroupManager:
                             "M1S group has no active receivers for %.1fs; restarting transport",
                             now - self._no_active_since_monotonic,
                         )
+                        process = self.ffmpeg
+                        if process is not None and process.returncode is None:
+                            with suppress(ProcessLookupError):
+                                process.terminate()
                         self._no_active_since_monotonic = None
                         self._transport_self_heal_count += 1
                         self._signal_update()
-                        self._schedule_watchdog_restart()
                         return
                 else:
                     self._no_active_since_monotonic = None
@@ -1959,12 +1764,17 @@ class AqaraM1SMediaGroupManager:
             reason,
         )
 
-    async def _pcm_health_watch(self, generation: int) -> None:
-        """Recover only the source when PCM stalls; receivers keep playing buffered/silence PCM."""
+    async def _pcm_health_watch(
+        self, process: asyncio.subprocess.Process, generation: int
+    ) -> None:
         try:
             while generation == self._generation and self.desired_playing:
                 await asyncio.sleep(PCM_HEALTH_CHECK_SECONDS)
-                if generation != self._generation or not self.desired_playing:
+                if (
+                    generation != self._generation
+                    or self.ffmpeg is not process
+                    or not self.desired_playing
+                ):
                     return
                 now = time.monotonic()
                 if (
@@ -1972,27 +1782,26 @@ class AqaraM1SMediaGroupManager:
                     and now - self._stream_started_monotonic < PCM_START_GRACE_SECONDS
                 ):
                     continue
-                pcm_age = None if self._last_pcm_monotonic is None else now - self._last_pcm_monotonic
-                # A full/healthy master buffer intentionally backpressures the
-                # FFmpeg stdout reader, so an old read timestamp is not a stall.
-                buffered_chunks = self.source_queue.qsize() if self.source_queue is not None else 0
-                if buffered_chunks >= MASTER_MIN_START_CHUNKS:
-                    continue
+                pcm_age = (
+                    None if self._last_pcm_monotonic is None
+                    else now - self._last_pcm_monotonic
+                )
                 if pcm_age is None or pcm_age >= PCM_STALL_TIMEOUT:
                     age_text = "never" if pcm_age is None else f"{pcm_age:.1f}s"
                     self._last_failure = f"pcm_stall:{age_text}"
                     _LOGGER.warning(
-                        "M1S group source PCM stalled (last=%s); restarting source only", age_text
+                        "M1S group source PCM stalled (last=%s); scheduling one bounded restart",
+                        age_text,
                     )
-                    process = self.ffmpeg
-                    if process is not None and process.returncode is None:
+                    # Terminate this source; broadcaster/watchdog owns the restart.
+                    if process.returncode is None:
                         with suppress(ProcessLookupError):
                             process.terminate()
-                    self._schedule_source_restart(generation)
+                    return
         except asyncio.CancelledError:
             raise
         except Exception as err:
-            self._last_failure = f"pcm_health:{err}"
+            self._last_failure = str(err)
             _LOGGER.warning("M1S group PCM health watchdog failed: %s", err)
 
     def _schedule_watchdog_restart(self) -> None:
@@ -2010,13 +1819,7 @@ class AqaraM1SMediaGroupManager:
     async def _watchdog_restart(self) -> None:
         try:
             await asyncio.sleep(WATCHDOG_RESTART_DELAY)
-            if not self.desired_playing or not self.media_url:
-                return
-            transport_alive = self.broadcast_task is not None and not self.broadcast_task.done()
-            if transport_alive and self.active_members:
-                # Source faults are recovered independently; never tear down a healthy cohort.
-                if not self.ffmpeg_running:
-                    self._schedule_source_restart(self._generation)
+            if not self.desired_playing or self.ffmpeg_running or not self.media_url:
                 return
             self._watchdog_attempts += 1
             _LOGGER.warning(
@@ -2094,9 +1897,8 @@ class AqaraM1SMediaGroupManager:
             await asyncio.sleep(WATCHDOG_STABLE_SECONDS)
             now = time.monotonic()
             pcm_recent = (
-                (self._last_pcm_monotonic is not None
-                 and now - self._last_pcm_monotonic < PCM_HEALTH_CHECK_SECONDS * 2)
-                or (self.source_queue is not None and self.source_queue.qsize() >= MASTER_MIN_START_CHUNKS)
+                self._last_pcm_monotonic is not None
+                and now - self._last_pcm_monotonic < PCM_HEALTH_CHECK_SECONDS * 2
             )
             if (
                 generation == self._generation
@@ -2118,7 +1920,6 @@ class AqaraM1SMediaGroupManager:
         current = asyncio.current_task()
         for attr in (
             "reconcile_task",
-            "source_restart_task",
             "watchdog_task",
             "slow_retry_task",
             "resync_task",

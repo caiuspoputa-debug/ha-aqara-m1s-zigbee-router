@@ -1,16 +1,3 @@
-## 0.8.0 TEST - Stable master buffer transport
-- Reworked only the group transport; individual audio and integration-sound priority path are unchanged.
-- Added one bounded 8 s master PCM jitter buffer with a 4 s startup target.
-- Removed FFmpeg `-re`; one monotonic 20 ms playout clock is now the only group timing authority.
-- Source bursts/reconnect catch-up are absorbed by the master buffer instead of flooding per-hub queues.
-- Short source starvation now outputs common silence while keeping every hub receiver alive and phase-aligned.
-- FFmpeg source recovery restarts only FFmpeg; it no longer tears down a healthy receiver cohort.
-- A full per-hub queue now drops stale PCM for that hub and keeps the receiver instead of ejecting it.
-- After a stalled writer resumes, stale backlog is trimmed to prevent delayed echo.
-- Hard socket/writer failures still isolate only the failed hub; no automatic late join during normal playback.
-- Existing priority-sound claim/release behavior is preserved.
-- PCM diagnostics retained and extended with master-buffer depth, inserted silence and stale-frame drops.
-
 ## 0.7.4 TEST - Radio Browser metadata on individual players
 - Individual M1S media players now cache Media Browser labels exactly like Media Group.
 - Radio Browser station names are exposed as `media_title` / restored as `last_media_title`.
