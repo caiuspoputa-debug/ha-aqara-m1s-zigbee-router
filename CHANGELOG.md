@@ -1,3 +1,12 @@
+## v0.10.3 - Stale receiver rebuild
+
+- Detect a stale single-player hub receiver during playback, not only after TCP writer failure.
+- Treat TCP `FIN_WAIT`/`CLOSE_WAIT` without an active `ESTABLISHED` stream as a broken receiver and rebuild it in place.
+- Treat large negative ALSA delay or excessive ALSA availability as an underrun/stale receiver signal and rebuild it in place.
+- Keep the v0.10.2 35 ms PCM pacing, 2 s hub buffer request, fast main volume, filtered Fine Volume Trim, and scoped receiver cleanup.
+- Preserve FFmpeg nice -5 / hub aplay nice -3. No sound-priority changes.
+- `media_group.py` and `sound_player.py` behavior is unchanged from v0.10.0.
+
 ## v0.10.2 - Stable playback recovery
 
 - Pace single-player PCM in 35 ms chunks, matching the observed M1S ALSA period size (`period_size=1120` at 32 kHz).

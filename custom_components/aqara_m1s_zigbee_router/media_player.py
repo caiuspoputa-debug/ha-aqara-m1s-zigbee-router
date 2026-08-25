@@ -91,6 +91,9 @@ SINGLE_TCP_RECOVERY_DROP_SECONDS = 0.50
 SINGLE_TCP_RECOVERY_DROP_CHUNKS = max(
     1, int(SINGLE_TCP_RECOVERY_DROP_SECONDS / PCM_CHUNK_SECONDS)
 )
+SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS = 5.0
+SINGLE_RECEIVER_STALE_DELAY_FRAMES = int(PCM_RATE * 0.20)
+SINGLE_RECEIVER_STALE_AVAIL_MULTIPLIER = 2
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 FINE_TRIM_GAIN_RAMP_SECONDS = 0.20
@@ -228,6 +231,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._last_failure_kind: str | None = None
         self._last_failure_detail: str | None = None
         self._recovery_pending = False
+        self._single_receiver_rebuilds = 0
+        self._last_receiver_health: dict[str, Any] | None = None
+        self._last_receiver_rebuild_reason: str | None = None
         self._shutting_down = False
         self._group_manager = None
         self._priority_sound_suspended = False
@@ -525,6 +531,15 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_tcp_recovery_drop_ms": int(
                 SINGLE_TCP_RECOVERY_DROP_SECONDS * 1000
             ),
+            "single_receiver_health_interval_seconds": (
+                SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS
+            ),
+            "single_receiver_stale_delay_ms": int(
+                SINGLE_RECEIVER_STALE_DELAY_FRAMES / PCM_RATE * 1000
+            ),
+            "single_receiver_rebuilds": self._single_receiver_rebuilds,
+            "last_receiver_health": self._last_receiver_health,
+            "last_receiver_rebuild_reason": self._last_receiver_rebuild_reason,
             "single_source_stall_timeout_seconds": SINGLE_SOURCE_STALL_TIMEOUT,
             "single_write_high_water_ms": int(
                 SINGLE_WRITE_HIGH_WATER_BYTES / (PCM_RATE * PCM_SAMPLE_BYTES) * 1000
@@ -678,6 +693,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             raise RuntimeError("single TCP recovery finished on stale session")
 
         self._stream_writer = new_writer
+        self._single_receiver_rebuilds += 1
+        self._last_receiver_rebuild_reason = reason
         _LOGGER.info(
             "Aqara media single TCP receiver recovered entity=%s session=%s "
             "generation=%s host=%s pid=%s reason=%s",
@@ -689,6 +706,81 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             reason,
         )
         return new_writer
+
+    @staticmethod
+    def _parse_receiver_int(line: str) -> int | None:
+        if ":" not in line:
+            return None
+        try:
+            return int(line.split(":", 1)[1].strip().split()[0])
+        except (IndexError, ValueError):
+            return None
+
+    def _parse_single_receiver_health(self, snapshot: str) -> dict[str, Any]:
+        text = snapshot or ""
+        upper = text.upper()
+        tcp_stale_states = [
+            state
+            for state in ("FIN_WAIT", "CLOSE_WAIT", "LAST_ACK", "CLOSING")
+            if state in upper
+        ]
+        has_established = "ESTABLISHED" in upper
+        tcp_stale = bool(tcp_stale_states and not has_established)
+
+        delay: int | None = None
+        avail: int | None = None
+        avail_max: int | None = None
+        buffer_size: int | None = None
+        state: str | None = None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("state:"):
+                state = line.split(":", 1)[1].strip()
+            elif line.startswith("delay"):
+                delay = self._parse_receiver_int(line)
+            elif line.startswith("avail_max"):
+                avail_max = self._parse_receiver_int(line)
+            elif line.startswith("avail"):
+                avail = self._parse_receiver_int(line)
+            elif line.startswith("buffer_size"):
+                buffer_size = self._parse_receiver_int(line)
+
+        stale_reasons: list[str] = []
+        if tcp_stale:
+            stale_reasons.append("tcp_stale:" + ",".join(tcp_stale_states))
+        if delay is not None and delay <= -SINGLE_RECEIVER_STALE_DELAY_FRAMES:
+            stale_reasons.append(f"alsa_delay:{delay}")
+        if (
+            avail is not None
+            and buffer_size is not None
+            and avail >= buffer_size * SINGLE_RECEIVER_STALE_AVAIL_MULTIPLIER
+        ):
+            stale_reasons.append(f"alsa_avail:{avail}/{buffer_size}")
+
+        return {
+            "stale": bool(stale_reasons),
+            "reason": ";".join(stale_reasons),
+            "tcp_stale_states": tcp_stale_states,
+            "tcp_established": has_established,
+            "alsa_state": state,
+            "alsa_delay_frames": delay,
+            "alsa_avail_frames": avail,
+            "alsa_avail_max_frames": avail_max,
+            "alsa_buffer_frames": buffer_size,
+        }
+
+    async def _read_single_receiver_health(self) -> dict[str, Any]:
+        command = (
+            f'echo "__tcp__"; netstat -an 2>/dev/null | grep {RADIO_PORT}; '
+            'echo "__status__"; '
+            'cat /proc/asound/card0/pcm0p/sub0/status 2>/dev/null; '
+            'echo "__hw__"; '
+            'cat /proc/asound/card0/pcm0p/sub0/hw_params 2>/dev/null'
+        )
+        snapshot = await self.hass.async_add_executor_job(
+            self.client.run_command, command
+        )
+        return self._parse_single_receiver_health(str(snapshot))
 
     async def _terminate_process_bounded(
         self, process: asyncio.subprocess.Process | None, *, reason: str
@@ -1481,6 +1573,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         tcp_recovery_window_started = 0.0
         last_low_queue_log = 0.0
         last_real_pcm_monotonic = time.monotonic()
+        health_task: asyncio.Task | None = None
+        last_health_probe = 0.0
 
         async def _produce_pcm() -> None:
             nonlocal producer_error
@@ -1528,8 +1622,77 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             f"aqara_m1s_pcm_producer_{self.entry.entry_id}",
         )
 
-        async def _write_chunk_to_hub(raw_chunk: bytes, *, stage: str) -> None:
+        async def _rebuild_receiver_and_resync(
+            *, stage: str, cause: str, error: Exception | None = None
+        ) -> None:
             nonlocal writer, tcp_recovery_events, tcp_recovery_window_started
+            now = time.monotonic()
+            if now - tcp_recovery_window_started > SINGLE_TCP_RECOVERY_WINDOW_SECONDS:
+                tcp_recovery_window_started = now
+                tcp_recovery_events = 0
+            tcp_recovery_events += 1
+            if tcp_recovery_events > SINGLE_TCP_RECOVERY_BURST_LIMIT:
+                raise RuntimeError(
+                    "single TCP recovery burst limit exceeded"
+                ) from error
+
+            log = (
+                _LOGGER.warning
+                if tcp_recovery_events >= SINGLE_TCP_RECOVERY_BURST_LIMIT
+                else _LOGGER.info
+            )
+            log(
+                "Aqara media single receiver fault; rebuilding receiver "
+                "and dropping stale PCM entity=%s session=%s generation=%s "
+                "host=%s pid=%s stage=%s cause=%s recovery=%s/%s error=%r",
+                self.entity_id,
+                session,
+                generation,
+                self.client.host,
+                process.pid,
+                stage,
+                cause,
+                tcp_recovery_events,
+                SINGLE_TCP_RECOVERY_BURST_LIMIT,
+                error,
+            )
+            writer = await self._recover_single_tcp_writer(
+                process,
+                writer,
+                generation,
+                session,
+                reason=f"{stage}:{cause}",
+            )
+
+            dropped_chunks = 0
+            while dropped_chunks < SINGLE_TCP_RECOVERY_DROP_CHUNKS:
+                try:
+                    queue.get_nowait()
+                    dropped_chunks += 1
+                except asyncio.QueueEmpty:
+                    break
+
+            self._reset_live_gain()
+            for _ in range(SINGLE_TCP_RECOVERY_SILENCE_CHUNKS):
+                writer.write(PCM_SILENCE_CHUNK)
+            await asyncio.wait_for(
+                writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+            )
+            _LOGGER.info(
+                "Aqara media single receiver resumed after stale PCM drop "
+                "entity=%s session=%s generation=%s host=%s pid=%s "
+                "dropped_ms=%s silence_ms=%s cause=%s",
+                self.entity_id,
+                session,
+                generation,
+                self.client.host,
+                process.pid,
+                int(dropped_chunks * PCM_CHUNK_SECONDS * 1000),
+                int(SINGLE_TCP_RECOVERY_SILENCE_SECONDS * 1000),
+                cause,
+            )
+
+        async def _write_chunk_to_hub(raw_chunk: bytes, *, stage: str) -> None:
             pcm = self._apply_live_pcm_gain(raw_chunk)
             try:
                 writer.write(pcm)
@@ -1538,68 +1701,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 )
                 return
             except (asyncio.TimeoutError, OSError, ConnectionError) as err:
-                now = time.monotonic()
-                if now - tcp_recovery_window_started > SINGLE_TCP_RECOVERY_WINDOW_SECONDS:
-                    tcp_recovery_window_started = now
-                    tcp_recovery_events = 0
-                tcp_recovery_events += 1
-                if tcp_recovery_events > SINGLE_TCP_RECOVERY_BURST_LIMIT:
-                    raise RuntimeError(
-                        "single TCP recovery burst limit exceeded"
-                    ) from err
-
-                log = (
-                    _LOGGER.warning
-                    if tcp_recovery_events >= SINGLE_TCP_RECOVERY_BURST_LIMIT
-                    else _LOGGER.info
-                )
-                log(
-                    "Aqara media single TCP writer fault; rebuilding receiver "
-                    "and dropping stale PCM entity=%s session=%s generation=%s "
-                    "host=%s pid=%s stage=%s recovery=%s/%s error=%r",
-                    self.entity_id,
-                    session,
-                    generation,
-                    self.client.host,
-                    process.pid,
-                    stage,
-                    tcp_recovery_events,
-                    SINGLE_TCP_RECOVERY_BURST_LIMIT,
-                    err,
-                )
-                writer = await self._recover_single_tcp_writer(
-                    process,
-                    writer,
-                    generation,
-                    session,
-                    reason=f"{stage}:{err.__class__.__name__}",
-                )
-
-                dropped_chunks = 0
-                while dropped_chunks < SINGLE_TCP_RECOVERY_DROP_CHUNKS:
-                    try:
-                        queue.get_nowait()
-                        dropped_chunks += 1
-                    except asyncio.QueueEmpty:
-                        break
-
-                self._reset_live_gain()
-                for _ in range(SINGLE_TCP_RECOVERY_SILENCE_CHUNKS):
-                    writer.write(PCM_SILENCE_CHUNK)
-                await asyncio.wait_for(
-                    writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
-                )
-                _LOGGER.info(
-                    "Aqara media single TCP receiver resumed after stale PCM drop "
-                    "entity=%s session=%s generation=%s host=%s pid=%s "
-                    "dropped_ms=%s silence_ms=%s",
-                    self.entity_id,
-                    session,
-                    generation,
-                    self.client.host,
-                    process.pid,
-                    int(dropped_chunks * PCM_CHUNK_SECONDS * 1000),
-                    int(SINGLE_TCP_RECOVERY_SILENCE_SECONDS * 1000),
+                await _rebuild_receiver_and_resync(
+                    stage=stage,
+                    cause=err.__class__.__name__,
+                    error=err,
                 )
                 return
 
@@ -1645,6 +1750,40 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     # A long HA event-loop stall must not trigger a multi-second
                     # catch-up burst. Rebase, while retaining the jitter buffer.
                     next_send_monotonic = now
+
+                if health_task is not None and health_task.done():
+                    try:
+                        health = health_task.result()
+                    except Exception as err:
+                        _LOGGER.debug(
+                            "Aqara media single receiver health check failed "
+                            "entity=%s session=%s host=%s error=%s",
+                            self.entity_id,
+                            session,
+                            self.client.host,
+                            err,
+                        )
+                    else:
+                        self._last_receiver_health = health
+                        if health.get("stale"):
+                            cause = str(health.get("reason") or "receiver_stale")
+                            await _rebuild_receiver_and_resync(
+                                stage="health_check",
+                                cause=cause,
+                            )
+                            next_send_monotonic = time.monotonic()
+                    health_task = None
+
+                if (
+                    health_task is None
+                    and now - last_health_probe >= SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS
+                    and self._generation_is_current(generation)
+                ):
+                    last_health_probe = now
+                    health_task = self.hass.async_create_background_task(
+                        self._read_single_receiver_health(),
+                        f"aqara_m1s_receiver_health_{self.entry.entry_id}",
+                    )
 
                 if queue.qsize() <= SINGLE_LOW_QUEUE_CHUNKS and not producer_done.is_set():
                     low_queue_events += 1
@@ -1802,6 +1941,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             if self._ffmpeg is not process or self._shutting_down:
                 return
         finally:
+            if health_task is not None:
+                if not health_task.done():
+                    health_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await health_task
             if not producer_task.done():
                 producer_task.cancel()
                 with suppress(asyncio.CancelledError):
