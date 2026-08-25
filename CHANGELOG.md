@@ -1,3 +1,12 @@
+## v0.10.5 - Legacy live volume gain
+
+- Restore the pre-v0.10.1 live gain path used by v0.9.9/v0.10.0.
+- Apply the main media-player volume and Fine Volume Trim directly through the same effective gain calculation sampled on every PCM chunk.
+- Remove the separate fine-trim applied/debounce gain state from the individual media player path.
+- Keep the v0.10.4 ALSA-only stale receiver rebuild policy, 35 ms PCM pacing, 2 s hub buffer request, and scoped receiver cleanup.
+- Preserve FFmpeg nice -5 / hub aplay nice -3. No sound-priority changes.
+- `media_group.py` and `sound_player.py` behavior is unchanged from v0.10.0.
+
 ## v0.10.4 - ALSA-only stale rebuild
 
 - Fix v0.10.3 over-recovery: TCP `FIN_WAIT`/`TIME_WAIT` entries can be old socket residue while ALSA is still healthy.
