@@ -40,73 +40,48 @@ PCM_CHANNELS = 1
 PCM_SAMPLE_BYTES = 4
 CHUNK_SECONDS = 0.02
 CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
-# Stable-cohort multi-room transport.  Every Play creates one fixed cohort of
-# receivers.  Audio starts only after the cohort has been warmed with the same
-# paced silence.  A slow receiver is isolated and is NOT rejoined mid-stream;
-# this prevents echo, duplicate/stale receiver races and repeated resync loops.
-SYNC_LEAD_SECONDS = 0.0  # compatibility attribute; late join is intentionally disabled
-SYNC_LEAD_CHUNKS = 0
-JOIN_BOUNDARY_SECONDS = 0.0
-JOIN_BOUNDARY_CHUNKS = 1
-INITIAL_PREROLL_SECONDS = 0.50
+# Clocked multi-room transport.  Home Assistant owns one playout clock; every
+# hub is an independent receiver.  A slow/offline member is isolated and may
+# rejoin later without restarting healthy members.
+SYNC_LEAD_SECONDS = 0.60
+SYNC_LEAD_CHUNKS = max(1, round(SYNC_LEAD_SECONDS / CHUNK_SECONDS))
+JOIN_BOUNDARY_SECONDS = 0.20
+JOIN_BOUNDARY_CHUNKS = max(1, round(JOIN_BOUNDARY_SECONDS / CHUNK_SECONDS))
+INITIAL_PREROLL_SECONDS = 0.36
 INITIAL_PREROLL_CHUNKS = max(1, round(INITIAL_PREROLL_SECONDS / CHUNK_SECONDS))
-START_COHORT_GRACE_SECONDS = 3.0
-START_FIRST_MEMBER_TIMEOUT = START_COHORT_GRACE_SECONDS
-PLAYOUT_START_MARGIN_SECONDS = 0.0
-PLAYOUT_REBASE_THRESHOLD_SECONDS = 0.0
-PLAYOUT_REBASE_MARGIN_SECONDS = 0.0
-QUEUE_SECONDS = 4.0
+START_COHORT_GRACE_SECONDS = 0.30
+START_FIRST_MEMBER_TIMEOUT = 3.0
+PLAYOUT_START_MARGIN_SECONDS = 0.05
+PLAYOUT_REBASE_THRESHOLD_SECONDS = 0.12
+PLAYOUT_REBASE_MARGIN_SECONDS = 0.02
+QUEUE_SECONDS = 1.5
 QUEUE_CHUNKS = int(QUEUE_SECONDS / CHUNK_SECONDS)
-# A temporarily slow hub is allowed to recover without being expelled.  If its
-# private queue ever fills, stale PCM is trimmed and the hub catches up to the
-# current shared timeline instead of being detached from the group.
-QUEUE_TRIM_KEEP_SECONDS = 0.50
-QUEUE_TRIM_KEEP_CHUNKS = max(2, int(QUEUE_TRIM_KEEP_SECONDS / CHUNK_SECONDS))
-WARMUP_MAX_BACKLOG_CHUNKS = 3  # <=60 ms queued after 500 ms warm-up
 RECONCILE_SECONDS = 1.0
-RETURN_STABILIZE_SECONDS = 0.0
-# Local receiver recovery. A member that was already in the running cohort may
-# rebuild only its own nc/aplay/TCP chain without restarting healthy members.
-LOCAL_RECOVERY_DELAY_SECONDS = 0.35
-MEMBER_RETRY_BASE_SECONDS = 1.0
+RETURN_STABILIZE_SECONDS = 1.0
+MEMBER_RETRY_BASE_SECONDS = 1.5
 MEMBER_RETRY_MAX_SECONDS = 15.0
 PCM_HEALTH_CHECK_SECONDS = 2.0
 PCM_STALL_TIMEOUT = 12.0
 PCM_START_GRACE_SECONDS = 8.0
-WRITER_DRAIN_TIMEOUT = 4.0
-# Do not call drain() for every 20 ms frame.  Let asyncio/TCP absorb normal
-# scheduler and Wi-Fi jitter and only back-pressure a writer when its own
-# socket buffer is genuinely building up.
-WRITER_HIGH_WATER_BYTES = CHUNK_BYTES * 32   # ~640 ms
-WRITER_LOW_WATER_BYTES = CHUNK_BYTES * 8     # ~160 ms
-SOCKET_SNDBUF_BYTES = CHUNK_BYTES * 64       # ~1.28 s
-WATCHDOG_RESTART_DELAY = 4.0
-WATCHDOG_MAX_RESTARTS = 1
-WATCHDOG_SLOW_RETRY_DELAY = 60.0
+WRITER_DRAIN_TIMEOUT = 1.0
+WRITER_HIGH_WATER_BYTES = CHUNK_BYTES * 8   # ~160 ms at 32 kHz mono S32
+WRITER_LOW_WATER_BYTES = CHUNK_BYTES * 2    # ~40 ms
+SOCKET_SNDBUF_BYTES = CHUNK_BYTES * 8
+WATCHDOG_RESTART_DELAY = 3.0
+WATCHDOG_MAX_RESTARTS = 3
+WATCHDOG_SLOW_RETRY_DELAY = 30.0
 WATCHDOG_STABLE_SECONDS = 30.0
-FULL_RESYNC_RETRY_SECONDS = 0.0
-FULL_RESYNC_HARD_TIMEOUT = 20.0
+FULL_RESYNC_RETRY_SECONDS = MEMBER_RETRY_BASE_SECONDS  # compatibility attribute only
+FULL_RESYNC_HARD_TIMEOUT = 20.0  # compatibility safety net; member faults never call it
 MANUAL_RESET_NORMAL_STOP_TIMEOUT = 6.0
 MANUAL_RESET_REMOTE_TIMEOUT = 3.0
-MEMBER_REMOTE_START_TIMEOUT = 8.0  # informational; run_command owns its socket timeout
-MEMBER_REMOTE_STOP_TIMEOUT = 8.0
-MEMBER_CONNECT_ATTEMPTS = 10
-MEMBER_CONNECT_TIMEOUT = 0.50
-MEMBER_CONNECT_RETRY_DELAY = 0.10
+MEMBER_REMOTE_START_TIMEOUT = 2.5
+MEMBER_REMOTE_STOP_TIMEOUT = 1.5
+MEMBER_CONNECT_ATTEMPTS = 6
+MEMBER_CONNECT_TIMEOUT = 0.40
+MEMBER_CONNECT_RETRY_DELAY = 0.08
 WRITER_CLOSE_TIMEOUT = 0.75
 TASK_CANCEL_TIMEOUT = 1.0
-# Diagnostic-only thresholds. These DO NOT change buffering, timing, cohort
-# membership, writer limits, or any synchronisation behavior.
-PCM_DIAG_SOURCE_GAP_WARN_MS = 80.0
-PCM_DIAG_MEMBER_FEED_GAP_WARN_MS = 80.0
-PCM_DIAG_DRAIN_WARN_MS = 80.0
-PCM_DIAG_EVENT_LOOP_INTERVAL_SECONDS = 0.10
-PCM_DIAG_EVENT_LOOP_WARN_MS = 100.0
-PCM_DIAG_EVENT_HISTORY = 16
-# Transport liveness guards. These do not change cohort timing/synchronisation.
-NO_ACTIVE_MEMBERS_TIMEOUT = 8.0
-USER_PLAY_HARD_TIMEOUT = 14.0
-WATCHDOG_RESTART_HARD_TIMEOUT = 14.0
 PERIODIC_RECEIVER_RESYNC_ENABLED = False
 PERIODIC_RECEIVER_RESYNC_SECONDS = 10 * 60.0
 PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS = 2
@@ -122,11 +97,7 @@ GROUP_STOP_COMMAND = (
     f"for f in {GROUP_NC_PID} {GROUP_APLAY_PID}; do "
     '[ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; '
     "done; "
-    # Fallback cleanup only for an nc whose stdout is our group FIFO.  The
-    # integration sound source also listens on 12347 but writes to /dev/null;
-    # this test deliberately leaves that process alone.
     f"for p in $(ps w | grep '[n]c -l -p {GROUP_PORT}' | awk '{{print $1}}'); do "
-    f'[ "$(readlink /proc/$p/fd/1 2>/dev/null)" = "{GROUP_FIFO}" ] && '
     'kill -9 "$p" 2>/dev/null; done; '
     f"for p in $(ps w | grep '[a]play .*{GROUP_FIFO}' | awk '{{print $1}}'); do "
     'kill -9 "$p" 2>/dev/null; done; '
@@ -172,13 +143,6 @@ class GroupMember:
     lag_since_monotonic: float | None = None
     lag_peak_chunks: int = 0
     detaching: bool = False
-    diag_last_feed_monotonic: float | None = None
-    diag_feed_gap_max_ms: float = 0.0
-    diag_feed_gap_count: int = 0
-    diag_drain_max_ms: float = 0.0
-    diag_slow_drain_count: int = 0
-    diag_queue_peak_chunks: int = 0
-    diag_last_log_monotonic: float = 0.0
 
 
 class AqaraM1SMediaGroupManager:
@@ -207,7 +171,6 @@ class AqaraM1SMediaGroupManager:
         self.watchdog_task: asyncio.Task | None = None
         self.stable_task: asyncio.Task | None = None
         self.health_task: asyncio.Task | None = None
-        self.diag_task: asyncio.Task | None = None
         self.resync_task: asyncio.Task | None = None
         self.periodic_receiver_resync_task: asyncio.Task | None = None
         self.slow_retry_task: asyncio.Task | None = None
@@ -235,17 +198,6 @@ class AqaraM1SMediaGroupManager:
         self._gain_ramp_remaining = 0
         self._ffmpeg_nice_applied = False
         self._shutting_down = False
-        self._accept_initial_prepares = False
-        self._sound_group_resume: set[str] = set()
-        self._sound_return_restart_task: asyncio.Task | None = None
-        self._no_active_since_monotonic: float | None = None
-        self._transport_self_heal_count = 0
-        self._diag_source_gap_max_ms = 0.0
-        self._diag_source_gap_count = 0
-        self._diag_event_loop_lag_max_ms = 0.0
-        self._diag_event_loop_lag_count = 0
-        self._diag_events: list[str] = []
-        self._browse_title_cache: dict[str, str] = {}
 
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
         existing = self.members.get(entry_id)
@@ -273,7 +225,6 @@ class AqaraM1SMediaGroupManager:
         self.members.pop(entry_id, None)
         self.individual_intent.discard(entry_id)
         self.sound_intent.discard(entry_id)
-        self._sound_group_resume.discard(entry_id)
         self._signal_update()
 
     def set_selected(self, entry_id: str, selected: bool) -> None:
@@ -330,9 +281,13 @@ class AqaraM1SMediaGroupManager:
     async def async_claim_sound(self, entry_id: str) -> None:
         """Give an integration sound absolute priority on exactly one hub."""
         member = self.members.get(entry_id)
-        had_group_session = bool(member and member.writer is not None)
-        if had_group_session:
-            self._sound_group_resume.add(entry_id)
+        had_group_session = bool(
+            member
+            and (
+                member.writer is not None
+                or (self.desired_playing and member.state in ("playing_group", "waiting_for_sync"))
+            )
+        )
         self.sound_intent.add(entry_id)
         await self._detach_member(
             entry_id,
@@ -342,22 +297,20 @@ class AqaraM1SMediaGroupManager:
         self._signal_update()
 
     async def async_release_sound(self, entry_id: str) -> None:
-        """Release sound focus and locally rejoin only the interrupted hub."""
-        resume_group = entry_id in self._sound_group_resume
-        self._sound_group_resume.discard(entry_id)
+        """Release a priority sound and let the previous owner resume/rejoin."""
         self.sound_intent.discard(entry_id)
         member = self.members.get(entry_id)
         if member is not None:
             if entry_id in self.individual_intent:
                 member.state = "playing_individual"
-            elif member.selected and resume_group and self.desired_playing and self.media_url:
-                member.state = "recovering_after_sound"
-                member.prepare_failures = 0
-                member.next_prepare_monotonic = time.monotonic() + LOCAL_RECOVERY_DELAY_SECONDS
-                self._ensure_reconcile_task()
             elif member.selected:
-                member.state = "idle"
+                member.state = "waiting_for_sync" if self.desired_playing else "idle"
+                member.last_prepare_attempt_monotonic = 0.0
+                member.prepare_failures = 0
+                member.next_prepare_monotonic = 0.0
         self._signal_update()
+        if self.desired_playing:
+            self._ensure_reconcile_task()
 
     def member_is_sound(self, entry_id: str) -> bool:
         return entry_id in self.sound_intent
@@ -426,8 +379,8 @@ class AqaraM1SMediaGroupManager:
         if self._stream_started_monotonic is not None:
             timestamp = round(self._sequence * CHUNK_SECONDS, 3)
         return {
-            "transport": "stable_fixed_cohort_elastic_fanout",
-            "architecture": "fixed_cohort_conditional_tcp_backpressure",
+            "transport": "clocked_shared_pcm_timeline",
+            "architecture": "google_home_style_coordinator_independent_receivers",
             "stream_sequence": self._sequence,
             "stream_timestamp_seconds": timestamp,
             "sync_lead_seconds": SYNC_LEAD_SECONDS,
@@ -448,14 +401,11 @@ class AqaraM1SMediaGroupManager:
             "excluded_hubs": sorted(by_state.get("excluded", [])),
             "last_failure": self._last_failure,
             "watchdog_restart_attempts": self._watchdog_attempts,
-            "rejoin_sync_mode": "local_recovery_only_no_manual_late_join",
-            "recovering_hubs": sorted(
-                by_state.get("recovering", []) + by_state.get("recovering_after_sound", [])
-            ),
+            "rejoin_sync_mode": "late_join_future_clock_boundary",
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
-            "receiver_drift_guard_mode": "fixed_cohort_no_periodic_resync",
+            "receiver_drift_guard_mode": "clock_paced_stream_no_periodic_global_resync",
             "receiver_resync_interval_seconds": PERIODIC_RECEIVER_RESYNC_SECONDS,
             "receiver_resync_count": self._receiver_resync_count,
             "last_receiver_resync_reason": self._last_receiver_resync_reason,
@@ -467,13 +417,6 @@ class AqaraM1SMediaGroupManager:
             "return_stabilize_seconds": RETURN_STABILIZE_SECONDS,
             "pcm_health_check_seconds": PCM_HEALTH_CHECK_SECONDS,
             "pcm_stall_timeout_seconds": PCM_STALL_TIMEOUT,
-            "no_active_members_timeout_seconds": NO_ACTIVE_MEMBERS_TIMEOUT,
-            "no_active_members_age_seconds": (
-                None
-                if self._no_active_since_monotonic is None
-                else round(time.monotonic() - self._no_active_since_monotonic, 1)
-            ),
-            "transport_self_heal_count": self._transport_self_heal_count,
             "pcm_age_seconds": (
                 round(time.monotonic() - self._last_pcm_monotonic, 3)
                 if self._last_pcm_monotonic is not None
@@ -498,37 +441,7 @@ class AqaraM1SMediaGroupManager:
                 for member in self.active_members
                 if member.lag_since_monotonic is not None
             },
-            "pcm_diag_source_gap_max_ms": round(self._diag_source_gap_max_ms, 1),
-            "pcm_diag_source_gap_count": self._diag_source_gap_count,
-            "pcm_diag_event_loop_lag_max_ms": round(self._diag_event_loop_lag_max_ms, 1),
-            "pcm_diag_event_loop_lag_count": self._diag_event_loop_lag_count,
-            "pcm_diag_member_feed_gap_max_ms": {
-                member.name: round(member.diag_feed_gap_max_ms, 1)
-                for member in self.members.values()
-                if member.diag_feed_gap_max_ms > 0
-            },
-            "pcm_diag_member_feed_gap_count": {
-                member.name: member.diag_feed_gap_count
-                for member in self.members.values()
-                if member.diag_feed_gap_count > 0
-            },
-            "pcm_diag_member_drain_max_ms": {
-                member.name: round(member.diag_drain_max_ms, 1)
-                for member in self.members.values()
-                if member.diag_drain_max_ms > 0
-            },
-            "pcm_diag_member_slow_drain_count": {
-                member.name: member.diag_slow_drain_count
-                for member in self.members.values()
-                if member.diag_slow_drain_count > 0
-            },
-            "pcm_diag_member_queue_peak_ms": {
-                member.name: int(member.diag_queue_peak_chunks * CHUNK_SECONDS * 1000)
-                for member in self.members.values()
-                if member.diag_queue_peak_chunks > 0
-            },
-            "pcm_diag_last_events": list(self._diag_events),
-            "sync_policy": "fixed_cohort_isolate_member_no_late_join",
+            "sync_policy": "clocked_timeline_isolate_member_late_rejoin_source_failure_only_global_restart",
             "queue_overflow_policy": "detach_only_slow_member",
             "writer_high_water_ms": int(WRITER_HIGH_WATER_BYTES / (PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES) * 1000),
             "periodic_receiver_resync_enabled": PERIODIC_RECEIVER_RESYNC_ENABLED,
@@ -544,87 +457,6 @@ class AqaraM1SMediaGroupManager:
             "aplay_nice_target": APLAY_NICE_TARGET,
         }
 
-    def _diag_record(self, kind: str, detail: str, *, warning: bool = True) -> None:
-        """Keep a short in-entity history and emit one HA log line per anomaly."""
-        event = f"{time.strftime('%H:%M:%S')} {kind} {detail}"
-        self._diag_events.append(event)
-        if len(self._diag_events) > PCM_DIAG_EVENT_HISTORY:
-            del self._diag_events[:-PCM_DIAG_EVENT_HISTORY]
-        if warning:
-            _LOGGER.warning("M1S PCM DIAG %s %s", kind, detail)
-        else:
-            _LOGGER.info("M1S PCM DIAG %s %s", kind, detail)
-        self._signal_update()
-
-    async def _diagnostic_event_loop_watch(self, generation: int) -> None:
-        """Measure HA event-loop scheduling stalls without touching audio timing."""
-        last = time.monotonic()
-        try:
-            while generation == self._generation and self.desired_playing:
-                await asyncio.sleep(PCM_DIAG_EVENT_LOOP_INTERVAL_SECONDS)
-                now = time.monotonic()
-                lag_ms = max(
-                    0.0,
-                    (now - last - PCM_DIAG_EVENT_LOOP_INTERVAL_SECONDS) * 1000.0,
-                )
-                last = now
-                self._diag_event_loop_lag_max_ms = max(
-                    self._diag_event_loop_lag_max_ms, lag_ms
-                )
-                if lag_ms >= PCM_DIAG_EVENT_LOOP_WARN_MS:
-                    self._diag_event_loop_lag_count += 1
-                    self._diag_record(
-                        "event_loop_lag",
-                        f"lag={lag_ms:.1f}ms sequence={self._sequence}",
-                    )
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:
-            _LOGGER.debug("M1S PCM diagnostic heartbeat failed: %s", err)
-        finally:
-            if self.diag_task is asyncio.current_task():
-                self.diag_task = None
-
-    async def _bounded_restart(self, *, reason: str, allow_hard_reset_retry: bool) -> bool:
-        """Restart the transport with a hard deadline so HA controls never wedge."""
-
-        async def _run() -> None:
-            async with self._lock:
-                await self._restart_stream_locked(reason=reason)
-
-        try:
-            await asyncio.wait_for(_run(), timeout=USER_PLAY_HARD_TIMEOUT)
-            return True
-        except asyncio.TimeoutError:
-            self._last_failure = f"{reason}_timeout"
-            _LOGGER.error(
-                "M1S group %s exceeded %.1fs; hard-resetting transport",
-                reason,
-                USER_PLAY_HARD_TIMEOUT,
-            )
-
-        await self.async_force_reset(reason=f"{reason}_timeout")
-        if not allow_hard_reset_retry or not self.media_url:
-            return False
-
-        # The hard reset deliberately clears desired_playing. Restore the user's
-        # intent and attempt one clean bounded start. A second timeout returns the
-        # entity to IDLE instead of leaving it buffering indefinitely.
-        self.desired_playing = True
-        try:
-            await asyncio.wait_for(_run(), timeout=USER_PLAY_HARD_TIMEOUT)
-            self._transport_self_heal_count += 1
-            return True
-        except asyncio.TimeoutError:
-            self._last_failure = f"{reason}_retry_timeout"
-            _LOGGER.error(
-                "M1S group %s retry also exceeded %.1fs; returning to idle",
-                reason,
-                USER_PLAY_HARD_TIMEOUT,
-            )
-            await self.async_force_reset(reason=f"{reason}_retry_timeout")
-            return False
-
     async def async_start(
         self,
         media_url: str,
@@ -632,27 +464,25 @@ class AqaraM1SMediaGroupManager:
         media_type: str,
         title: str | None,
     ) -> None:
-        self.media_url = media_url
-        self.media_id = media_id
-        self.media_type = media_type or MediaType.MUSIC
-        self.media_title = title
-        self.desired_playing = True
-        self._watchdog_attempts = 0
-        self._no_active_since_monotonic = None
-        await self._bounded_restart(reason="user_play", allow_hard_reset_retry=True)
-        if self.desired_playing:
-            self._ensure_reconcile_task()
+        async with self._lock:
+            self.media_url = media_url
+            self.media_id = media_id
+            self.media_type = media_type or MediaType.MUSIC
+            self.media_title = title
+            self.desired_playing = True
+            self._watchdog_attempts = 0
+            await self._restart_stream_locked(reason="user_play")
+        self._ensure_reconcile_task()
         self._signal_update()
 
     async def async_resume(self) -> None:
         if not self.media_url:
             return
         self.desired_playing = True
-        self._no_active_since_monotonic = None
-        if not self.ffmpeg_running:
-            await self._bounded_restart(reason="resume", allow_hard_reset_retry=True)
-        if self.desired_playing:
-            self._ensure_reconcile_task()
+        async with self._lock:
+            if not self.ffmpeg_running:
+                await self._restart_stream_locked(reason="resume")
+        self._ensure_reconcile_task()
         self._signal_update()
 
     async def async_stop(self, *, clear_intent: bool = True) -> None:
@@ -698,7 +528,6 @@ class AqaraM1SMediaGroupManager:
         self._broadcast_pause_requested.clear()
         self._broadcast_paused.clear()
         self._playout_epoch_monotonic = None
-        self._no_active_since_monotonic = None
         self._generation += 1
 
         try:
@@ -757,8 +586,10 @@ class AqaraM1SMediaGroupManager:
 
             for member in list(self.members.values()):
                 member.generation += 1
-                # Do not cancel a prepare task blocked in a Telnet executor; its
-                # generation is invalidated above and it will self-clean on return.
+                prepare_task = member.prepare_task
+                member.prepare_task = None
+                if prepare_task and prepare_task is not current and not prepare_task.done():
+                    prepare_task.cancel()
                 task = member.writer_task
                 member.writer_task = None
                 if task and task is not current and not task.done():
@@ -911,88 +742,55 @@ class AqaraM1SMediaGroupManager:
         return samples.tobytes()
 
     async def _restart_stream_locked(self, reason: str) -> None:
-        """Build one fixed receiver cohort and then start one shared source.
+        """Restart the shared SOURCE timeline, never because one member is slow.
 
-        There is intentionally no late join.  A hub that cannot become ready in
-        this startup window stays out until the next Play (or a controlled
-        priority-sound rebuild).  This trades clever recovery for deterministic
-        phase alignment and prevents one bad hub from churning the whole group.
+        Member failures are handled by isolation + late rejoin.  A global restart
+        is reserved for user Play/source/FFmpeg health failures.
         """
         await self._stop_stream_locked(stop_members=True, reason=reason)
         if not self.desired_playing or not self.media_url:
             return
 
         eligible = [m for m in self.members.values() if self._eligible(m)]
-        self._accept_initial_prepares = True
         prepare_tasks: list[asyncio.Task] = []
         for member in eligible:
             task = self._schedule_member_prepare(member, initial=True)
             if task is not None:
                 prepare_tasks.append(task)
 
-        if prepare_tasks:
-            # asyncio.wait does NOT cancel slow Telnet executor jobs.  They are
-            # allowed to finish, notice that the cohort window closed, and clean
-            # up their own receiver instead of racing a newer session.
-            await asyncio.wait(
-                prepare_tasks, timeout=START_COHORT_GRACE_SECONDS
+        # Google-Home-like startup policy: establish a small initial cohort, not
+        # a hard all-members barrier.  Start as soon as one hub is ready, allow a
+        # short grace window for other healthy hubs, and let the rest join later.
+        pending = set(prepare_tasks)
+        deadline = time.monotonic() + START_FIRST_MEMBER_TIMEOUT
+        while pending and not self.active_members:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            done, pending = await asyncio.wait(
+                pending,
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-        self._accept_initial_prepares = False
+            if not done:
+                break
+
+        if self.active_members and pending:
+            # Preparation continues independently during this tiny cohort window.
+            await asyncio.sleep(START_COHORT_GRACE_SECONDS)
 
         if not self.active_members:
             self._last_failure = "no_group_member_ready"
-            self.desired_playing = False
             _LOGGER.warning(
-                "M1S group Play aborted: no receiver joined the %.1fs startup cohort",
-                START_COHORT_GRACE_SECONDS,
+                "M1S group Play has no ready receiver yet; keeping intent and "
+                "retrying members in background"
             )
-            return
-
-        await self._warmup_cohort_locked()
-        if not self.active_members:
-            self._last_failure = "cohort_failed_warmup"
-            self.desired_playing = False
             return
 
         await self._start_ffmpeg_locked()
 
-    async def _warmup_cohort_locked(self) -> None:
-        """Prime identical hub-side ALSA pipelines with paced silence."""
-        for member in self.active_members:
-            member.state = "warming_up"
-            member.join_at_sequence = None
-
-        for _ in range(INITIAL_PREROLL_CHUNKS):
-            for member in list(self.active_members):
-                queue = member.queue
-                if queue is None:
-                    continue
-                try:
-                    queue.put_nowait(SILENCE_CHUNK)
-                except asyncio.QueueFull:
-                    self._schedule_isolate_member(
-                        member, reason="warmup_queue_full"
-                    )
-            await asyncio.sleep(CHUNK_SECONDS)
-
-        # A receiver that still has more than ~60 ms waiting after a full 500 ms
-        # warm-up is already behind before music starts.  Exclude it now rather
-        # than creating an audible echo for the whole session.
-        for member in list(self.active_members):
-            queue = member.queue
-            if queue is not None and queue.qsize() > WARMUP_MAX_BACKLOG_CHUNKS:
-                _LOGGER.warning(
-                    "M1S group excluding member before source start; warm-up backlog=%sms name=%s",
-                    int(queue.qsize() * CHUNK_SECONDS * 1000),
-                    member.name,
-                )
-                self._schedule_isolate_member(
-                    member, reason="warmup_backlog"
-                )
-        await asyncio.sleep(0.08)
-
     async def _start_ffmpeg_locked(self) -> None:
-        if not self.media_url or not self.desired_playing or not self.active_members:
+        if not self.media_url or not self.desired_playing:
             return
         ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
         args = [
@@ -1001,7 +799,6 @@ class AqaraM1SMediaGroupManager:
             "-hide_banner",
             "-loglevel",
             "warning",
-            "-re",
         ]
         if urlsplit(self.media_url).scheme.lower() in ("http", "https"):
             args.extend(
@@ -1015,8 +812,18 @@ class AqaraM1SMediaGroupManager:
                 ]
             )
         args.extend([
-            "-i", self.media_url, "-vn", "-ac", "1", "-ar", str(PCM_RATE),
-            "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1",
+            "-i",
+            self.media_url,
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            str(PCM_RATE),
+            "-c:a",
+            "pcm_s32le",
+            "-f",
+            "s32le",
+            "pipe:1",
         ])
         try:
             process = await asyncio.create_subprocess_exec(
@@ -1039,22 +846,13 @@ class AqaraM1SMediaGroupManager:
         self._stream_started_monotonic = time.monotonic()
         self._playout_epoch_monotonic = None
         self._last_pcm_monotonic = None
-        self._no_active_since_monotonic = None
-        self._diag_source_gap_max_ms = 0.0
-        self._diag_source_gap_count = 0
-        self._diag_event_loop_lag_max_ms = 0.0
-        self._diag_event_loop_lag_count = 0
-        self._diag_events.clear()
         for member in self.active_members:
-            member.join_at_sequence = None
-            member.state = "playing_group"
-            member.diag_last_feed_monotonic = None
-            member.diag_feed_gap_max_ms = 0.0
-            member.diag_feed_gap_count = 0
-            member.diag_drain_max_ms = 0.0
-            member.diag_slow_drain_count = 0
-            member.diag_queue_peak_chunks = 0
-            member.diag_last_log_monotonic = 0.0
+            member.lag_since_monotonic = None
+            member.lag_peak_chunks = 0
+            # All initial receivers warm their local aplay pipeline with the same
+            # scheduled silence before source audio begins.
+            member.join_at_sequence = INITIAL_PREROLL_CHUNKS
+            member.state = "waiting_for_sync"
 
         self.broadcast_task = self.hass.async_create_background_task(
             self._broadcast_loop(process, generation),
@@ -1072,12 +870,8 @@ class AqaraM1SMediaGroupManager:
             self._pcm_health_watch(process, generation),
             "aqara_m1s_group_pcm_health_watch",
         )
-        self.diag_task = self.hass.async_create_background_task(
-            self._diagnostic_event_loop_watch(generation),
-            "aqara_m1s_group_pcm_diag_heartbeat",
-        )
         _LOGGER.info(
-            "M1S stable cohort source started pid=%s source=%s members=%s",
+            "M1S group FFmpeg started pid=%s source=%s members=%s",
             process.pid,
             self._safe_media_for_log(self.media_url),
             [m.name for m in self.active_members],
@@ -1099,14 +893,12 @@ class AqaraM1SMediaGroupManager:
             return False
 
     async def _stop_stream_locked(self, *, stop_members: bool, reason: str) -> None:
-        self._accept_initial_prepares = False
         self._broadcast_pause_requested.clear()
         self._broadcast_paused.clear()
         self._playout_epoch_monotonic = None
-        self._no_active_since_monotonic = None
         self._generation += 1
         current = asyncio.current_task()
-        for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task", "diag_task"):
+        for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task"):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task and task is not current:
@@ -1189,56 +981,26 @@ class AqaraM1SMediaGroupManager:
         if delay > 0:
             await asyncio.sleep(delay)
 
-    def _schedule_recover_member(self, member: GroupMember, *, reason: str) -> None:
-        """Recover one failed cohort receiver without touching healthy members."""
-        if member.detaching:
-            return
-        member.detaching = True
-        member.last_error = reason
-        member.state = "recovering"
-
-        async def _runner() -> None:
-            try:
-                await self._detach_member(
-                    member.entry_id,
-                    stop_remote=True,
-                    new_state=("offline" if not self._member_online(member) else "recovering"),
-                )
-                if (
-                    self.desired_playing
-                    and self.media_url
-                    and self._eligible(member)
-                    and member.entry_id not in self.sound_intent
-                    and member.entry_id not in self.individual_intent
-                ):
-                    member.state = "recovering"
-                    member.next_prepare_monotonic = time.monotonic() + LOCAL_RECOVERY_DELAY_SECONDS
-                    self._ensure_reconcile_task()
-            finally:
-                member.detaching = False
-                self._signal_update()
-
-        self.hass.async_create_background_task(
-            _runner(), f"aqara_m1s_group_recover_{member.entry_id}"
-        )
-
     def _schedule_isolate_member(self, member: GroupMember, *, reason: str) -> None:
         if member.detaching:
             return
         member.detaching = True
         member.last_error = reason
-        member.state = "dropped_until_next_play"
+        member.state = "waiting_for_sync"
+        self._set_member_retry(member, failed=True)
 
         async def _runner() -> None:
             try:
                 await self._detach_member(
                     member.entry_id,
-                    stop_remote=True,
+                    stop_remote=False,
                     new_state=(
                         "offline" if not self._member_online(member)
-                        else "dropped_until_next_play"
+                        else "waiting_for_sync"
                     ),
                 )
+                if self._member_online(member):
+                    await self._remote_group_stop(member)
             finally:
                 member.detaching = False
                 self._signal_update()
@@ -1275,26 +1037,12 @@ class AqaraM1SMediaGroupManager:
         member.generation += 1
         generation = member.generation
         try:
-            await self.hass.async_add_executor_job(
-                member.client.run_command, GROUP_START_COMMAND
+            await asyncio.wait_for(
+                self.hass.async_add_executor_job(
+                    member.client.run_command, GROUP_START_COMMAND
+                ),
+                timeout=MEMBER_REMOTE_START_TIMEOUT,
             )
-
-            # A slow Telnet command may finish after the startup cohort closed or
-            # after Stop/another owner changed this member.  Never let that stale
-            # completion become a late audible join.
-            if (
-                member.generation != generation
-                or not self.desired_playing
-                or not self._eligible(member)
-                or (initial and not self._accept_initial_prepares)
-            ):
-                await self.hass.async_add_executor_job(
-                    member.client.run_command, GROUP_STOP_COMMAND
-                )
-                member.state = self._idle_member_state(member)
-                self._signal_update()
-                return False
-
             writer: asyncio.StreamWriter | None = None
             last_error: Exception | None = None
             for _ in range(MEMBER_CONNECT_ATTEMPTS):
@@ -1310,31 +1058,20 @@ class AqaraM1SMediaGroupManager:
             if writer is None:
                 raise ConnectionError(f"group receiver unavailable: {last_error}")
 
-            if (
-                member.generation != generation
-                or not self.desired_playing
-                or not self._eligible(member)
-                or (initial and not self._accept_initial_prepares)
-            ):
-                writer.close()
-                with suppress(Exception):
-                    await asyncio.wait_for(writer.wait_closed(), timeout=WRITER_CLOSE_TIMEOUT)
-                await self.hass.async_add_executor_job(
-                    member.client.run_command, GROUP_STOP_COMMAND
-                )
-                return False
-
             sock = writer.get_extra_info("socket")
             if sock is not None:
                 with suppress(OSError):
                     import socket
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    # Keep kernel buffering bounded so a stalled hub is noticed
+                    # quickly instead of silently accumulating seconds of audio.
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCKET_SNDBUF_BYTES)
             transport = getattr(writer, "transport", None)
             if transport is not None:
                 with suppress(Exception):
                     transport.set_write_buffer_limits(
-                        high=WRITER_HIGH_WATER_BYTES, low=WRITER_LOW_WATER_BYTES
+                        high=WRITER_HIGH_WATER_BYTES,
+                        low=WRITER_LOW_WATER_BYTES,
                     )
 
             member.writer = writer
@@ -1342,34 +1079,37 @@ class AqaraM1SMediaGroupManager:
             member.detaching = False
             member.lag_since_monotonic = None
             member.lag_peak_chunks = 0
-            member.join_at_sequence = self._sequence if (not initial and self.ffmpeg_running) else None
-            member.state = "playing_group" if (not initial and self.ffmpeg_running) else "prepared"
+            member.join_at_sequence = (
+                INITIAL_PREROLL_CHUNKS
+                if not self.ffmpeg_running or self._sequence == 0
+                else self._future_join_sequence()
+            )
+            member.state = "waiting_for_sync"
             member.last_error = None
-            member.prepare_failures = 0
-            member.next_prepare_monotonic = 0.0
+            self._set_member_retry(member, failed=False)
             member.writer_task = self.hass.async_create_background_task(
                 self._member_writer_loop(member, generation),
                 f"aqara_m1s_group_writer_{member.entry_id}",
             )
-            _LOGGER.info("M1S group cohort member ready: %s", member.name)
+            _LOGGER.info(
+                "M1S group member prepared name=%s join_at_sequence=%s current=%s",
+                member.name,
+                member.join_at_sequence,
+                self._sequence,
+            )
             self._signal_update()
             return True
-        except asyncio.CancelledError:
-            raise
         except Exception as err:
             member.last_error = str(err)
-            if not self._member_online(member):
-                member.state = "offline"
-            elif not initial and self.desired_playing and self._eligible(member):
-                member.state = "recovering"
-                self._mark_prepare_result(member, False)
-            else:
-                member.state = "waiting_for_next_play"
+            self._set_member_retry(member, failed=True)
+            member.state = "offline" if not self._member_online(member) else "waiting_for_sync"
             _LOGGER.warning("M1S group skipped %s: %s", member.name, err)
-            # Precise cleanup cannot kill the priority-sound source on 12347.
             with suppress(Exception):
-                await self.hass.async_add_executor_job(
-                    member.client.run_command, GROUP_STOP_COMMAND
+                await asyncio.wait_for(
+                    self.hass.async_add_executor_job(
+                        member.client.run_command, GROUP_STOP_COMMAND
+                    ),
+                    timeout=MEMBER_REMOTE_STOP_TIMEOUT,
                 )
             self._signal_update()
             return False
@@ -1384,65 +1124,23 @@ class AqaraM1SMediaGroupManager:
                 chunk = await queue.get()
                 if chunk is None:
                     return
-                now = time.monotonic()
-                if member.diag_last_feed_monotonic is not None:
-                    feed_gap_ms = (now - member.diag_last_feed_monotonic) * 1000.0
-                    member.diag_feed_gap_max_ms = max(
-                        member.diag_feed_gap_max_ms, feed_gap_ms
-                    )
-                    if feed_gap_ms >= PCM_DIAG_MEMBER_FEED_GAP_WARN_MS:
-                        member.diag_feed_gap_count += 1
-                        # Rate-limit repeated warnings caused by one continuous stall.
-                        if now - member.diag_last_log_monotonic >= 0.25:
-                            member.diag_last_log_monotonic = now
-                            self._diag_record(
-                                "member_feed_gap",
-                                f"hub={member.name} gap={feed_gap_ms:.1f}ms "
-                                f"queue={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
-                            )
-                member.diag_last_feed_monotonic = now
-                member.diag_queue_peak_chunks = max(
-                    member.diag_queue_peak_chunks, queue.qsize()
-                )
                 writer.write(chunk)
-                transport = getattr(writer, "transport", None)
-                write_buffer = (
-                    transport.get_write_buffer_size()
-                    if transport is not None
-                    else 0
-                )
-                # drain() is intentionally conditional.  Awaiting it on every
-                # 20 ms frame was able to stall one member writer long enough
-                # to create multi-second feed gaps and ALSA underruns.
-                if write_buffer >= WRITER_HIGH_WATER_BYTES:
-                    drain_started = time.monotonic()
-                    await asyncio.wait_for(
-                        writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
-                    )
-                    drain_ms = (time.monotonic() - drain_started) * 1000.0
-                    member.diag_drain_max_ms = max(
-                        member.diag_drain_max_ms, drain_ms
-                    )
-                    if drain_ms >= PCM_DIAG_DRAIN_WARN_MS:
-                        member.diag_slow_drain_count += 1
-                        now2 = time.monotonic()
-                        if now2 - member.diag_last_log_monotonic >= 0.25:
-                            member.diag_last_log_monotonic = now2
-                            self._diag_record(
-                                "slow_drain",
-                                f"hub={member.name} drain={drain_ms:.1f}ms "
-                                f"write_buffer={write_buffer}B "
-                                f"queue={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms",
-                            )
+                await asyncio.wait_for(writer.drain(), timeout=WRITER_DRAIN_TIMEOUT)
         except asyncio.CancelledError:
             raise
         except Exception as err:
             member.last_error = str(err)
+            self._set_member_retry(member, failed=True)
+            member.detaching = True
             _LOGGER.warning("M1S group member writer failed %s: %s", member.name, err)
         finally:
-            if member.generation == generation and not member.detaching:
-                self._schedule_recover_member(
-                    member, reason=member.last_error or "writer_ended"
+            if member.generation == generation:
+                self.hass.async_create_task(
+                    self._detach_member(
+                        member.entry_id,
+                        stop_remote=True,
+                        new_state="offline" if not self._member_online(member) else "waiting_for_sync",
+                    )
                 )
 
     async def _detach_member(
@@ -1452,6 +1150,8 @@ class AqaraM1SMediaGroupManager:
         if member is None:
             return
         member.generation += 1
+        prepare_task = member.prepare_task
+        member.prepare_task = None
         task = member.writer_task
         member.writer_task = None
         queue = member.queue
@@ -1464,67 +1164,78 @@ class AqaraM1SMediaGroupManager:
         if queue is not None:
             with suppress(asyncio.QueueFull):
                 queue.put_nowait(None)
+        if prepare_task and prepare_task is not asyncio.current_task():
+            await self._cancel_task(prepare_task)
         if task and task is not asyncio.current_task():
             await self._cancel_task(task)
         if writer is not None:
             writer.close()
             with suppress(Exception):
-                await asyncio.wait_for(writer.wait_closed(), timeout=WRITER_CLOSE_TIMEOUT)
+                await asyncio.wait_for(
+                    writer.wait_closed(), timeout=WRITER_CLOSE_TIMEOUT
+                )
         if stop_remote and self._member_online(member):
-            # Run cleanup as an independent task. Closing TCP already makes nc/FIFO
-            # hit EOF quickly; this avoids Home Assistant Stop waiting on Telnet.
-            self.hass.async_create_background_task(
-                self._remote_group_stop(member),
-                f"aqara_m1s_group_remote_stop_{member.entry_id}",
-            )
+            with suppress(Exception):
+                await asyncio.wait_for(
+                    self.hass.async_add_executor_job(
+                        member.client.run_command, GROUP_STOP_COMMAND
+                    ),
+                    timeout=MEMBER_REMOTE_STOP_TIMEOUT,
+                )
         member.state = new_state
         member.detaching = False
+        if new_state == "offline":
+            # A real offline -> online transition gets a fresh short backoff when
+            # the coordinator sees it return.
+            member.last_prepare_attempt_monotonic = 0.0
         self._signal_update()
 
     async def _remote_group_stop(self, member: GroupMember) -> None:
-        try:
-            await self.hass.async_add_executor_job(
-                member.client.run_command, GROUP_STOP_COMMAND
+        with suppress(Exception):
+            await asyncio.wait_for(
+                self.hass.async_add_executor_job(
+                    member.client.run_command, GROUP_STOP_COMMAND
+                ),
+                timeout=MEMBER_REMOTE_STOP_TIMEOUT,
             )
-        except Exception as err:
-            _LOGGER.debug("M1S group remote cleanup failed %s: %s", member.name, err)
 
     async def _fanout_frame(self, chunk: bytes, sequence: int) -> None:
-        """Queue the same 20 ms frame for every member in the fixed cohort."""
+        """Fan one clocked frame to every healthy receiver without blocking peers."""
         for member in list(self.active_members):
             queue = member.queue
             if queue is None:
                 continue
-            depth = queue.qsize()
-            member.lag_peak_chunks = max(member.lag_peak_chunks, depth)
-            member.diag_queue_peak_chunks = max(member.diag_queue_peak_chunks, depth)
+            queue_depth = queue.qsize()
+            member.lag_peak_chunks = max(member.lag_peak_chunks, queue_depth)
+
+            outgoing = (
+                SILENCE_CHUNK
+                if member.join_at_sequence is not None
+                and sequence < member.join_at_sequence
+                else chunk
+            )
+            if (
+                member.join_at_sequence is not None
+                and sequence >= member.join_at_sequence
+            ):
+                member.join_at_sequence = None
+                member.state = "playing_group"
+                self._signal_update()
+
             try:
-                queue.put_nowait(chunk)
+                queue.put_nowait(outgoing)
             except asyncio.QueueFull:
-                # Keep the member in the fixed cohort.  Discard stale audio only
-                # from this member until roughly 500 ms remains, then queue the
-                # newest shared frame.  This makes a short Wi-Fi/TCP stall an
-                # audible catch-up at worst, not a permanent group ejection.
-                dropped = 0
-                while queue.qsize() > QUEUE_TRIM_KEEP_CHUNKS:
-                    try:
-                        queue.get_nowait()
-                        dropped += 1
-                    except asyncio.QueueEmpty:
-                        break
-                with suppress(asyncio.QueueFull):
-                    queue.put_nowait(chunk)
-                self._diag_record(
-                    "queue_trim",
-                    f"hub={member.name} dropped={dropped * CHUNK_SECONDS * 1000:.0f}ms "
-                    f"kept={queue.qsize() * CHUNK_SECONDS * 1000:.0f}ms "
-                    f"feed_gap_max={member.diag_feed_gap_max_ms:.1f}ms "
-                    f"drain_max={member.diag_drain_max_ms:.1f}ms",
-                )
                 _LOGGER.warning(
-                    "M1S group trimmed stale PCM for slow member %s: dropped=%sms",
+                    "M1S group isolating slow member after %.0f ms queue overflow: %s",
+                    QUEUE_SECONDS * 1000,
                     member.name,
-                    int(dropped * CHUNK_SECONDS * 1000),
+                )
+                self._schedule_isolate_member(
+                    member,
+                    reason=(
+                        f"PCM queue reached {int(QUEUE_SECONDS * 1000)} ms; "
+                        "member isolated"
+                    ),
                 )
 
     async def _broadcast_loop(
@@ -1532,37 +1243,51 @@ class AqaraM1SMediaGroupManager:
     ) -> None:
         if process.stdout is None:
             return
+        buffer = bytearray()
         try:
-            while generation == self._generation and self.desired_playing:
-                try:
-                    raw_chunk = await process.stdout.readexactly(CHUNK_BYTES)
-                except asyncio.IncompleteReadError as err:
-                    if err.partial:
-                        _LOGGER.debug(
-                            "M1S group source ended with partial PCM frame bytes=%s",
-                            len(err.partial),
-                        )
-                    break
-                chunk = self._apply_live_pcm_gain(raw_chunk)
-                now = time.monotonic()
-                if self._last_pcm_monotonic is not None:
-                    source_gap_ms = (now - self._last_pcm_monotonic) * 1000.0
-                    self._diag_source_gap_max_ms = max(
-                        self._diag_source_gap_max_ms, source_gap_ms
-                    )
-                    if source_gap_ms >= PCM_DIAG_SOURCE_GAP_WARN_MS:
-                        self._diag_source_gap_count += 1
-                        self._diag_record(
-                            "source_gap",
-                            f"gap={source_gap_ms:.1f}ms sequence={self._sequence} "
-                            f"active={len(self.active_members)}",
-                        )
+            # Common receiver warm-up: same silence, same HA clock, no source
+            # samples discarded.  This replaces the old 'throw away the first
+            # N source chunks as silence' startup behaviour.
+            for _ in range(INITIAL_PREROLL_CHUNKS):
+                if generation != self._generation or not self.desired_playing:
+                    return
                 sequence = self._sequence
+                await self._pace_frame(sequence)
+                await self._fanout_frame(SILENCE_CHUNK, sequence)
                 self._sequence += 1
-                self._last_pcm_monotonic = now
-                await self._fanout_frame(chunk, sequence)
-                # Let every per-hub writer run before requesting the next frame.
-                await asyncio.sleep(0)
+                self._last_pcm_monotonic = time.monotonic()
+
+            while generation == self._generation and self.desired_playing:
+                if self._broadcast_pause_requested.is_set():
+                    self._broadcast_paused.set()
+                    try:
+                        while (
+                            self._broadcast_pause_requested.is_set()
+                            and generation == self._generation
+                            and self.desired_playing
+                        ):
+                            await asyncio.sleep(0.01)
+                    finally:
+                        self._broadcast_paused.clear()
+                    if generation != self._generation or not self.desired_playing:
+                        return
+
+                data = await process.stdout.read(32768)
+                if not data:
+                    break
+                buffer.extend(data)
+                while len(buffer) >= CHUNK_BYTES:
+                    raw_chunk = bytes(buffer[:CHUNK_BYTES])
+                    del buffer[:CHUNK_BYTES]
+                    chunk = self._apply_live_pcm_gain(raw_chunk)
+                    sequence = self._sequence
+
+                    # The HA clock, not FFmpeg pipe burst timing, decides when a
+                    # frame is released to all receiver queues.
+                    await self._pace_frame(sequence)
+                    await self._fanout_frame(chunk, sequence)
+                    self._sequence += 1
+                    self._last_pcm_monotonic = time.monotonic()
         except asyncio.CancelledError:
             raise
         except Exception as err:
@@ -1722,57 +1447,80 @@ class AqaraM1SMediaGroupManager:
             )
 
     async def _reconcile_loop(self) -> None:
-        """Maintain eligibility only; never alter the running cohort membership."""
+        """Continuously heal individual receivers without disturbing the group."""
         try:
             while self.desired_playing and not self._shutting_down:
                 await asyncio.sleep(RECONCILE_SECONDS)
                 if not self.desired_playing:
                     return
+
+                now = time.monotonic()
+                for member in self.members.values():
+                    online = self._member_online(member)
+                    if member.was_online is None:
+                        member.was_online = online
+                        member.online_since_monotonic = now if online else None
+                    elif online and not member.was_online:
+                        member.was_online = True
+                        member.online_since_monotonic = now
+                        member.last_prepare_attempt_monotonic = 0.0
+                        member.prepare_failures = 0
+                        member.next_prepare_monotonic = 0.0
+                        member.state = "waiting_for_sync"
+                        _LOGGER.info(
+                            "M1S group member back online; short stabilization before "
+                            "late clock join: %s",
+                            member.name,
+                        )
+                    elif not online and member.was_online:
+                        member.was_online = False
+                        member.online_since_monotonic = None
+
+                # Remove ineligible members independently.
                 for member in list(self.members.values()):
                     if member.writer is not None and not self._eligible(member):
                         self._schedule_isolate_member(
-                            member, reason="member_no_longer_eligible"
+                            member, reason="member no longer eligible"
                         )
-                    elif member.writer is None and self._eligible(member):
-                        # Manual late join remains disabled. Only a receiver that
-                        # was already part of this session (or was interrupted by
-                        # a priority sound) may rebuild itself locally.
-                        if member.state in ("recovering", "recovering_after_sound"):
-                            if time.monotonic() >= member.next_prepare_monotonic:
-                                self._schedule_member_prepare(member, initial=False)
-                        elif member.state not in (
-                            "dropped_until_next_play",
-                            "waiting_for_next_play",
-                            "playing_sound",
+
+                missing = [
+                    member
+                    for member in self.members.values()
+                    if member.writer is None
+                    and member.prepare_task is None
+                    and self._eligible(member)
+                    and not member.detaching
+                ]
+                due = [
+                    member
+                    for member in missing
+                    if (
+                        member.online_since_monotonic is None
+                        or now - member.online_since_monotonic >= RETURN_STABILIZE_SECONDS
+                    )
+                    and now >= member.next_prepare_monotonic
+                ]
+                for member in due:
+                    self._schedule_member_prepare(
+                        member, initial=not self.ffmpeg_running
+                    )
+
+                # If Play was requested while every receiver was unavailable, start
+                # the source automatically as soon as any background preparation
+                # succeeds.  No global receiver teardown is performed.
+                if not self.ffmpeg_running and self.active_members and self.media_url:
+                    async with self._lock:
+                        if (
+                            self.desired_playing
+                            and not self.ffmpeg_running
+                            and self.active_members
+                            and self.media_url
                         ):
-                            member.state = "waiting_for_next_play"
+                            await self._start_ffmpeg_locked()
 
-                # If every receiver disappears while FFmpeg is still healthy,
-                # the old code could remain BUFFERING forever because PCM itself
-                # continued to advance. This is the one case where the whole
-                # transport is already lost, so a fresh cohort cannot disturb any
-                # audible member. Trigger one bounded watchdog recovery.
-                if self.ffmpeg_running and not self.active_members and not self.sound_intent:
-                    now = time.monotonic()
-                    if self._no_active_since_monotonic is None:
-                        self._no_active_since_monotonic = now
-                    elif now - self._no_active_since_monotonic >= NO_ACTIVE_MEMBERS_TIMEOUT:
-                        self._last_failure = "no_active_group_members"
-                        _LOGGER.warning(
-                            "M1S group has no active receivers for %.1fs; restarting transport",
-                            now - self._no_active_since_monotonic,
-                        )
-                        process = self.ffmpeg
-                        if process is not None and process.returncode is None:
-                            with suppress(ProcessLookupError):
-                                process.terminate()
-                        self._no_active_since_monotonic = None
-                        self._transport_self_heal_count += 1
-                        self._signal_update()
-                        return
-                else:
-                    self._no_active_since_monotonic = None
-
+                for member in self.members.values():
+                    if member.writer is None and member.prepare_task is None:
+                        member.state = self._idle_member_state(member)
                 self._signal_update()
         except asyncio.CancelledError:
             raise
@@ -1791,6 +1539,7 @@ class AqaraM1SMediaGroupManager:
     async def _pcm_health_watch(
         self, process: asyncio.subprocess.Process, generation: int
     ) -> None:
+        """Treat PCM progress, not merely a live FFmpeg PID, as stream health."""
         try:
             while generation == self._generation and self.desired_playing:
                 await asyncio.sleep(PCM_HEALTH_CHECK_SECONDS)
@@ -1807,26 +1556,35 @@ class AqaraM1SMediaGroupManager:
                 ):
                     continue
                 pcm_age = (
-                    None if self._last_pcm_monotonic is None
+                    None
+                    if self._last_pcm_monotonic is None
                     else now - self._last_pcm_monotonic
                 )
                 if pcm_age is None or pcm_age >= PCM_STALL_TIMEOUT:
                     age_text = "never" if pcm_age is None else f"{pcm_age:.1f}s"
                     self._last_failure = f"pcm_stall:{age_text}"
                     _LOGGER.warning(
-                        "M1S group source PCM stalled (last=%s); scheduling one bounded restart",
+                        "M1S group PCM stalled while FFmpeg pid=%s is still alive; "
+                        "forcing full restart (last PCM=%s)",
+                        process.pid,
                         age_text,
                     )
-                    # Terminate this source; broadcaster/watchdog owns the restart.
-                    if process.returncode is None:
-                        with suppress(ProcessLookupError):
-                            process.terminate()
+                    async with self._lock:
+                        if (
+                            generation == self._generation
+                            and self.ffmpeg is process
+                            and self.desired_playing
+                        ):
+                            await self._restart_stream_locked(reason="pcm_stall")
+                    self._ensure_reconcile_task()
+                    self._signal_update()
                     return
         except asyncio.CancelledError:
             raise
         except Exception as err:
             self._last_failure = str(err)
             _LOGGER.warning("M1S group PCM health watchdog failed: %s", err)
+            self._schedule_watchdog_restart()
 
     def _schedule_watchdog_restart(self) -> None:
         if self._shutting_down or not self.desired_playing or not self.media_url:
@@ -1852,21 +1610,8 @@ class AqaraM1SMediaGroupManager:
                 WATCHDOG_MAX_RESTARTS,
                 self._last_failure or "unknown",
             )
-            async def _run_restart() -> None:
-                async with self._lock:
-                    await self._restart_stream_locked(reason="watchdog")
-
-            try:
-                await asyncio.wait_for(
-                    _run_restart(), timeout=WATCHDOG_RESTART_HARD_TIMEOUT
-                )
-            except asyncio.TimeoutError:
-                _LOGGER.error(
-                    "M1S group watchdog restart exceeded %.1fs; forcing idle reset",
-                    WATCHDOG_RESTART_HARD_TIMEOUT,
-                )
-                await self.async_force_reset(reason="watchdog_restart_timeout")
-                return
+            async with self._lock:
+                await self._restart_stream_locked(reason="watchdog")
             self._ensure_reconcile_task()
             await asyncio.sleep(0.5)
             if self.desired_playing and not self.ffmpeg_running:
@@ -1885,9 +1630,10 @@ class AqaraM1SMediaGroupManager:
                 self.watchdog_task = None
 
     def _schedule_slow_retry(self) -> None:
-        self._last_failure = self._last_failure or "restart_limit_reached"
-        _LOGGER.warning(
-            "M1S group automatic restart limit reached; waiting for next user Play"
+        if self.slow_retry_task and not self.slow_retry_task.done():
+            return
+        self.slow_retry_task = self.hass.async_create_background_task(
+            self._slow_retry(), "aqara_m1s_group_slow_retry"
         )
 
     async def _slow_retry(self) -> None:
@@ -1948,7 +1694,6 @@ class AqaraM1SMediaGroupManager:
             "slow_retry_task",
             "resync_task",
             "periodic_receiver_resync_task",
-            "_sound_return_restart_task",
         ):
             task = getattr(self, attr)
             setattr(self, attr, None)
@@ -1980,65 +1725,8 @@ class AqaraM1SMediaGroupManager:
             return "<unparseable>"
 
 
-    def remember_browse_titles(self, root: Any) -> None:
-        """Cache Media Browser labels so Play can expose the selected station name."""
-        stack = [root]
-        seen = 0
-        while stack and seen < 5000:
-            item = stack.pop()
-            seen += 1
-            if isinstance(item, dict):
-                media_id = item.get("media_content_id")
-                title = item.get("title")
-                children = item.get("children") or []
-            else:
-                media_id = getattr(item, "media_content_id", None)
-                title = getattr(item, "title", None)
-                children = getattr(item, "children", None) or []
-            if media_id and title:
-                self._browse_title_cache[str(media_id)] = str(title)
-            with suppress(TypeError):
-                stack.extend(children)
-        if len(self._browse_title_cache) > 10000:
-            # Keep recent browser navigation only; titles are convenience metadata.
-            self._browse_title_cache = dict(list(self._browse_title_cache.items())[-5000:])
-
-    def media_title_for(self, media_id: str, resolved_id: str, kwargs: dict[str, Any]) -> str:
-        """Choose the best available user-facing label for the selected media."""
-        extra = kwargs.get("extra") or {}
-        candidates: list[Any] = []
-        if isinstance(extra, dict):
-            candidates.extend((extra.get("title"), extra.get("media_title"), extra.get("name")))
-        metadata = kwargs.get("metadata") or {}
-        if isinstance(metadata, dict):
-            candidates.extend((metadata.get("title"), metadata.get("media_title"), metadata.get("name")))
-        candidates.extend((
-            kwargs.get("title"),
-            kwargs.get("media_title"),
-            self._browse_title_cache.get(media_id),
-            self._browse_title_cache.get(resolved_id),
-        ))
-        for candidate in candidates:
-            if candidate and str(candidate).strip():
-                return str(candidate).strip()
-
-        # Direct stream URLs do not carry Home Assistant browser labels. Produce
-        # a harmless readable fallback rather than the generic "M1S group stream".
-        try:
-            parts = urlsplit(resolved_id)
-            filename = parts.path.rsplit("/", 1)[-1]
-            stem = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").strip()
-            if stem and len(stem) <= 80:
-                return stem
-            if parts.hostname:
-                return parts.hostname
-        except Exception:
-            pass
-        return "M1S Media Group"
-
-
 class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
-    """Single group entity backed by one fixed, synchronised receiver cohort."""
+    """Single group entity backed by one HA-clocked multi-room PCM timeline."""
 
     _attr_name = "M1S Media Group"
     _attr_unique_id = "aqara_m1s_media_group"
@@ -2167,13 +1855,11 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
     async def async_browse_media(
         self, media_content_type: str | None = None, media_content_id: str | None = None
     ):
-        result = await media_source.async_browse_media(
+        return await media_source.async_browse_media(
             self.hass,
             media_content_id,
             content_filter=lambda item: item.media_content_type.startswith("audio/"),
         )
-        self.manager.remember_browse_titles(result)
-        return result
 
     async def async_play_media(self, media_type: str, media_id: str, **kwargs: Any) -> None:
         original = media_id
@@ -2186,9 +1872,10 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
         url = async_process_play_media_url(
             self.hass, resolved_id, allow_relative_url=False
         )
-        title = self.manager.media_title_for(original, resolved_id, kwargs)
+        extra = kwargs.get("extra") or {}
+        title = extra.get("title") if isinstance(extra, dict) else None
         await self.manager.async_start(
-            url, original, media_type or MediaType.MUSIC, title
+            url, original, media_type or MediaType.MUSIC, title or "M1S group stream"
         )
         self.async_write_ha_state()
 

@@ -93,8 +93,10 @@ class AqaraM1SSoundPlayer:
         self._resume_radio = False
         self._interruption_active = False
         try:
-            if resume_radio:
-                await self.radio_player.async_resume_after_priority_sound(True)
+            # Always release the radio-player priority gate. The boolean controls
+            # whether remembered single media should resume; the sound transport
+            # itself remains exactly the known-good v0.6.0/v0.6.3 pipeline.
+            await self.radio_player.async_resume_after_priority_sound(resume_radio)
         finally:
             await self.group_manager.async_release_sound(self.entry_id)
 

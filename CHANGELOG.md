@@ -1,41 +1,3 @@
-# v0.8.3 TEST — Local Receiver Recovery
-
-- Keeps the stable v0.8.1 fanout transport.
-- A failed group receiver now enters `recovering` and rebuilds only its own `nc`/`aplay`/TCP chain.
-- Healthy group members are not stopped when one hub drops.
-- A hub returning after a priority integration sound uses the same local recovery path instead of restarting the whole group.
-- Manual late join remains disabled; only members that were interrupted during the current session auto-rejoin.
-- Individual media player and sound-player transport are unchanged.
-
-## 0.7.4 TEST - Radio Browser metadata on individual players
-- Individual M1S media players now cache Media Browser labels exactly like Media Group.
-- Radio Browser station names are exposed as `media_title` / restored as `last_media_title`.
-- PCM diagnostics and stable-cohort synchronization are unchanged from 0.7.3.
-
-# v0.7.3 TEST PCM DIAGNOSTICS
-
-- Diagnostic-only build based on v0.7.2; group synchronization and transport thresholds are unchanged.
-- Logs source PCM gaps, Home Assistant event-loop stalls, per-hub feed gaps, slow TCP `writer.drain()`, and queue-full events.
-- Exposes rolling diagnostic counters/maxima and the last 16 anomaly events as Media Group state attributes (`pcm_diag_*`).
-- Intended to identify whether an underrun starts at FFmpeg/source, HA scheduling, or the TCP/hub writer path.
-
-# v0.7.2 TEST — STABLE COHORT SELF-HEAL + MEDIA TITLE
-
-- Keeps the v0.7.1 fixed-cohort synchronization timing unchanged.
-- Detects a lost whole cohort (FFmpeg alive but zero active receivers) and performs one bounded self-heal instead of buffering forever.
-- Play/restart paths now have hard deadlines; repeated failure returns the group to IDLE instead of requiring a Home Assistant restart.
-- Media Browser titles are cached and exposed as `media_title`; direct URLs get a readable fallback.
-
-# v0.7.0 TEST STABLE COHORT
-
-- Replaced late-join/clock-rebase group logic with a fixed startup cohort.
-- 500 ms common paced-silence warm-up before the shared source starts.
-- FFmpeg `-re` + exact 20 ms reads; no 32 KB burst fan-out.
-- Slow members are isolated and remain out until the next Play; no automatic rejoin/full-resync churn.
-- Group cleanup on port 12347 is transport-specific and no longer kills the priority-sound source that shares that port.
-- Priority sound can rebuild the group once, deliberately, after the interrupted hub is released.
-- Automatic source restart is bounded to one attempt.
-
 # v0.6.0 TEST — clocked multi-room group transport
 
 - Reworked the M1S Media Group around a single Home Assistant monotonic playout clock.
@@ -200,3 +162,10 @@
 - Upload paths are restricted to `/data/musics` and files to 20 MiB.
 - Stock-firmware Telnet preparation sequence documented as `5-2-2-2-2-2-2`.
 - Local Home Assistant brand icon included in 256 px and 512 px variants.
+
+## 0.9.0 - Single audio latest-request-wins recovery
+- Based on the known-good v0.6.3 audio-priority transport.
+- Rapid single-player track changes now invalidate older queued starts; only the latest request may start port 12346.
+- Priority sounds immediately invalidate queued single-audio starts before waiting for the transport lock.
+- Superseded starts clean only the dedicated single receiver/FIFO and never use broad `killall nc` logic.
+- Added generation/supersede logging and diagnostics while keeping the sound transport unchanged.

@@ -154,10 +154,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._fine_volume_trim_percent = 0.0
         self._attr_media_content_type = MediaType.MUSIC
         self._attr_media_title = None
-        # Cache labels returned by Home Assistant's Media Browser.  Radio Browser
-        # play_media calls often contain only the media-source id, so keep the
-        # user-facing station name here exactly like the group player does.
-        self._browse_title_cache: dict[str, str] = {}
         self._media_url: str | None = None
         self._resume_media_id: str | None = None
         self._resume_media_type: str = MediaType.MUSIC
@@ -185,6 +181,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._shutting_down = False
         self._group_manager = None
         self._priority_sound_suspended = False
+        # Monotonic user/audio intent generation. Every new Play/Stop/priority
+        # request invalidates older queued starts so only the newest request
+        # may touch the hub audio receiver (latest request wins).
+        self._play_generation = 0
+        self._last_superseded_generation: int | None = None
         self._attr_device_info = {
             "identifiers": {(DOMAIN, client.host)},
             "name": entry.data.get("name", f"Aqara M1S {client.host}"),
@@ -200,6 +201,98 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     def playback_requested(self) -> bool:
         return bool(self._resume_after_reconnect)
 
+    def _next_play_generation(self, reason: str) -> int:
+        """Invalidate every older queued single-audio operation."""
+        self._play_generation += 1
+        generation = self._play_generation
+        _LOGGER.info(
+            "Aqara media intent entity=%s host=%s generation=%s reason=%s",
+            self.entity_id,
+            self.client.host,
+            generation,
+            reason,
+        )
+        return generation
+
+    def _generation_is_current(self, generation: int) -> bool:
+        return bool(
+            generation == self._play_generation
+            and not self._shutting_down
+            and not self._priority_sound_suspended
+        )
+
+    def _cancel_recovery_tasks_now(self) -> None:
+        """Cancel retries immediately, before waiting for the transport lock."""
+        current = asyncio.current_task()
+        for attr in (
+            "_watchdog_restart_task",
+            "_watchdog_stable_task",
+            "_watchdog_slow_retry_task",
+            "_resume_task",
+        ):
+            task = getattr(self, attr, None)
+            if task is not None and task is not current and not task.done():
+                task.cancel()
+                setattr(self, attr, None)
+
+    async def _cleanup_stale_receiver_locked(
+        self, generation: int, phase: str
+    ) -> None:
+        """Clean only the single-player 12346 receiver after a superseded start."""
+        self._last_superseded_generation = generation
+        _LOGGER.info(
+            "Aqara media request superseded entity=%s host=%s "
+            "generation=%s current_generation=%s phase=%s",
+            self.entity_id,
+            self.client.host,
+            generation,
+            self._play_generation,
+            phase,
+        )
+        try:
+            await self.hass.async_add_executor_job(
+                self.client.run_command, REMOTE_STOP_COMMAND
+            )
+        except Exception as err:
+            _LOGGER.debug(
+                "Aqara media stale receiver cleanup failed entity=%s host=%s "
+                "generation=%s phase=%s error=%s",
+                self.entity_id,
+                self.client.host,
+                generation,
+                phase,
+                err,
+            )
+
+    async def _restart_current_generation(self, generation: int) -> None:
+        """Restart remembered media without creating a newer user intent."""
+        if (
+            not self._generation_is_current(generation)
+            or not self._resume_after_reconnect
+            or (not self._resume_media_id and not self._media_url)
+        ):
+            return
+
+        media_url = self._media_url
+        if self._resume_media_id and media_source.is_media_source_id(
+            self._resume_media_id
+        ):
+            resolved = await media_source.async_resolve_media(
+                self.hass, self._resume_media_id, self.entity_id
+            )
+            if not self._generation_is_current(generation):
+                return
+            media_url = async_process_play_media_url(
+                self.hass, resolved.url, allow_relative_url=False
+            )
+
+        async with self._lock:
+            if not self._generation_is_current(generation):
+                return
+            if media_url is not None:
+                self._media_url = media_url
+            await self._start_locked(generation)
+
     async def _claim_individual_audio(self) -> None:
         if self._group_manager is not None:
             await self._group_manager.async_claim_individual(self.entry.entry_id)
@@ -212,33 +305,26 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """Temporarily stop this player's transport without forgetting its source."""
         if self._shutting_down:
             return False
-        should_resume = bool(
-            self._resume_after_reconnect
-            and (
-                self._ffmpeg is not None
-                or self._stream_writer is not None
-                or self._attr_state in (MediaPlayerState.PLAYING, MediaPlayerState.BUFFERING)
-            )
-        )
-        if not should_resume:
-            return False
-
+        generation = self._next_play_generation("priority_sound_preempt")
         self._priority_sound_suspended = True
-        for attr in (
-            "_watchdog_restart_task",
-            "_watchdog_stable_task",
-            "_watchdog_slow_retry_task",
-            "_resume_task",
-        ):
-            task = getattr(self, attr, None)
-            setattr(self, attr, None)
-            if task and task is not asyncio.current_task():
-                task.cancel()
-
+        self._cancel_recovery_tasks_now()
+        _LOGGER.info(
+            "Aqara media priority preempt requested entity=%s host=%s generation=%s",
+            self.entity_id, self.client.host, generation
+        )
+        # Resume any accepted single-media intent after the priority sound.
+        # This also covers the narrow window where a rapid Play is already inside
+        # REMOTE_START_COMMAND but has not assigned _stream_writer/_ffmpeg yet.
+        should_resume = bool(self._resume_after_reconnect and self._media_url)
+        # Always wait for the transport lock. A rapid Play request may still be
+        # inside REMOTE_START_COMMAND before _ffmpeg/_stream_writer are assigned.
+        # The generation bump above makes that start stale; taking this lock waits
+        # for it to abort/clean up before the priority sound transport begins.
         async with self._lock:
             await self._stop_locked(update_state=True, reason="priority_sound")
-        # Keep _resume_after_reconnect and the individual group claim intact.
-        return True
+        # Keep remembered media/intent intact only when something was actually
+        # playing or starting. _finish_priority() clears the suspend flag either way.
+        return should_resume
 
     async def async_resume_after_priority_sound(self, should_resume: bool) -> None:
         """Resume media that was temporarily displaced by an integration sound."""
@@ -251,9 +337,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         ):
             return
         try:
+            generation = self._next_play_generation("priority_sound_resume")
             async with self._lock:
-                if self._ffmpeg is None:
-                    await self._start_locked()
+                if self._ffmpeg is None and self._generation_is_current(generation):
+                    await self._start_locked(generation)
         except Exception as err:
             _LOGGER.warning(
                 "Aqara media could not resume after priority sound entity=%s host=%s: %s",
@@ -342,6 +429,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "watchdog_restart_attempts": self._watchdog_restart_attempts,
             "last_failure_kind": self._last_failure_kind,
             "last_failure_detail": self._last_failure_detail,
+            "play_intent_generation": self._play_generation,
+            "last_superseded_generation": self._last_superseded_generation,
+            "single_request_policy": "latest_request_wins",
             "volume_apply_mode": "live_pcm_software_gain",
             "volume_stream_restart": False,
             "volume_step_percent": 0.1,
@@ -390,93 +480,17 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 update_state=False, reason="integration_shutdown"
             )
 
-    def _remember_browse_titles(self, root: Any) -> None:
-        """Cache Media Browser labels for later play_media calls."""
-        stack = [root]
-        seen = 0
-        while stack and seen < 5000:
-            item = stack.pop()
-            seen += 1
-            if isinstance(item, dict):
-                media_id = item.get("media_content_id")
-                title = item.get("title")
-                children = item.get("children") or []
-            else:
-                media_id = getattr(item, "media_content_id", None)
-                title = getattr(item, "title", None)
-                children = getattr(item, "children", None) or []
-            if media_id and title:
-                self._browse_title_cache[str(media_id)] = str(title)
-            with suppress(TypeError):
-                stack.extend(children)
-        if len(self._browse_title_cache) > 10000:
-            self._browse_title_cache = dict(
-                list(self._browse_title_cache.items())[-5000:]
-            )
-
-    def _media_title_for(
-        self, media_id: str, resolved_id: str, kwargs: dict[str, Any]
-    ) -> str:
-        """Choose the best user-facing label for the selected media."""
-        extra = kwargs.get("extra") or {}
-        candidates: list[Any] = []
-        if isinstance(extra, dict):
-            candidates.extend(
-                (extra.get("title"), extra.get("media_title"), extra.get("name"))
-            )
-        metadata = kwargs.get("metadata") or {}
-        if isinstance(metadata, dict):
-            candidates.extend(
-                (
-                    metadata.get("title"),
-                    metadata.get("media_title"),
-                    metadata.get("name"),
-                )
-            )
-        candidates.extend(
-            (
-                kwargs.get("title"),
-                kwargs.get("media_title"),
-                self._browse_title_cache.get(media_id),
-                self._browse_title_cache.get(resolved_id),
-            )
-        )
-        for candidate in candidates:
-            if candidate and str(candidate).strip():
-                return str(candidate).strip()
-
-        # Direct stream URLs do not carry a Media Browser label. Keep a useful
-        # fallback rather than overwriting a previous station name.
-        try:
-            parts = urlsplit(resolved_id)
-            filename = parts.path.rsplit("/", 1)[-1]
-            stem = (
-                filename.rsplit(".", 1)[0]
-                .replace("_", " ")
-                .replace("-", " ")
-                .strip()
-            )
-            if stem and len(stem) <= 80:
-                return stem
-            if parts.hostname:
-                return parts.hostname
-        except Exception:
-            pass
-        return "Radio stream"
-
     async def async_browse_media(
         self,
         media_content_type: str | None = None,
         media_content_id: str | None = None,
     ):
         """Expose Home Assistant audio sources in the native media browser."""
-        result = await media_source.async_browse_media(
+        return await media_source.async_browse_media(
             self.hass,
             media_content_id,
             content_filter=lambda item: item.media_content_type.startswith("audio/"),
         )
-        self._remember_browse_titles(result)
-        return result
 
     async def async_play_media(
         self,
@@ -484,42 +498,57 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         media_id: str,
         **kwargs: Any,
     ) -> None:
-        """Resolve a HA media source, remember it, and stream it to the hub."""
+        """Resolve and play media; rapid requests use latest-request-wins."""
+        generation = self._next_play_generation("play_media")
+        self._cancel_recovery_tasks_now()
         original_media_id = media_id
         resolved_media_id = media_id
 
         if media_source.is_media_source_id(media_id):
             resolved = await media_source.async_resolve_media(
-                self.hass,
-                media_id,
-                self.entity_id,
+                self.hass, media_id, self.entity_id
             )
+            if not self._generation_is_current(generation):
+                _LOGGER.info(
+                    "Aqara media request superseded before resolve finished "
+                    "entity=%s host=%s generation=%s current_generation=%s",
+                    self.entity_id, self.client.host, generation, self._play_generation
+                )
+                return
             resolved_media_id = resolved.url
 
         media_url = async_process_play_media_url(
-            self.hass,
-            resolved_media_id,
-            allow_relative_url=False,
+            self.hass, resolved_media_id, allow_relative_url=False
         )
 
-        title = self._media_title_for(
-            original_media_id, resolved_media_id, kwargs
-        )
+        title = None
+        extra = kwargs.get("extra") or {}
+        if isinstance(extra, dict):
+            title = extra.get("title")
 
         async with self._lock:
+            if not self._generation_is_current(generation):
+                _LOGGER.info(
+                    "Aqara media queued request discarded entity=%s host=%s "
+                    "generation=%s current_generation=%s",
+                    self.entity_id, self.client.host, generation, self._play_generation
+                )
+                return
             self._resume_media_id = original_media_id
             self._resume_media_type = media_type or MediaType.MUSIC
             self._media_url = media_url
             self._attr_media_content_id = original_media_id
             self._attr_media_content_type = self._resume_media_type
-            self._attr_media_title = title
+            self._attr_media_title = title or self._attr_media_title or "Radio stream"
             self._resume_after_reconnect = True
-            await self._start_locked()
+            await self._start_locked(generation)
 
     async def async_media_play(self) -> None:
-        """Resume the last remembered media."""
+        """Resume the last remembered media as a new user intent."""
         if self._shutting_down:
             return
+        generation = self._next_play_generation("media_play")
+        self._cancel_recovery_tasks_now()
         self._resume_after_reconnect = True
         if not self._resume_media_id and not self._media_url:
             return
@@ -528,38 +557,29 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._resume_media_id
         ):
             resolved = await media_source.async_resolve_media(
-                self.hass,
-                self._resume_media_id,
-                self.entity_id,
+                self.hass, self._resume_media_id, self.entity_id
             )
+            if not self._generation_is_current(generation):
+                return
             media_url = async_process_play_media_url(
-                self.hass,
-                resolved.url,
-                allow_relative_url=False,
+                self.hass, resolved.url, allow_relative_url=False
             )
             async with self._lock:
+                if not self._generation_is_current(generation):
+                    return
                 self._media_url = media_url
-                await self._start_locked()
+                await self._start_locked(generation)
             return
 
         async with self._lock:
-            await self._start_locked()
+            if self._generation_is_current(generation):
+                await self._start_locked(generation)
 
     async def async_media_stop(self) -> None:
+        self._next_play_generation("user_stop")
+        self._cancel_recovery_tasks_now()
         self._resume_after_reconnect = False
         self._watchdog_restart_attempts = 0
-        if self._watchdog_restart_task:
-            self._watchdog_restart_task.cancel()
-            self._watchdog_restart_task = None
-        if self._watchdog_stable_task:
-            self._watchdog_stable_task.cancel()
-            self._watchdog_stable_task = None
-        if self._watchdog_slow_retry_task:
-            self._watchdog_slow_retry_task.cancel()
-            self._watchdog_slow_retry_task = None
-        if self._resume_task:
-            self._resume_task.cancel()
-            self._resume_task = None
         async with self._lock:
             await self._stop_locked(update_state=True, reason="user_stop")
         await self._release_individual_audio()
@@ -715,39 +735,44 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         super()._handle_coordinator_update()
 
     def _schedule_resume(self, delay: float) -> None:
+        generation = self._play_generation
         if self._resume_task and not self._resume_task.done():
-            return
+            self._resume_task.cancel()
         self._resume_task = self.hass.async_create_task(
-            self._async_resume_after_delay(delay)
+            self._async_resume_after_delay(delay, generation)
         )
 
-    async def _async_resume_after_delay(self, delay: float) -> None:
+    async def _async_resume_after_delay(
+        self, delay: float, generation: int
+    ) -> None:
         try:
             await asyncio.sleep(delay)
             if (
-                self._resume_after_reconnect
+                self._generation_is_current(generation)
+                and self._resume_after_reconnect
                 and self._resume_media_id
                 and self.coordinator.last_update_success
                 and self._attr_state != MediaPlayerState.PLAYING
             ):
-                await self.async_media_play()
-            # Very short source failures can finish while this retry task is
-            # still active. Give the watcher a moment to classify the exit,
-            # then explicitly queue the next attempt after releasing this task.
+                await self._restart_current_generation(generation)
             await asyncio.sleep(0.5)
             if (
-                self._resume_after_reconnect
+                generation == self._play_generation
+                and self._resume_after_reconnect
                 and self._attr_state != MediaPlayerState.PLAYING
                 and self.coordinator.last_update_success
             ):
                 next_kind = self._last_failure_kind or "unknown"
                 self._watchdog_restart_task = None
-                self._schedule_watchdog_restart(next_kind)
+                self._schedule_watchdog_restart(next_kind, generation)
                 return
         except asyncio.CancelledError:
             return
         except Exception as err:
-            _LOGGER.warning("Could not automatically resume Aqara media: %s", err)
+            _LOGGER.warning(
+                "Could not automatically resume Aqara media entity=%s "
+                "generation=%s: %s", self.entity_id, generation, err
+            )
         finally:
             if self._resume_task is asyncio.current_task():
                 self._resume_task = None
@@ -830,14 +855,14 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 err,
             )
 
-    async def _start_locked(self) -> None:
-        if self._shutting_down or not self._media_url:
+    async def _start_locked(self, generation: int) -> None:
+        """Start one single-player transport only if its intent is still current."""
+        if not self._generation_is_current(generation) or not self._media_url:
             return
 
-        # Individual playback has strict priority. The group arbiter detaches
-        # only this hub's dedicated group receiver and never touches the
-        # individual receiver/watchdog.
         await self._claim_individual_audio()
+        if not self._generation_is_current(generation):
+            return
 
         current_task = asyncio.current_task()
         if (
@@ -854,23 +879,35 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._watchdog_slow_retry_task = None
 
         await self._stop_local_ffmpeg("replace_before_start")
-        await self.hass.async_add_executor_job(
-            self.client.run_command,
-            REMOTE_START_COMMAND,
+        if not self._generation_is_current(generation):
+            return
+
+        _LOGGER.info(
+            "Aqara media receiver start entity=%s host=%s generation=%s port=%s",
+            self.entity_id, self.client.host, generation, RADIO_PORT
         )
+        await self.hass.async_add_executor_job(
+            self.client.run_command, REMOTE_START_COMMAND
+        )
+        if not self._generation_is_current(generation):
+            await self._cleanup_stale_receiver_locked(generation, "after_remote_start")
+            return
 
         writer: asyncio.StreamWriter | None = None
         last_error: Exception | None = None
-        for _ in range(12):
+        for attempt in range(12):
+            if not self._generation_is_current(generation):
+                await self._cleanup_stale_receiver_locked(generation, "tcp_connect")
+                return
             try:
                 _, writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.client.host, RADIO_PORT),
-                    timeout=1.0,
+                    asyncio.open_connection(self.client.host, RADIO_PORT), timeout=1.0
                 )
                 break
             except (OSError, asyncio.TimeoutError) as err:
                 last_error = err
-                await asyncio.sleep(0.15)
+                if attempt < 11:
+                    await asyncio.sleep(0.15)
         if writer is None:
             with suppress(Exception):
                 await self.hass.async_add_executor_job(
@@ -880,6 +917,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 f"individual audio receiver unavailable: {last_error}"
             )
 
+        if not self._generation_is_current(generation):
+            writer.close()
+            with suppress(Exception):
+                await writer.wait_closed()
+            await self._cleanup_stale_receiver_locked(generation, "after_tcp_connect")
+            return
+
         sock = writer.get_extra_info("socket")
         if sock is not None:
             with suppress(OSError):
@@ -888,42 +932,23 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
         ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
         args = [
-            ffmpeg,
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-reconnect",
-            "1",
-            "-reconnect_streamed",
-            "1",
-            "-reconnect_delay_max",
-            "5",
-            "-i",
-            self._media_url,
-            "-vn",
-            "-ac",
-            str(PCM_CHANNELS),
-            "-ar",
-            str(PCM_RATE),
-            "-c:a",
-            "pcm_s32le",
-            "-f",
-            "s32le",
-            "pipe:1",
+            ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning",
+            "-reconnect", "1", "-reconnect_streamed", "1",
+            "-reconnect_delay_max", "5", "-i", self._media_url,
+            "-vn", "-ac", str(PCM_CHANNELS), "-ar", str(PCM_RATE),
+            "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1",
         ]
 
         try:
-            self._ffmpeg = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            process = await asyncio.create_subprocess_exec(
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
         except Exception as err:
             writer.close()
             with suppress(Exception):
                 await writer.wait_closed()
-            self._stream_writer = None
+            if self._stream_writer is writer:
+                self._stream_writer = None
             with suppress(Exception):
                 await self.hass.async_add_executor_job(
                     self.client.run_command, REMOTE_STOP_COMMAND
@@ -937,34 +962,43 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 ) from err
             raise
 
-        self._ffmpeg_nice_applied = self._try_set_ffmpeg_priority(
-            self._ffmpeg.pid
-        )
+        if not self._generation_is_current(generation):
+            process.terminate()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+            writer.close()
+            with suppress(Exception):
+                await writer.wait_closed()
+            if self._stream_writer is writer:
+                self._stream_writer = None
+            await self._cleanup_stale_receiver_locked(generation, "after_ffmpeg_start")
+            return
+
+        self._ffmpeg = process
+        self._ffmpeg_nice_applied = self._try_set_ffmpeg_priority(process.pid)
         self._reset_live_gain()
         self._ffmpeg_session += 1
         session = self._ffmpeg_session
         self._ffmpeg_started_monotonic = time.monotonic()
         _LOGGER.info(
-            "Aqara media FFmpeg started entity=%s session=%s pid=%s host=%s "
-            "source=%s volume=%.3f muted=%s nice_target=%s nice_applied=%s",
-            self.entity_id,
-            session,
-            self._ffmpeg.pid,
-            self.client.host,
+            "Aqara media FFmpeg started entity=%s session=%s generation=%s pid=%s "
+            "host=%s source=%s volume=%.3f muted=%s nice_target=%s nice_applied=%s",
+            self.entity_id, session, generation, process.pid, self.client.host,
             self._safe_media_for_log(self._media_url),
-            self._attr_volume_level or 0.0,
-            self._attr_is_volume_muted,
-            FFMPEG_NICE_TARGET,
-            self._ffmpeg_nice_applied,
+            self._attr_volume_level or 0.0, self._attr_is_volume_muted,
+            FFMPEG_NICE_TARGET, self._ffmpeg_nice_applied,
         )
         self._attr_state = MediaPlayerState.PLAYING
         self.async_write_ha_state()
         self._watch_task = self.hass.async_create_background_task(
-            self._watch_ffmpeg(self._ffmpeg, writer),
+            self._watch_ffmpeg(process, writer, generation),
             f"aqara_m1s_ffmpeg_watch_{self.entry.entry_id}",
         )
         self._watchdog_stable_task = self.hass.async_create_background_task(
-            self._reset_watchdog_after_stable_playback(self._ffmpeg),
+            self._reset_watchdog_after_stable_playback(process),
             f"aqara_m1s_stable_watch_{self.entry.entry_id}",
         )
 
@@ -1004,6 +1038,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self,
         process: asyncio.subprocess.Process,
         writer: asyncio.StreamWriter,
+        generation: int,
     ) -> None:
         """Pump decoded PCM to the hub and classify unexpected failures."""
         session = self._ffmpeg_session
@@ -1110,12 +1145,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._recovery_pending = True
 
         _LOGGER.warning(
-            "Aqara media FFmpeg/PCM ended unexpectedly entity=%s session=%s "
+            "Aqara media FFmpeg/PCM ended unexpectedly entity=%s session=%s generation=%s "
             "pid=%s host=%s returncode=%s runtime=%.1fs "
             "playback_requested=%s failure_kind=%s source=%s "
             "pump_error=%r stderr=%r",
             self.entity_id,
             session,
+            generation,
             process.pid,
             self.client.host,
             process.returncode,
@@ -1141,7 +1177,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 failure_detail,
             )
 
-        if (
+        if generation != self._play_generation:
+            _LOGGER.info(
+                "Aqara media stale watcher will not retry entity=%s host=%s "
+                "generation=%s current_generation=%s",
+                self.entity_id, self.client.host, generation, self._play_generation
+            )
+        elif (
             not self._shutting_down
             and self._resume_after_reconnect
             and self._resume_media_id
@@ -1159,51 +1201,60 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if self._watch_task is asyncio.current_task():
             self._watch_task = None
 
-    def _schedule_watchdog_restart(self, failure_kind: str | None = None) -> None:
+    def _schedule_watchdog_restart(
+        self, failure_kind: str | None = None, generation: int | None = None
+    ) -> None:
         if self._shutting_down:
+            return
+        generation = self._play_generation if generation is None else generation
+        if generation != self._play_generation:
             return
         failure_kind = failure_kind or self._last_failure_kind or "unknown"
         if self._watchdog_restart_attempts >= WATCHDOG_MAX_RESTARTS:
             if failure_kind == "hub_offline":
                 _LOGGER.warning(
                     "Aqara media watchdog exhausted %s fast retries for %s; "
-                    "waiting for a real hub reconnect",
-                    WATCHDOG_MAX_RESTARTS,
-                    self.entity_id,
+                    "waiting for a real hub reconnect generation=%s",
+                    WATCHDOG_MAX_RESTARTS, self.entity_id, generation
                 )
                 return
-            self._schedule_slow_retry(failure_kind)
+            self._schedule_slow_retry(failure_kind, generation)
             return
         if self._watchdog_restart_task and not self._watchdog_restart_task.done():
             return
         self._watchdog_restart_task = self.hass.async_create_background_task(
-            self._async_watchdog_restart(failure_kind),
+            self._async_watchdog_restart(failure_kind, generation),
             f"aqara_m1s_restart_watch_{self.entry.entry_id}",
         )
 
-    def _schedule_slow_retry(self, failure_kind: str) -> None:
-        if self._shutting_down or not self._resume_after_reconnect:
+    def _schedule_slow_retry(self, failure_kind: str, generation: int) -> None:
+        if (
+            self._shutting_down
+            or not self._resume_after_reconnect
+            or generation != self._play_generation
+        ):
             return
         if self._watchdog_slow_retry_task and not self._watchdog_slow_retry_task.done():
             return
         _LOGGER.warning(
             "Aqara media watchdog exhausted %s fast retries for %s; "
-            "scheduling slow retry in %.0fs failure_kind=%s",
-            WATCHDOG_MAX_RESTARTS,
-            self.entity_id,
-            WATCHDOG_SLOW_RETRY_DELAY,
-            failure_kind,
+            "scheduling slow retry in %.0fs failure_kind=%s generation=%s",
+            WATCHDOG_MAX_RESTARTS, self.entity_id, WATCHDOG_SLOW_RETRY_DELAY,
+            failure_kind, generation
         )
         self._watchdog_slow_retry_task = self.hass.async_create_background_task(
-            self._async_watchdog_slow_retry(failure_kind),
+            self._async_watchdog_slow_retry(failure_kind, generation),
             f"aqara_m1s_slow_retry_{self.entry.entry_id}",
         )
 
-    async def _async_watchdog_restart(self, failure_kind: str) -> None:
+    async def _async_watchdog_restart(
+        self, failure_kind: str, generation: int
+    ) -> None:
         try:
             await asyncio.sleep(WATCHDOG_RESTART_DELAY)
             if (
-                not self._resume_after_reconnect
+                generation != self._play_generation
+                or not self._resume_after_reconnect
                 or not self._resume_media_id
                 or self._attr_state == MediaPlayerState.PLAYING
             ):
@@ -1212,32 +1263,28 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 self._last_failure_kind = "hub_offline"
                 _LOGGER.warning(
                     "Aqara media watchdog paused because hub is offline "
-                    "entity=%s host=%s",
-                    self.entity_id,
-                    self.client.host,
+                    "entity=%s host=%s generation=%s",
+                    self.entity_id, self.client.host, generation
                 )
                 return
             self._watchdog_restart_attempts += 1
             _LOGGER.warning(
-                "Aqara media watchdog restarting %s (%s/%s) failure_kind=%s",
-                self.entity_id,
-                self._watchdog_restart_attempts,
-                WATCHDOG_MAX_RESTARTS,
-                failure_kind,
+                "Aqara media watchdog restarting %s (%s/%s) "
+                "failure_kind=%s generation=%s",
+                self.entity_id, self._watchdog_restart_attempts,
+                WATCHDOG_MAX_RESTARTS, failure_kind, generation
             )
-            await self.async_media_play()
-            # Very short source failures can finish while this retry task is
-            # still active. Give the watcher a moment to classify the exit,
-            # then explicitly queue the next attempt after releasing this task.
+            await self._restart_current_generation(generation)
             await asyncio.sleep(0.5)
             if (
-                self._resume_after_reconnect
+                generation == self._play_generation
+                and self._resume_after_reconnect
                 and self._attr_state != MediaPlayerState.PLAYING
                 and self.coordinator.last_update_success
             ):
                 next_kind = self._last_failure_kind or failure_kind
                 self._watchdog_restart_task = None
-                self._schedule_watchdog_restart(next_kind)
+                self._schedule_watchdog_restart(next_kind, generation)
                 return
         except asyncio.CancelledError:
             return
@@ -1247,24 +1294,29 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             )
             self._last_failure_detail = str(err)
             _LOGGER.warning(
-                "Aqara media watchdog restart failed for %s failure_kind=%s: %s",
-                self.entity_id,
-                self._last_failure_kind,
-                err,
+                "Aqara media watchdog restart failed for %s failure_kind=%s "
+                "generation=%s: %s",
+                self.entity_id, self._last_failure_kind, generation, err
             )
-            if self._resume_after_reconnect:
+            if (
+                self._resume_after_reconnect
+                and generation == self._play_generation
+            ):
                 self._watchdog_restart_task = None
-                self._schedule_watchdog_restart(self._last_failure_kind)
+                self._schedule_watchdog_restart(self._last_failure_kind, generation)
                 return
         finally:
             if self._watchdog_restart_task is asyncio.current_task():
                 self._watchdog_restart_task = None
 
-    async def _async_watchdog_slow_retry(self, failure_kind: str) -> None:
+    async def _async_watchdog_slow_retry(
+        self, failure_kind: str, generation: int
+    ) -> None:
         try:
             await asyncio.sleep(WATCHDOG_SLOW_RETRY_DELAY)
             if (
-                not self._resume_after_reconnect
+                generation != self._play_generation
+                or not self._resume_after_reconnect
                 or not self._resume_media_id
                 or self._attr_state == MediaPlayerState.PLAYING
             ):
@@ -1273,34 +1325,33 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 self._last_failure_kind = "hub_offline"
                 _LOGGER.warning(
                     "Aqara media slow retry deferred because hub is offline "
-                    "entity=%s host=%s",
-                    self.entity_id,
-                    self.client.host,
+                    "entity=%s host=%s generation=%s",
+                    self.entity_id, self.client.host, generation
                 )
                 return
             _LOGGER.warning(
-                "Aqara media watchdog slow retry entity=%s failure_kind=%s source=%s",
-                self.entity_id,
-                failure_kind,
+                "Aqara media watchdog slow retry entity=%s failure_kind=%s "
+                "generation=%s source=%s",
+                self.entity_id, failure_kind, generation,
                 self._safe_media_for_log(self._media_url),
             )
-            # A new slow-retry cycle gets three fresh fast attempts if the
-            # source or hub receiver is still unavailable.
             self._watchdog_restart_attempts = 0
-            await self.async_media_play()
+            await self._restart_current_generation(generation)
         except asyncio.CancelledError:
             return
         except Exception as err:
             self._last_failure_detail = str(err)
             _LOGGER.warning(
-                "Aqara media slow retry failed entity=%s failure_kind=%s: %s",
-                self.entity_id,
-                failure_kind,
-                err,
+                "Aqara media slow retry failed entity=%s failure_kind=%s "
+                "generation=%s: %s",
+                self.entity_id, failure_kind, generation, err
             )
-            if self._resume_after_reconnect:
+            if (
+                self._resume_after_reconnect
+                and generation == self._play_generation
+            ):
                 self._watchdog_slow_retry_task = None
-                self._schedule_slow_retry(failure_kind)
+                self._schedule_slow_retry(failure_kind, generation)
                 return
         finally:
             if self._watchdog_slow_retry_task is asyncio.current_task():
