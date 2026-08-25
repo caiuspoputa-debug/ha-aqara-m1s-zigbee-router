@@ -985,8 +985,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     @staticmethod
     def _normalize_fine_volume_trim_percent(value: float) -> float:
-        """Clamp/quantize fine trim to -1.00..+1.00 in 0.01% steps."""
-        value = max(-1.0, min(1.0, float(value)))
+        """Clamp/quantize fine trim to -2.00..+1.00 in 0.01% steps."""
+        value = max(-2.0, min(1.0, float(value)))
         return round(round(value / 0.01) * 0.01, 2)
 
     def set_fine_volume_trim_percent(self, value: float) -> None:

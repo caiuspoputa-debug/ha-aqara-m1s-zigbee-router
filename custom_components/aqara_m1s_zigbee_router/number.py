@@ -127,7 +127,7 @@ class AqaraM1SRadioFineVolumeTrim(
 
     _attr_name = "Fine Volume Trim"
     _attr_icon = "mdi:tune-vertical"
-    _attr_native_min_value = -1.0
+    _attr_native_min_value = -2.0
     _attr_native_max_value = 1.0
     _attr_native_step = 0.01
     _attr_native_unit_of_measurement = PERCENTAGE
@@ -164,7 +164,7 @@ class AqaraM1SRadioFineVolumeTrim(
 
     @staticmethod
     def _normalize(value: float) -> float:
-        value = max(-1.0, min(1.0, float(value)))
+        value = max(-2.0, min(1.0, float(value)))
         return round(round(value / 0.01) * 0.01, 2)
 
     async def async_added_to_hass(self) -> None:

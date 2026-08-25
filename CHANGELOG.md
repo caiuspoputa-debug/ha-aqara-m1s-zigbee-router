@@ -1,3 +1,11 @@
+## v0.10.0 - Fine trim negative range
+
+- Extend the individual radio Fine Volume Trim range from `-1.00..+1.00%` to `-2.00..+1.00%`.
+- Keep the trim step at `0.01%` and preserve gain clamping so effective PCM gain never goes below silence or above 100%.
+- Keep the v0.9.9 2 s hub `aplay` buffer and quiet TCP self-heal behavior.
+- Preserve the existing moderate priorities: FFmpeg nice -5 and hub aplay nice -3. No sound-priority changes.
+- Sound-player transport is unchanged.
+
 ## v0.9.9 - Quiet TCP self-heal and 2s hub buffer
 
 - Increase the single and group hub `aplay` buffer request from 500 ms to 2000 ms while keeping the 50 ms period time.
