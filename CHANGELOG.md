@@ -1,3 +1,11 @@
+## v0.9.9 - Quiet TCP self-heal and 2s hub buffer
+
+- Increase the single and group hub `aplay` buffer request from 500 ms to 2000 ms while keeping the 50 ms period time.
+- Keep the HA-side single-player buffer at 4.0 s, with 2.5 s prebuffer and 2.0 s rebuffer threshold.
+- Lower successful single TCP self-heal teardown noise: TCP recovery writer-close issues are debug, normal rebuild attempts are info, and warnings are reserved for recovery bursts/failures.
+- Preserve the existing moderate priorities: FFmpeg nice -5 and hub aplay nice -3. No sound-priority changes.
+- Sound-player transport is unchanged.
+
 ## v0.9.8 - Single TCP self-heal
 
 - Add immediate single-player TCP receiver recovery for `writer.drain()` backpressure.

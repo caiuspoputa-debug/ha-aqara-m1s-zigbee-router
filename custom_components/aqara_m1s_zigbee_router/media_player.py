@@ -97,7 +97,7 @@ FFMPEG_TERMINATE_TIMEOUT = 1.50
 FFMPEG_KILL_TIMEOUT = 3.00
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
-APLAY_BUFFER_TIME_US = 500000
+APLAY_BUFFER_TIME_US = 2000000
 APLAY_PERIOD_TIME_US = 50000
 
 REMOTE_STOP_COMMAND = (
@@ -529,7 +529,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 close_task.result()
                 return
             except (OSError, ConnectionError) as err:
-                _LOGGER.warning(
+                log = (
+                    _LOGGER.debug
+                    if reason.startswith("tcp_recovery:")
+                    else _LOGGER.warning
+                )
+                log(
                     "Aqara media writer close failed entity=%s host=%s reason=%s "
                     "error=%r; aborting transport",
                     self.entity_id,
@@ -538,7 +543,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     err,
                 )
         else:
-            _LOGGER.warning(
+            log = (
+                _LOGGER.debug
+                if reason.startswith("tcp_recovery:")
+                else _LOGGER.warning
+            )
+            log(
                 "Aqara media writer close timeout entity=%s host=%s reason=%s "
                 "timeout=%.2fs; aborting transport",
                 self.entity_id,
@@ -631,7 +641,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             raise RuntimeError("single TCP recovery finished on stale session")
 
         self._stream_writer = new_writer
-        _LOGGER.warning(
+        _LOGGER.info(
             "Aqara media single TCP receiver recovered entity=%s session=%s "
             "generation=%s host=%s pid=%s reason=%s",
             self.entity_id,
@@ -1476,7 +1486,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         "single TCP recovery burst limit exceeded"
                     ) from err
 
-                _LOGGER.warning(
+                log = (
+                    _LOGGER.warning
+                    if tcp_recovery_events >= SINGLE_TCP_RECOVERY_BURST_LIMIT
+                    else _LOGGER.info
+                )
+                log(
                     "Aqara media single TCP backpressure; rebuilding receiver "
                     "entity=%s session=%s generation=%s host=%s pid=%s "
                     "stage=%s recovery=%s/%s error=%r",
