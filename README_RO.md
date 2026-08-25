@@ -1,3 +1,5 @@
+**Current package: v0.9.2 SINGLE STABLE BUFFER**
+
 [**Română**](README_RO.md) | [English](README.md)
 
 # Aqara M1S Gen 1 — conversie completă în Zigbee Router + integrare Home Assistant

@@ -61,12 +61,21 @@ PCM_CHUNK_BYTES = int(
     PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * PCM_CHUNK_SECONDS
 )
 PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
-# Single-player low-latency transport. Keep only a few PCM frames queued so
-# live volume/mute changes are heard promptly instead of seconds later.
-SINGLE_WRITE_HIGH_WATER_BYTES = PCM_CHUNK_BYTES * 4
-SINGLE_WRITE_LOW_WATER_BYTES = PCM_CHUNK_BYTES * 2
-SINGLE_SOCKET_SNDBUF_BYTES = PCM_CHUNK_BYTES * 4
-SINGLE_PACE_REBASE_SECONDS = 0.25
+# Single-player stable transport. Keep a bounded HA-side PCM jitter buffer so
+# short scheduler/network stalls do not starve aplay, while volume/mute is still
+# applied only when a chunk leaves the buffer. This keeps audible volume latency
+# below roughly one second without allowing multi-second TCP/FIFO buildup.
+SINGLE_JITTER_BUFFER_SECONDS = 0.80
+SINGLE_PREBUFFER_SECONDS = 0.60
+SINGLE_JITTER_BUFFER_CHUNKS = max(1, int(SINGLE_JITTER_BUFFER_SECONDS / PCM_CHUNK_SECONDS))
+SINGLE_PREBUFFER_CHUNKS = max(1, int(SINGLE_PREBUFFER_SECONDS / PCM_CHUNK_SECONDS))
+SINGLE_LOW_QUEUE_CHUNKS = max(2, int(0.12 / PCM_CHUNK_SECONDS))
+SINGLE_WRITE_HIGH_WATER_BYTES = PCM_CHUNK_BYTES * 12
+SINGLE_WRITE_LOW_WATER_BYTES = PCM_CHUNK_BYTES * 6
+SINGLE_SOCKET_SNDBUF_BYTES = PCM_CHUNK_BYTES * 12
+SINGLE_PACE_REBASE_SECONDS = 0.50
+SINGLE_LOW_QUEUE_LOG_INTERVAL = 30.0
+SINGLE_SOURCE_STALL_TIMEOUT = 5.0
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 WRITER_DRAIN_TIMEOUT = 2.0
@@ -443,13 +452,16 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "volume_step_percent": 0.1,
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
-            "single_low_latency_pacing": True,
+            "single_stable_jitter_buffer": True,
             "single_pcm_pace_ms": int(PCM_CHUNK_SECONDS * 1000),
+            "single_jitter_buffer_ms": int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
+            "single_prebuffer_ms": int(SINGLE_PREBUFFER_SECONDS * 1000),
+            "single_source_stall_timeout_seconds": SINGLE_SOURCE_STALL_TIMEOUT,
             "single_write_high_water_ms": int(
                 SINGLE_WRITE_HIGH_WATER_BYTES / (PCM_RATE * PCM_SAMPLE_BYTES) * 1000
             ),
             "single_socket_send_buffer_bytes": SINGLE_SOCKET_SNDBUF_BYTES,
-            "ffmpeg_realtime_input": True,
+            "ffmpeg_realtime_input": False,
             "ffmpeg_nice_target": FFMPEG_NICE_TARGET,
             "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
             "aplay_nice_target": APLAY_NICE_TARGET,
@@ -957,10 +969,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning",
             "-reconnect", "1", "-reconnect_streamed", "1",
             "-reconnect_delay_max", "5",
-            # Read the source at native playback speed. Without this, FFmpeg can
-            # decode finite media much faster than real time and fill TCP/FIFO
-            # buffers several seconds ahead of the live volume control.
-            "-re", "-i", self._media_url,
+            # Decode freely into the bounded HA-side jitter buffer. The consumer
+            # below is the only real-time clock, so FFmpeg can refill the buffer
+            # after a short stall without ever filling the hub several seconds ahead.
+            "-i", self._media_url,
             "-vn", "-ac", str(PCM_CHANNELS), "-ar", str(PCM_RATE),
             "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1",
         ]
@@ -1066,7 +1078,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         writer: asyncio.StreamWriter,
         generation: int,
     ) -> None:
-        """Pump decoded PCM to the hub and classify unexpected failures."""
+        """Buffer raw PCM briefly, then pace it steadily to the hub."""
         session = self._ffmpeg_session
         started = self._ffmpeg_started_monotonic
         stderr_task = self.hass.async_create_background_task(
@@ -1075,36 +1087,137 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         )
         stderr_text = ""
         pump_error: Exception | None = None
-        try:
-            if process.stdout is None:
-                raise RuntimeError("FFmpeg PCM stdout pipe is unavailable")
+        queue: asyncio.Queue[bytes] = asyncio.Queue(
+            maxsize=SINGLE_JITTER_BUFFER_CHUNKS
+        )
+        producer_done = asyncio.Event()
+        producer_error: Exception | None = None
+        low_queue_events = 0
+        silence_fill_events = 0
+        last_low_queue_log = 0.0
+        last_real_pcm_monotonic = time.monotonic()
 
+        async def _produce_pcm() -> None:
+            nonlocal producer_error
             buffer = bytearray()
+            try:
+                if process.stdout is None:
+                    raise RuntimeError("FFmpeg PCM stdout pipe is unavailable")
+                while self._ffmpeg is process and not self._shutting_down:
+                    data = await process.stdout.read(PCM_CHUNK_BYTES * 8)
+                    if not data:
+                        break
+                    buffer.extend(data)
+                    while len(buffer) >= PCM_CHUNK_BYTES:
+                        raw_chunk = bytes(buffer[:PCM_CHUNK_BYTES])
+                        del buffer[:PCM_CHUNK_BYTES]
+                        await queue.put(raw_chunk)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                producer_error = err
+            finally:
+                producer_done.set()
+
+        producer_task = self.hass.async_create_background_task(
+            _produce_pcm(),
+            f"aqara_m1s_pcm_producer_{self.entry.entry_id}",
+        )
+
+        try:
+            # Build a real jitter cushion before opening the playout clock. For
+            # short files, start as soon as FFmpeg reaches EOF instead of waiting.
+            prebuffer_started = time.monotonic()
+            while (
+                queue.qsize() < SINGLE_PREBUFFER_CHUNKS
+                and not producer_done.is_set()
+                and self._ffmpeg is process
+                and not self._shutting_down
+            ):
+                await asyncio.sleep(0.01)
+
+            _LOGGER.info(
+                "Aqara media stable buffer primed entity=%s session=%s host=%s "
+                "queued_ms=%s target_ms=%s prime_time_ms=%s",
+                self.entity_id,
+                session,
+                self.client.host,
+                int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
+                int(SINGLE_PREBUFFER_SECONDS * 1000),
+                int((time.monotonic() - prebuffer_started) * 1000),
+            )
+
             next_send_monotonic = time.monotonic()
             while self._ffmpeg is process and not self._shutting_down:
-                data = await process.stdout.read(PCM_CHUNK_BYTES * 4)
-                if not data:
+                if producer_error is not None:
+                    raise producer_error
+
+                # If FFmpeg is finished and every buffered frame was played,
+                # normal end-of-media has been reached.
+                if producer_done.is_set() and queue.empty():
                     break
-                buffer.extend(data)
-                while len(buffer) >= PCM_CHUNK_BYTES:
-                    raw_chunk = bytes(buffer[:PCM_CHUNK_BYTES])
-                    del buffer[:PCM_CHUNK_BYTES]
 
-                    # Keep the single-player output close to the live edge.
-                    # If the event loop was delayed, rebase instead of sending
-                    # a catch-up burst that would recreate seconds of latency.
+                now = time.monotonic()
+                delay = next_send_monotonic - now
+                if delay > 0:
+                    await asyncio.sleep(delay)
                     now = time.monotonic()
-                    if now - next_send_monotonic > SINGLE_PACE_REBASE_SECONDS:
-                        next_send_monotonic = now
-                    delay = next_send_monotonic - now
-                    if delay > 0:
-                        await asyncio.sleep(delay)
+                elif now - next_send_monotonic > SINGLE_PACE_REBASE_SECONDS:
+                    # A long HA event-loop stall must not trigger a multi-second
+                    # catch-up burst. Rebase, while retaining the jitter buffer.
+                    next_send_monotonic = now
 
-                    writer.write(self._apply_live_pcm_gain(raw_chunk))
-                    await asyncio.wait_for(
-                        writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
-                    )
-                    next_send_monotonic += PCM_CHUNK_SECONDS
+                if queue.qsize() <= SINGLE_LOW_QUEUE_CHUNKS and not producer_done.is_set():
+                    low_queue_events += 1
+                    if now - last_low_queue_log >= SINGLE_LOW_QUEUE_LOG_INTERVAL:
+                        last_low_queue_log = now
+                        _LOGGER.warning(
+                            "Aqara media single buffer low entity=%s session=%s host=%s "
+                            "queued_ms=%s low_events=%s silence_fill_events=%s",
+                            self.entity_id,
+                            session,
+                            self.client.host,
+                            int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
+                            low_queue_events,
+                            silence_fill_events,
+                        )
+
+                if queue.empty() and not producer_done.is_set():
+                    # Keep the hub's aplay pipeline alive during a very short
+                    # source/scheduler gap. One silent frame is preferable to an
+                    # ALSA underrun and does not advance buffered source audio.
+                    if time.monotonic() - last_real_pcm_monotonic > SINGLE_SOURCE_STALL_TIMEOUT:
+                        raise RuntimeError(
+                            f"PCM source stalled for more than {SINGLE_SOURCE_STALL_TIMEOUT:.1f}s"
+                        )
+                    raw_chunk = PCM_SILENCE_CHUNK
+                    silence_fill_events += 1
+                else:
+                    try:
+                        raw_chunk = queue.get_nowait()
+                        last_real_pcm_monotonic = time.monotonic()
+                    except asyncio.QueueEmpty:
+                        if producer_done.is_set():
+                            break
+                        if time.monotonic() - last_real_pcm_monotonic > SINGLE_SOURCE_STALL_TIMEOUT:
+                            raise RuntimeError(
+                                f"PCM source stalled for more than {SINGLE_SOURCE_STALL_TIMEOUT:.1f}s"
+                            )
+                        raw_chunk = PCM_SILENCE_CHUNK
+                        silence_fill_events += 1
+
+                # Volume/mute is deliberately applied here, not in the producer.
+                # Therefore the 0.8 s jitter buffer does not add 0.8 s of volume lag.
+                writer.write(self._apply_live_pcm_gain(raw_chunk))
+                await asyncio.wait_for(
+                    writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                )
+                next_send_monotonic += PCM_CHUNK_SECONDS
+
+            if not producer_task.done():
+                producer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer_task
 
             await process.wait()
             stderr_text = await stderr_task
@@ -1112,6 +1225,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             if self._ffmpeg is not process or self._shutting_down:
                 return
         except asyncio.CancelledError:
+            if not producer_task.done():
+                producer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer_task
             if not stderr_task.done():
                 stderr_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -1126,6 +1243,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             raise
         except Exception as err:
             pump_error = err
+            if not producer_task.done():
+                producer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer_task
             if process.returncode is None:
                 process.terminate()
                 with suppress(asyncio.TimeoutError):
@@ -1135,9 +1256,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     await process.wait()
             if not stderr_task.done():
                 with suppress(asyncio.TimeoutError):
-                    stderr_text = await asyncio.wait_for(
-                        stderr_task, timeout=1.0
-                    )
+                    stderr_text = await asyncio.wait_for(stderr_task, timeout=1.0)
             elif not stderr_task.cancelled():
                 with suppress(Exception):
                     stderr_text = stderr_task.result()
@@ -1145,6 +1264,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             if self._ffmpeg is not process or self._shutting_down:
                 return
         finally:
+            if not producer_task.done():
+                producer_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await producer_task
             if not stderr_task.done():
                 stderr_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -1185,9 +1308,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
         _LOGGER.warning(
             "Aqara media FFmpeg/PCM ended unexpectedly entity=%s session=%s generation=%s "
-            "pid=%s host=%s returncode=%s runtime=%.1fs "
-            "playback_requested=%s failure_kind=%s source=%s "
-            "pump_error=%r stderr=%r",
+            "pid=%s host=%s returncode=%s runtime=%.1fs playback_requested=%s "
+            "failure_kind=%s source=%s pump_error=%r stderr=%r "
+            "buffer_low_events=%s silence_fill_events=%s",
             self.entity_id,
             session,
             generation,
@@ -1200,6 +1323,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._safe_media_for_log(self._media_url),
             pump_error,
             stderr_text,
+            low_queue_events,
+            silence_fill_events,
         )
         self._attr_state = MediaPlayerState.IDLE
         self.async_write_ha_state()
@@ -1220,7 +1345,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             _LOGGER.info(
                 "Aqara media stale watcher will not retry entity=%s host=%s "
                 "generation=%s current_generation=%s",
-                self.entity_id, self.client.host, generation, self._play_generation
+                self.entity_id,
+                self.client.host,
+                generation,
+                self._play_generation,
             )
         elif (
             not self._shutting_down

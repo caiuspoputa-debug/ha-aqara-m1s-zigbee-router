@@ -1,3 +1,13 @@
+# v0.9.2 - SINGLE STABLE BUFFER
+
+- Single player: replace the ultra-small v0.9.1 path with a bounded 0.8 s HA-side PCM jitter buffer and 0.6 s prebuffer.
+- Volume/mute gain is applied when PCM leaves the jitter buffer, so the cushion does not itself add volume-control lag.
+- FFmpeg may refill the bounded buffer after short stalls; the consumer remains the only real-time playout clock.
+- Short queue starvation is bridged with silence to keep hub-side aplay alive instead of causing an ALSA underrun; a true PCM stall beyond 5 s still triggers recovery.
+- Single TCP write/socket buffering is capped to keep audible volume response under about one second.
+- Preserve the proven moderate priorities only: FFmpeg nice -5 and hub aplay nice -3. No realtime scheduler, no extra priority for nc/Zigbee processes, no broad process kills.
+- Sound transport and media-group code are unchanged from v0.9.1.
+
 # v0.9.1 — single-player low-latency live volume
 
 - Keeps v0.9.0 latest-request-wins single-player recovery and the v0.6.3 priority-sound transport.
