@@ -61,6 +61,12 @@ PCM_CHUNK_BYTES = int(
     PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * PCM_CHUNK_SECONDS
 )
 PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
+# Single-player low-latency transport. Keep only a few PCM frames queued so
+# live volume/mute changes are heard promptly instead of seconds later.
+SINGLE_WRITE_HIGH_WATER_BYTES = PCM_CHUNK_BYTES * 4
+SINGLE_WRITE_LOW_WATER_BYTES = PCM_CHUNK_BYTES * 2
+SINGLE_SOCKET_SNDBUF_BYTES = PCM_CHUNK_BYTES * 4
+SINGLE_PACE_REBASE_SECONDS = 0.25
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 WRITER_DRAIN_TIMEOUT = 2.0
@@ -437,6 +443,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "volume_step_percent": 0.1,
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
+            "single_low_latency_pacing": True,
+            "single_pcm_pace_ms": int(PCM_CHUNK_SECONDS * 1000),
+            "single_write_high_water_ms": int(
+                SINGLE_WRITE_HIGH_WATER_BYTES / (PCM_RATE * PCM_SAMPLE_BYTES) * 1000
+            ),
+            "single_socket_send_buffer_bytes": SINGLE_SOCKET_SNDBUF_BYTES,
+            "ffmpeg_realtime_input": True,
             "ffmpeg_nice_target": FFMPEG_NICE_TARGET,
             "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
             "aplay_nice_target": APLAY_NICE_TARGET,
@@ -928,13 +941,26 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if sock is not None:
             with suppress(OSError):
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            with suppress(OSError):
+                sock.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_SNDBUF, SINGLE_SOCKET_SNDBUF_BYTES
+                )
+        transport = writer.transport
+        transport.set_write_buffer_limits(
+            high=SINGLE_WRITE_HIGH_WATER_BYTES,
+            low=SINGLE_WRITE_LOW_WATER_BYTES,
+        )
         self._stream_writer = writer
 
         ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
         args = [
             ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning",
             "-reconnect", "1", "-reconnect_streamed", "1",
-            "-reconnect_delay_max", "5", "-i", self._media_url,
+            "-reconnect_delay_max", "5",
+            # Read the source at native playback speed. Without this, FFmpeg can
+            # decode finite media much faster than real time and fill TCP/FIFO
+            # buffers several seconds ahead of the live volume control.
+            "-re", "-i", self._media_url,
             "-vn", "-ac", str(PCM_CHANNELS), "-ar", str(PCM_RATE),
             "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1",
         ]
@@ -1054,6 +1080,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 raise RuntimeError("FFmpeg PCM stdout pipe is unavailable")
 
             buffer = bytearray()
+            next_send_monotonic = time.monotonic()
             while self._ffmpeg is process and not self._shutting_down:
                 data = await process.stdout.read(PCM_CHUNK_BYTES * 4)
                 if not data:
@@ -1062,10 +1089,22 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 while len(buffer) >= PCM_CHUNK_BYTES:
                     raw_chunk = bytes(buffer[:PCM_CHUNK_BYTES])
                     del buffer[:PCM_CHUNK_BYTES]
+
+                    # Keep the single-player output close to the live edge.
+                    # If the event loop was delayed, rebase instead of sending
+                    # a catch-up burst that would recreate seconds of latency.
+                    now = time.monotonic()
+                    if now - next_send_monotonic > SINGLE_PACE_REBASE_SECONDS:
+                        next_send_monotonic = now
+                    delay = next_send_monotonic - now
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+
                     writer.write(self._apply_live_pcm_gain(raw_chunk))
                     await asyncio.wait_for(
                         writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
                     )
+                    next_send_monotonic += PCM_CHUNK_SECONDS
 
             await process.wait()
             stderr_text = await stderr_task

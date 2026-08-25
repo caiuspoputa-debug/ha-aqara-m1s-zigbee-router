@@ -1,3 +1,12 @@
+# v0.9.1 — single-player low-latency live volume
+
+- Keeps v0.9.0 latest-request-wins single-player recovery and the v0.6.3 priority-sound transport.
+- Adds FFmpeg real-time input pacing (`-re`) for single playback so finite media cannot run several seconds ahead into TCP/FIFO buffers.
+- Bounds the single-player asyncio/TCP send buffering to a few 20 ms PCM frames.
+- Paces outgoing single-player PCM on Home Assistant's monotonic clock and rebases after event-loop stalls instead of sending catch-up bursts.
+- Live volume, Fine Volume Trim and mute remain software PCM gain changes and do not restart FFmpeg, TCP, `nc` or `aplay`.
+- Group transport and priority sound transport are unchanged from v0.9.0.
+
 # v0.6.0 TEST — clocked multi-room group transport
 
 - Reworked the M1S Media Group around a single Home Assistant monotonic playout clock.
