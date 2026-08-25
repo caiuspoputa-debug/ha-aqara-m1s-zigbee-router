@@ -1,3 +1,12 @@
+## v0.9.8 - Single TCP self-heal
+
+- Add immediate single-player TCP receiver recovery for `writer.drain()` backpressure.
+- On TCP backpressure, rebuild only the hub receiver on port 12346, reconnect the HA writer, send a short silence cushion, and continue the existing FFmpeg stream.
+- Reduce the single TCP drain timeout to 1.0 s so receiver recovery starts before the watchdog-sized interruption.
+- Keep the v0.9.7 4.0 s HA buffer, 2.5 s prebuffer, 2.0 s rebuffer threshold, and 500 ms `aplay` request.
+- Add diagnostics for TCP self-heal status and recovery event counts.
+- Sound-player transport and hub sound priority are unchanged.
+
 ## v0.9.7 - Single 4s buffer and hub aplay cushion
 
 - Increase the single-player HA-side jitter buffer to 4.0 s, with 2.5 s prebuffer and 2.0 s rebuffer resume threshold.

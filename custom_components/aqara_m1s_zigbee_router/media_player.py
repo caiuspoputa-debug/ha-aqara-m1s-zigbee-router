@@ -78,9 +78,15 @@ SINGLE_SOCKET_SNDBUF_BYTES = PCM_CHUNK_BYTES * 16
 SINGLE_PACE_REBASE_SECONDS = 0.50
 SINGLE_LOW_QUEUE_LOG_INTERVAL = 30.0
 SINGLE_SOURCE_STALL_TIMEOUT = 5.0
+SINGLE_TCP_RECOVERY_WINDOW_SECONDS = 30.0
+SINGLE_TCP_RECOVERY_BURST_LIMIT = 3
+SINGLE_TCP_RECOVERY_SILENCE_SECONDS = 0.50
+SINGLE_TCP_RECOVERY_SILENCE_CHUNKS = max(
+    1, int(SINGLE_TCP_RECOVERY_SILENCE_SECONDS / PCM_CHUNK_SECONDS)
+)
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
-WRITER_DRAIN_TIMEOUT = 2.0
+WRITER_DRAIN_TIMEOUT = 1.0
 # Teardown must never hold the single-player transport lock indefinitely.
 # Stop/Play only detaches the active session. The producer keeps draining
 # FFmpeg stdout and discards PCM after detach; the watcher remains the sole
@@ -476,6 +482,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_jitter_buffer_ms": int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
             "single_prebuffer_ms": int(SINGLE_PREBUFFER_SECONDS * 1000),
             "single_rebuffer_resume_ms": int(SINGLE_REBUFFER_RESUME_SECONDS * 1000),
+            "single_tcp_self_heal": True,
+            "single_tcp_recovery_window_seconds": SINGLE_TCP_RECOVERY_WINDOW_SECONDS,
+            "single_tcp_recovery_burst_limit": SINGLE_TCP_RECOVERY_BURST_LIMIT,
+            "single_tcp_recovery_silence_ms": int(
+                SINGLE_TCP_RECOVERY_SILENCE_SECONDS * 1000
+            ),
             "single_source_stall_timeout_seconds": SINGLE_SOURCE_STALL_TIMEOUT,
             "single_write_high_water_ms": int(
                 SINGLE_WRITE_HIGH_WATER_BYTES / (PCM_RATE * PCM_SAMPLE_BYTES) * 1000
@@ -546,6 +558,90 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 transport.abort()
         # Yield once so callbacks caused by abort can run, but never wait again.
         await asyncio.sleep(0)
+
+    def _configure_single_writer(self, writer: asyncio.StreamWriter) -> None:
+        sock = writer.get_extra_info("socket")
+        if sock is not None:
+            with suppress(OSError):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            with suppress(OSError):
+                sock.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_SNDBUF, SINGLE_SOCKET_SNDBUF_BYTES
+                )
+        writer.transport.set_write_buffer_limits(
+            high=SINGLE_WRITE_HIGH_WATER_BYTES,
+            low=SINGLE_WRITE_LOW_WATER_BYTES,
+        )
+
+    async def _connect_single_writer(
+        self, generation: int, *, reason: str
+    ) -> asyncio.StreamWriter:
+        writer: asyncio.StreamWriter | None = None
+        last_error: Exception | None = None
+        for attempt in range(12):
+            if not self._generation_is_current(generation) or self._shutting_down:
+                raise RuntimeError(f"single TCP connect became stale during {reason}")
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.client.host, RADIO_PORT), timeout=1.0
+                )
+                self._configure_single_writer(writer)
+                return writer
+            except (OSError, asyncio.TimeoutError) as err:
+                last_error = err
+                if attempt < 11:
+                    await asyncio.sleep(0.15)
+        raise ConnectionError(
+            f"individual audio receiver unavailable during {reason}: {last_error}"
+        )
+
+    async def _recover_single_tcp_writer(
+        self,
+        process: asyncio.subprocess.Process,
+        writer: asyncio.StreamWriter,
+        generation: int,
+        session: int,
+        *,
+        reason: str,
+    ) -> asyncio.StreamWriter:
+        if (
+            self._ffmpeg is not process
+            or not self._generation_is_current(generation)
+            or self._shutting_down
+        ):
+            raise RuntimeError("single TCP recovery skipped for stale session")
+
+        if self._stream_writer is writer:
+            self._stream_writer = None
+        await self._close_writer_bounded(writer, reason=f"tcp_recovery:{reason}")
+
+        await self.hass.async_add_executor_job(
+            self.client.run_command, REMOTE_START_COMMAND
+        )
+        new_writer = await self._connect_single_writer(
+            generation, reason=f"tcp_recovery:{reason}"
+        )
+
+        if (
+            self._ffmpeg is not process
+            or not self._generation_is_current(generation)
+            or self._shutting_down
+        ):
+            await self._close_writer_bounded(new_writer, reason="stale_tcp_recovery")
+            raise RuntimeError("single TCP recovery finished on stale session")
+
+        self._stream_writer = new_writer
+        _LOGGER.warning(
+            "Aqara media single TCP receiver recovered entity=%s session=%s "
+            "generation=%s host=%s pid=%s reason=%s",
+            self.entity_id,
+            session,
+            generation,
+            self.client.host,
+            process.pid,
+            reason,
+        )
+        return new_writer
 
     async def _terminate_process_bounded(
         self, process: asyncio.subprocess.Process | None, *, reason: str
@@ -1176,19 +1272,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             await self._cleanup_stale_receiver_locked(generation, "after_tcp_connect")
             return
 
-        sock = writer.get_extra_info("socket")
-        if sock is not None:
-            with suppress(OSError):
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            with suppress(OSError):
-                sock.setsockopt(
-                    socket.SOL_SOCKET, socket.SO_SNDBUF, SINGLE_SOCKET_SNDBUF_BYTES
-                )
-        transport = writer.transport
-        transport.set_write_buffer_limits(
-            high=SINGLE_WRITE_HIGH_WATER_BYTES,
-            low=SINGLE_WRITE_LOW_WATER_BYTES,
-        )
+        self._configure_single_writer(writer)
         self._stream_writer = writer
 
         ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
@@ -1321,6 +1405,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         silence_fill_events = 0
         rebuffer_events = 0
         rebuffering = False
+        tcp_recovery_events = 0
+        tcp_recovery_window_started = 0.0
         last_low_queue_log = 0.0
         last_real_pcm_monotonic = time.monotonic()
 
@@ -1369,6 +1455,57 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             _produce_pcm(),
             f"aqara_m1s_pcm_producer_{self.entry.entry_id}",
         )
+
+        async def _write_chunk_to_hub(raw_chunk: bytes, *, stage: str) -> None:
+            nonlocal writer, tcp_recovery_events, tcp_recovery_window_started
+            pcm = self._apply_live_pcm_gain(raw_chunk)
+            try:
+                writer.write(pcm)
+                await asyncio.wait_for(
+                    writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                )
+                return
+            except (asyncio.TimeoutError, OSError, ConnectionError) as err:
+                now = time.monotonic()
+                if now - tcp_recovery_window_started > SINGLE_TCP_RECOVERY_WINDOW_SECONDS:
+                    tcp_recovery_window_started = now
+                    tcp_recovery_events = 0
+                tcp_recovery_events += 1
+                if tcp_recovery_events > SINGLE_TCP_RECOVERY_BURST_LIMIT:
+                    raise RuntimeError(
+                        "single TCP recovery burst limit exceeded"
+                    ) from err
+
+                _LOGGER.warning(
+                    "Aqara media single TCP backpressure; rebuilding receiver "
+                    "entity=%s session=%s generation=%s host=%s pid=%s "
+                    "stage=%s recovery=%s/%s error=%r",
+                    self.entity_id,
+                    session,
+                    generation,
+                    self.client.host,
+                    process.pid,
+                    stage,
+                    tcp_recovery_events,
+                    SINGLE_TCP_RECOVERY_BURST_LIMIT,
+                    err,
+                )
+                writer = await self._recover_single_tcp_writer(
+                    process,
+                    writer,
+                    generation,
+                    session,
+                    reason=f"{stage}:{err.__class__.__name__}",
+                )
+                for _ in range(SINGLE_TCP_RECOVERY_SILENCE_CHUNKS):
+                    writer.write(PCM_SILENCE_CHUNK)
+                await asyncio.wait_for(
+                    writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                )
+                writer.write(pcm)
+                await asyncio.wait_for(
+                    writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                )
 
         try:
             # Build a real jitter cushion before opening the playout clock. For
@@ -1459,10 +1596,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     else:
                         raw_chunk = PCM_SILENCE_CHUNK
                         silence_fill_events += 1
-                        writer.write(self._apply_live_pcm_gain(raw_chunk))
-                        await asyncio.wait_for(
-                            writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
-                        )
+                        await _write_chunk_to_hub(raw_chunk, stage="rebuffer_silence")
                         next_send_monotonic += PCM_CHUNK_SECONDS
                         continue
 
@@ -1482,10 +1616,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
                 # Volume/mute is deliberately applied here, not in the producer.
                 # Therefore the 4.0 s jitter buffer does not add 4.0 s of volume lag.
-                writer.write(self._apply_live_pcm_gain(raw_chunk))
-                await asyncio.wait_for(
-                    writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
-                )
+                await _write_chunk_to_hub(raw_chunk, stage="playout")
                 next_send_monotonic += PCM_CHUNK_SECONDS
 
             detached = self._ffmpeg is not process and not self._shutting_down
@@ -1619,7 +1750,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "Aqara media FFmpeg/PCM ended unexpectedly entity=%s session=%s generation=%s "
             "pid=%s host=%s returncode=%s runtime=%.1fs playback_requested=%s "
             "failure_kind=%s source=%s pump_error=%r stderr=%r "
-            "buffer_low_events=%s silence_fill_events=%s",
+            "buffer_low_events=%s silence_fill_events=%s tcp_recovery_events=%s",
             self.entity_id,
             session,
             generation,
@@ -1634,6 +1765,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             stderr_text,
             low_queue_events,
             silence_fill_events,
+            tcp_recovery_events,
         )
         self._attr_state = MediaPlayerState.IDLE
         self.async_write_ha_state()
