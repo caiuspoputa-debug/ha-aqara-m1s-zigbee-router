@@ -65,9 +65,9 @@ PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
 # short scheduler/network stalls do not starve aplay, while volume/mute is still
 # applied only when a chunk leaves the buffer. This keeps audible volume latency
 # below a few seconds without returning to the old 5-6 s volume lag.
-SINGLE_JITTER_BUFFER_SECONDS = 2.00
-SINGLE_PREBUFFER_SECONDS = 1.50
-SINGLE_REBUFFER_RESUME_SECONDS = 1.00
+SINGLE_JITTER_BUFFER_SECONDS = 4.00
+SINGLE_PREBUFFER_SECONDS = 2.50
+SINGLE_REBUFFER_RESUME_SECONDS = 2.00
 SINGLE_JITTER_BUFFER_CHUNKS = max(1, int(SINGLE_JITTER_BUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_PREBUFFER_CHUNKS = max(1, int(SINGLE_PREBUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_REBUFFER_RESUME_CHUNKS = max(1, int(SINGLE_REBUFFER_RESUME_SECONDS / PCM_CHUNK_SECONDS))
@@ -91,6 +91,8 @@ FFMPEG_TERMINATE_TIMEOUT = 1.50
 FFMPEG_KILL_TIMEOUT = 3.00
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
+APLAY_BUFFER_TIME_US = 500000
+APLAY_PERIOD_TIME_US = 50000
 
 REMOTE_STOP_COMMAND = (
     # First stop the exact PIDs recorded when this integration started the
@@ -114,6 +116,8 @@ REMOTE_START_COMMAND = (
       '2>/tmp/aqara_m1s_radio_nc.log & '
     + f'echo $! > {REMOTE_NC_PID}; '
     + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} '
+      f'--buffer-time={APLAY_BUFFER_TIME_US} '
+      f'--period-time={APLAY_PERIOD_TIME_US} '
       f'{REMOTE_FIFO} </dev/null '
       '>/tmp/aqara_m1s_radio_aplay.log 2>&1 & '
     + f'echo $! > {REMOTE_APLAY_PID}; '
@@ -481,6 +485,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "ffmpeg_nice_target": FFMPEG_NICE_TARGET,
             "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
             "aplay_nice_target": APLAY_NICE_TARGET,
+            "aplay_buffer_ms": int(APLAY_BUFFER_TIME_US / 1000),
+            "aplay_period_ms": int(APLAY_PERIOD_TIME_US / 1000),
         }
 
     async def async_will_remove_from_hass(self) -> None:
@@ -1310,6 +1316,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         )
         producer_done = asyncio.Event()
         producer_error: Exception | None = None
+        producer_discard = False
         low_queue_events = 0
         silence_fill_events = 0
         rebuffer_events = 0
@@ -1327,20 +1334,28 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     data = await process.stdout.read(PCM_CHUNK_BYTES * 8)
                     if not data:
                         break
-                    if self._ffmpeg is not process:
+                    if self._ffmpeg is not process or producer_discard:
                         buffer.clear()
                         continue
                     buffer.extend(data)
                     while len(buffer) >= PCM_CHUNK_BYTES:
                         raw_chunk = bytes(buffer[:PCM_CHUNK_BYTES])
                         del buffer[:PCM_CHUNK_BYTES]
-                        while self._ffmpeg is process and not self._shutting_down:
+                        while (
+                            self._ffmpeg is process
+                            and not producer_discard
+                            and not self._shutting_down
+                        ):
                             try:
                                 await asyncio.wait_for(queue.put(raw_chunk), timeout=0.05)
                                 break
                             except asyncio.TimeoutError:
                                 continue
-                        if self._ffmpeg is not process or self._shutting_down:
+                        if (
+                            self._ffmpeg is not process
+                            or producer_discard
+                            or self._shutting_down
+                        ):
                             buffer.clear()
                             break
             except asyncio.CancelledError:
@@ -1466,7 +1481,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         silence_fill_events += 1
 
                 # Volume/mute is deliberately applied here, not in the producer.
-                # Therefore the 2.0 s jitter buffer does not add 2.0 s of volume lag.
+                # Therefore the 4.0 s jitter buffer does not add 4.0 s of volume lag.
                 writer.write(self._apply_live_pcm_gain(raw_chunk))
                 await asyncio.wait_for(
                     writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
@@ -1533,6 +1548,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 )
                 return
             pump_error = err
+            producer_discard = True
+            while not queue.empty():
+                with suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
             if process.returncode is None:
                 await self._terminate_process_while_stdout_drains(
                     process,

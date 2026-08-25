@@ -92,6 +92,8 @@ GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
+APLAY_BUFFER_TIME_US = 500000
+APLAY_PERIOD_TIME_US = 50000
 
 SILENCE_CHUNK = b"\x00" * CHUNK_BYTES
 
@@ -112,7 +114,10 @@ GROUP_START_COMMAND = (
     + f'nc -l -p {GROUP_PORT} </dev/null > {GROUP_FIFO} '
       '2>/tmp/aqara_m1s_group_nc.log & '
     + f'echo $! > {GROUP_NC_PID}; '
-    + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} {GROUP_FIFO} </dev/null '
+    + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} '
+      f'--buffer-time={APLAY_BUFFER_TIME_US} '
+      f'--period-time={APLAY_PERIOD_TIME_US} '
+      f'{GROUP_FIFO} </dev/null '
       '>/tmp/aqara_m1s_group_aplay.log 2>&1 & '
     + f'echo $! > {GROUP_APLAY_PID}; '
     + f'APID=$(cat {GROUP_APLAY_PID}); '
@@ -457,6 +462,8 @@ class AqaraM1SMediaGroupManager:
             "ffmpeg_nice_target": FFMPEG_NICE_TARGET,
             "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
             "aplay_nice_target": APLAY_NICE_TARGET,
+            "aplay_buffer_ms": int(APLAY_BUFFER_TIME_US / 1000),
+            "aplay_period_ms": int(APLAY_PERIOD_TIME_US / 1000),
         }
 
     async def async_start(

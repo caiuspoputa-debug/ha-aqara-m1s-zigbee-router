@@ -1,3 +1,11 @@
+## v0.9.7 - Single 4s buffer and hub aplay cushion
+
+- Increase the single-player HA-side jitter buffer to 4.0 s, with 2.5 s prebuffer and 2.0 s rebuffer resume threshold.
+- Add explicit 500 ms `aplay` buffer and 50 ms period time for single and group hub receivers to reduce ALSA underruns.
+- On single TCP writer failure, switch the FFmpeg stdout producer to discard/drain mode before terminate/kill so it cannot remain blocked in the PCM queue.
+- Keep the v0.9.6 group drain/reap behavior.
+- Sound-player transport and hub sound priority are unchanged.
+
 ## v0.9.6 - Single 2s buffer and group drain reap
 
 - Increase the single-player HA-side jitter buffer to 2.0 s, with 1.5 s prebuffer and 1.0 s rebuffer resume threshold.
