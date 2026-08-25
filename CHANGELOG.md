@@ -1,3 +1,13 @@
+## v0.10.1 - Fine trim debounce and clean TCP recovery
+
+- Protect the single-player live PCM gain path from rapid `Fine Volume Trim` slider changes.
+- Coalesce repeated fine-trim/main-gain requests for 150 ms before changing the audio gain target.
+- Increase the single-player anti-click gain ramp from 40 ms to 200 ms, so repeated trim changes do not reset very short ramps and create distortion.
+- On a single TCP writer/backpressure fault, rebuild only the hub receiver, drop up to 500 ms of stale queued PCM, send 500 ms of silence cushion, and continue the same FFmpeg stream.
+- Skip replaying the failed PCM chunk after recovery, to avoid carrying a distorted transition into the new receiver.
+- Keep `Fine Volume Trim` at `-2.00..+1.00%`, keep the 2 s hub `aplay` buffer, and preserve FFmpeg nice -5 / hub aplay nice -3.
+- `media_group.py` and `sound_player.py` behavior is unchanged from v0.10.0.
+
 ## v0.10.0 - Fine trim negative range
 
 - Extend the individual radio Fine Volume Trim range from `-1.00..+1.00%` to `-2.00..+1.00%`.

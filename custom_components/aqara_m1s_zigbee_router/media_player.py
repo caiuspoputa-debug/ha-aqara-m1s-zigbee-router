@@ -49,6 +49,7 @@ REMOTE_NC_PID = "/tmp/aqara_m1s_radio_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_radio_aplay.pid"
 
 WATCHDOG_RESTART_DELAY = 5.0
+WATCHDOG_FAST_RESTART_DELAY = 0.25
 WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_STABLE_SECONDS = 30.0
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
@@ -84,8 +85,13 @@ SINGLE_TCP_RECOVERY_SILENCE_SECONDS = 0.50
 SINGLE_TCP_RECOVERY_SILENCE_CHUNKS = max(
     1, int(SINGLE_TCP_RECOVERY_SILENCE_SECONDS / PCM_CHUNK_SECONDS)
 )
-GAIN_RAMP_SECONDS = 0.04
+SINGLE_TCP_RECOVERY_DROP_SECONDS = 0.50
+SINGLE_TCP_RECOVERY_DROP_CHUNKS = max(
+    1, int(SINGLE_TCP_RECOVERY_DROP_SECONDS / PCM_CHUNK_SECONDS)
+)
+GAIN_RAMP_SECONDS = 0.20
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
+LIVE_GAIN_TARGET_DEBOUNCE_SECONDS = 0.15
 WRITER_DRAIN_TIMEOUT = 1.0
 # Teardown must never hold the single-player transport lock indefinitely.
 # Stop/Play only detaches the active session. The producer keeps draining
@@ -154,8 +160,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
     # Main native Home Assistant slider: 0-100% in uniform 0.1% steps.
-    # v0.5.9 adds a separate per-player Fine Volume Trim Number entity
-    # (-1.00..+1.00 percentage points in 0.01 steps) without changing this
+        # v0.5.9 adds a separate per-player Fine Volume Trim Number entity
+        # (-2.00..+1.00 percentage points in 0.01 steps) without changing this
     # convenient coarse/main control.
     _attr_volume_step = 0.001
     _attr_supported_features = (
@@ -202,8 +208,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._ffmpeg_nice_applied = False
         self._gain_current = self._effective_gain()
         self._gain_target = self._gain_current
+        self._gain_requested = self._gain_current
+        self._gain_pending_since = 0.0
         self._gain_ramp_start = self._gain_current
         self._gain_ramp_remaining = 0
+        self._gain_target_updates = 0
+        self._gain_target_coalesced = 0
         self._watchdog_restart_task: asyncio.Task | None = None
         self._watchdog_stable_task: asyncio.Task | None = None
         self._watchdog_slow_retry_task: asyncio.Task | None = None
@@ -435,6 +445,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
             self._attr_state = MediaPlayerState.IDLE
 
+        self._reset_live_gain()
+
         if self._group_manager is not None:
             self._group_manager.mark_individual_intent(
                 self.entry.entry_id, self._resume_after_reconnect
@@ -462,6 +474,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "is_volume_muted": self._attr_is_volume_muted,
             "resume_after_reconnect": self._resume_after_reconnect,
             "watchdog_restart_attempts": self._watchdog_restart_attempts,
+            "watchdog_fast_restart_delay_seconds": WATCHDOG_FAST_RESTART_DELAY,
             "last_failure_kind": self._last_failure_kind,
             "last_failure_detail": self._last_failure_detail,
             "play_intent_generation": self._play_generation,
@@ -470,7 +483,18 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "volume_apply_mode": "live_pcm_software_gain",
             "volume_stream_restart": False,
             "volume_step_percent": 0.1,
+            "live_gain_target_debounce_ms": int(
+                LIVE_GAIN_TARGET_DEBOUNCE_SECONDS * 1000
+            ),
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
+            "applied_effective_volume_percent": round(
+                self._gain_current * 100.0, 2
+            ),
+            "target_effective_volume_percent": round(
+                self._gain_target * 100.0, 2
+            ),
+            "live_gain_target_updates": self._gain_target_updates,
+            "live_gain_target_coalesced": self._gain_target_coalesced,
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "writer_close_timeout_seconds": WRITER_CLOSE_TIMEOUT,
             "ffmpeg_reap_mode": "watcher_owned_detach_drain",
@@ -483,10 +507,14 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_prebuffer_ms": int(SINGLE_PREBUFFER_SECONDS * 1000),
             "single_rebuffer_resume_ms": int(SINGLE_REBUFFER_RESUME_SECONDS * 1000),
             "single_tcp_self_heal": True,
+            "single_tcp_recovery_mode": "in_place_drop_stale_pcm",
             "single_tcp_recovery_window_seconds": SINGLE_TCP_RECOVERY_WINDOW_SECONDS,
             "single_tcp_recovery_burst_limit": SINGLE_TCP_RECOVERY_BURST_LIMIT,
             "single_tcp_recovery_silence_ms": int(
                 SINGLE_TCP_RECOVERY_SILENCE_SECONDS * 1000
+            ),
+            "single_tcp_recovery_drop_ms": int(
+                SINGLE_TCP_RECOVERY_DROP_SECONDS * 1000
             ),
             "single_source_stall_timeout_seconds": SINGLE_SOURCE_STALL_TIMEOUT,
             "single_write_high_water_ms": int(
@@ -946,7 +974,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         await self.async_media_stop()
 
     async def async_set_volume_level(self, volume: float) -> None:
-        """Apply individual-player volume live to the running PCM stream."""
+        """Record desired volume; the PCM clock applies it after debounce."""
         self._attr_volume_level = self._normalize_volume(float(volume))
         self.async_write_ha_state()
         async_dispatcher_send(
@@ -992,9 +1020,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     def set_fine_volume_trim_percent(self, value: float) -> None:
         """Apply a fine absolute percentage-point trim to live PCM gain."""
         self._fine_volume_trim_percent = self._normalize_fine_volume_trim_percent(value)
-        # _apply_live_pcm_gain() samples _effective_gain() for every 20 ms PCM
-        # chunk, so no FFmpeg/TCP/aplay restart is needed. If the media-player
-        # entity is already registered, refresh its diagnostic attributes too.
+        # The PCM clock coalesces rapid trim/volume slider movement before it
+        # changes the live gain target. No FFmpeg/TCP/aplay restart is needed.
         if self.entity_id is not None:
             self.async_write_ha_state()
 
@@ -1013,16 +1040,33 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         target = self._effective_gain()
         self._gain_current = target
         self._gain_target = target
+        self._gain_requested = target
+        self._gain_pending_since = 0.0
         self._gain_ramp_start = target
         self._gain_ramp_remaining = 0
 
+    def _coalesced_gain_target(self) -> float:
+        requested = self._effective_gain()
+        now = time.monotonic()
+        if requested != self._gain_requested:
+            self._gain_requested = requested
+            self._gain_pending_since = now
+            self._gain_target_coalesced += 1
+
+        if self._gain_requested != self._gain_target:
+            pending_since = self._gain_pending_since or now
+            if now - pending_since >= LIVE_GAIN_TARGET_DEBOUNCE_SECONDS:
+                self._gain_ramp_start = self._gain_current
+                self._gain_target = self._gain_requested
+                self._gain_ramp_remaining = GAIN_RAMP_SAMPLES
+                self._gain_pending_since = 0.0
+                self._gain_target_updates += 1
+
+        return self._gain_target
+
     def _apply_live_pcm_gain(self, chunk: bytes) -> bytes:
-        """Scale one S32_LE PCM chunk with a short anti-click transition."""
-        target = self._effective_gain()
-        if target != self._gain_target:
-            self._gain_ramp_start = self._gain_current
-            self._gain_target = target
-            self._gain_ramp_remaining = GAIN_RAMP_SAMPLES
+        """Scale one S32_LE PCM chunk with debounced anti-click gain."""
+        target = self._coalesced_gain_target()
 
         if self._gain_ramp_remaining <= 0:
             self._gain_current = target
@@ -1492,9 +1536,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     else _LOGGER.info
                 )
                 log(
-                    "Aqara media single TCP backpressure; rebuilding receiver "
-                    "entity=%s session=%s generation=%s host=%s pid=%s "
-                    "stage=%s recovery=%s/%s error=%r",
+                    "Aqara media single TCP writer fault; rebuilding receiver "
+                    "and dropping stale PCM entity=%s session=%s generation=%s "
+                    "host=%s pid=%s stage=%s recovery=%s/%s error=%r",
                     self.entity_id,
                     session,
                     generation,
@@ -1512,15 +1556,34 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     session,
                     reason=f"{stage}:{err.__class__.__name__}",
                 )
+
+                dropped_chunks = 0
+                while dropped_chunks < SINGLE_TCP_RECOVERY_DROP_CHUNKS:
+                    try:
+                        queue.get_nowait()
+                        dropped_chunks += 1
+                    except asyncio.QueueEmpty:
+                        break
+
+                self._reset_live_gain()
                 for _ in range(SINGLE_TCP_RECOVERY_SILENCE_CHUNKS):
                     writer.write(PCM_SILENCE_CHUNK)
                 await asyncio.wait_for(
                     writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
                 )
-                writer.write(pcm)
-                await asyncio.wait_for(
-                    writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                _LOGGER.info(
+                    "Aqara media single TCP receiver resumed after stale PCM drop "
+                    "entity=%s session=%s generation=%s host=%s pid=%s "
+                    "dropped_ms=%s silence_ms=%s",
+                    self.entity_id,
+                    session,
+                    generation,
+                    self.client.host,
+                    process.pid,
+                    int(dropped_chunks * PCM_CHUNK_SECONDS * 1000),
+                    int(SINGLE_TCP_RECOVERY_SILENCE_SECONDS * 1000),
                 )
+                return
 
         try:
             # Build a real jitter cushion before opening the playout clock. For
@@ -1874,7 +1937,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self, failure_kind: str, generation: int
     ) -> None:
         try:
-            await asyncio.sleep(WATCHDOG_RESTART_DELAY)
+            restart_delay = (
+                WATCHDOG_FAST_RESTART_DELAY
+                if failure_kind in ("tcp_pcm_backpressure", "hub_audio")
+                else WATCHDOG_RESTART_DELAY
+            )
+            await asyncio.sleep(restart_delay)
             if (
                 generation != self._play_generation
                 or not self._resume_after_reconnect
@@ -1893,9 +1961,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._watchdog_restart_attempts += 1
             _LOGGER.warning(
                 "Aqara media watchdog restarting %s (%s/%s) "
-                "failure_kind=%s generation=%s",
+                "failure_kind=%s generation=%s delay=%.2fs",
                 self.entity_id, self._watchdog_restart_attempts,
-                WATCHDOG_MAX_RESTARTS, failure_kind, generation
+                WATCHDOG_MAX_RESTARTS, failure_kind, generation, restart_delay
             )
             await self._restart_current_generation(generation)
             await asyncio.sleep(0.5)
