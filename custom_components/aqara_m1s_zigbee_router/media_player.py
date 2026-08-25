@@ -1054,7 +1054,25 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Apply individual-player volume live to the running PCM stream."""
-        self._attr_volume_level = self._normalize_volume(float(volume))
+        old_volume = float(self._attr_volume_level or 0.0)
+        old_effective = self._effective_gain()
+        normalized = self._normalize_volume(float(volume))
+        self._attr_volume_level = normalized
+        _LOGGER.warning(
+            "Aqara media_player volume event entity=%s host=%s requested=%.4f "
+            "old=%.4f applied=%.4f effective_before=%.4f effective_after=%.4f "
+            "muted=%s state=%s playback_requested=%s",
+            self.entity_id,
+            self.client.host,
+            float(volume),
+            old_volume,
+            normalized,
+            old_effective,
+            self._effective_gain(),
+            self._attr_is_volume_muted,
+            self._attr_state,
+            self._playback_requested,
+        )
         self.async_write_ha_state()
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)
@@ -1079,7 +1097,22 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Apply mute live through the same PCM gain path."""
+        old_muted = self._attr_is_volume_muted
+        old_effective = self._effective_gain()
         self._attr_is_volume_muted = bool(mute)
+        _LOGGER.warning(
+            "Aqara media_player mute event entity=%s host=%s requested=%s "
+            "old=%s effective_before=%.4f effective_after=%.4f "
+            "state=%s playback_requested=%s",
+            self.entity_id,
+            self.client.host,
+            bool(mute),
+            old_muted,
+            old_effective,
+            self._effective_gain(),
+            self._attr_state,
+            self._playback_requested,
+        )
         self.async_write_ha_state()
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)

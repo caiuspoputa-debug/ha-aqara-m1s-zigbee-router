@@ -1,3 +1,10 @@
+## v0.10.7 - Event trace diagnostics
+
+- Add WARNING-level diagnostics for media-player volume and mute commands.
+- Add WARNING-level diagnostics for integration Number slider changes: Sound Playback Volume and Fine Volume Trim.
+- No audio/playback behavior changes: gain path, buffer, receiver policy, FFmpeg nice -5 and aplay nice -3 remain as in v0.10.6.
+- `media_group.py` and `sound_player.py` are unchanged from v0.10.6.
+
 ## v0.10.6 - v0.10.0 exact volume path
 
 - Restore the individual media-player main volume and Fine Volume Trim code path to match v0.10.0 exactly.

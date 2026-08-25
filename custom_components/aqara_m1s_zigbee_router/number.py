@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
@@ -15,6 +17,8 @@ from .const import (
     DATA_RADIO_PLAYERS,
     DOMAIN,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -115,6 +119,14 @@ class AqaraM1SSoundPlaybackVolume(
         self.hass.data.setdefault(DOMAIN, {})
         self.hass.data[DOMAIN].setdefault(DATA_PLAYBACK_VOLUME, {})
         self.hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][self.entry.entry_id] = safe_value
+        _LOGGER.warning(
+            "Aqara integration number event entity=%s kind=sound_playback_volume "
+            "host=%s requested=%s applied=%s affects=local_wav_sound_playback_not_radio_stream",
+            self.entity_id,
+            self.client.host,
+            value,
+            safe_value,
+        )
         self.async_write_ha_state()
 
 
@@ -187,4 +199,15 @@ class AqaraM1SRadioFineVolumeTrim(
         safe_value = self._normalize(value)
         self._attr_native_value = safe_value
         self.radio_player.set_fine_volume_trim_percent(safe_value)
+        _LOGGER.warning(
+            "Aqara integration number event entity=%s kind=fine_volume_trim "
+            "host=%s requested=%.4f applied=%.2f media_player_entity=%s "
+            "effective_volume_percent=%.2f",
+            self.entity_id,
+            self.client.host,
+            float(value),
+            safe_value,
+            self.radio_player.entity_id,
+            self.radio_player._effective_gain() * 100.0,
+        )
         self.async_write_ha_state()
