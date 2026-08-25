@@ -1,3 +1,12 @@
+## v0.9.6 - Single 2s buffer and group drain reap
+
+- Increase the single-player HA-side jitter buffer to 2.0 s, with 1.5 s prebuffer and 1.0 s rebuffer resume threshold.
+- Add single-player rebuffer mode so a depleted buffer sends controlled silence until enough PCM is available, instead of alternating broken audio and silence.
+- Keep the single FFmpeg stdout producer active during watcher_exception teardown so subprocess pipes drain before reap.
+- Group Stop now invalidates the timeline but lets FFmpeg stdout/stderr readers drain and discard until EOF before final reap.
+- Group broadcaster no longer fans out PCM after Stop while it drains the old FFmpeg process.
+- Sound-player transport and hub sound priority are unchanged.
+
 ## v0.9.5 - Single detached drain reap
 
 - Fix intentional single-player Stop teardown after v0.9.4 by treating detached sessions as normal watcher exits.

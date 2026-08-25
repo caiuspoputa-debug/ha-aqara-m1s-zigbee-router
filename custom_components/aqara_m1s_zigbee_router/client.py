@@ -502,7 +502,7 @@ class AqaraM1SClient:
         expected_md5 = hashlib.md5(content).hexdigest()
 
         # Kill only stale upload listeners created for this dedicated port.
-        # Do not use killall nc because the hub can have unrelated nc services.
+        # Do not use broad nc process kills because the hub can have unrelated nc services.
         start_command = (
             f"for p in $(ps w | grep '[n]c -l -p {UPLOAD_PORT}' | "
             "awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "

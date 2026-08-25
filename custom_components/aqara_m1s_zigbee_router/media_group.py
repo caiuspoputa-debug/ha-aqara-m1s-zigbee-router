@@ -75,6 +75,8 @@ FULL_RESYNC_RETRY_SECONDS = MEMBER_RETRY_BASE_SECONDS  # compatibility attribute
 FULL_RESYNC_HARD_TIMEOUT = 20.0  # compatibility safety net; member faults never call it
 MANUAL_RESET_NORMAL_STOP_TIMEOUT = 6.0
 MANUAL_RESET_REMOTE_TIMEOUT = 3.0
+GROUP_FFMPEG_TERMINATE_TIMEOUT = 2.0
+GROUP_FFMPEG_KILL_TIMEOUT = 3.0
 MEMBER_REMOTE_START_TIMEOUT = 2.5
 MEMBER_REMOTE_STOP_TIMEOUT = 1.5
 MEMBER_CONNECT_ATTEMPTS = 6
@@ -898,7 +900,11 @@ class AqaraM1SMediaGroupManager:
         self._playout_epoch_monotonic = None
         self._generation += 1
         current = asyncio.current_task()
-        for attr in ("broadcast_task", "stderr_task", "stable_task", "health_task"):
+        broadcast_task = self.broadcast_task
+        stderr_task = self.stderr_task
+        self.broadcast_task = None
+        self.stderr_task = None
+        for attr in ("stable_task", "health_task"):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task and task is not current:
@@ -908,13 +914,41 @@ class AqaraM1SMediaGroupManager:
         self.ffmpeg = None
         self._ffmpeg_nice_applied = False
         if process is not None and process.returncode is None:
-            process.terminate()
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(process.wait(), timeout=2.0)
+            with suppress(ProcessLookupError):
+                process.terminate()
+            try:
+                await asyncio.wait_for(
+                    process.wait(), timeout=GROUP_FFMPEG_TERMINATE_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "M1S group FFmpeg terminate timeout while stdout drains "
+                    "pid=%s reason=%s; killing process",
+                    process.pid,
+                    reason,
+                )
             if process.returncode is None:
-                process.kill()
+                with suppress(ProcessLookupError):
+                    process.kill()
                 with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(process.wait(), timeout=1.0)
+                    await asyncio.wait_for(
+                        process.wait(), timeout=GROUP_FFMPEG_KILL_TIMEOUT
+                    )
+                if process.returncode is None:
+                    _LOGGER.warning(
+                        "M1S group FFmpeg did not reap after kill pid=%s "
+                        "reason=%s broadcaster_done=%s",
+                        process.pid,
+                        reason,
+                        bool(broadcast_task and broadcast_task.done()),
+                    )
+        for task in (broadcast_task, stderr_task):
+            if task and task is not current:
+                if not task.done():
+                    with suppress(asyncio.TimeoutError, asyncio.CancelledError):
+                        await asyncio.wait_for(task, timeout=TASK_CANCEL_TIMEOUT)
+                if not task.done():
+                    await self._cancel_task(task)
         if stop_members:
             await asyncio.gather(
                 *(
@@ -1250,15 +1284,16 @@ class AqaraM1SMediaGroupManager:
             # N source chunks as silence' startup behaviour.
             for _ in range(INITIAL_PREROLL_CHUNKS):
                 if generation != self._generation or not self.desired_playing:
-                    return
+                    break
                 sequence = self._sequence
                 await self._pace_frame(sequence)
                 await self._fanout_frame(SILENCE_CHUNK, sequence)
                 self._sequence += 1
                 self._last_pcm_monotonic = time.monotonic()
 
-            while generation == self._generation and self.desired_playing:
-                if self._broadcast_pause_requested.is_set():
+            while not self._shutting_down:
+                active_generation = generation == self._generation and self.desired_playing
+                if active_generation and self._broadcast_pause_requested.is_set():
                     self._broadcast_paused.set()
                     try:
                         while (
@@ -1270,13 +1305,20 @@ class AqaraM1SMediaGroupManager:
                     finally:
                         self._broadcast_paused.clear()
                     if generation != self._generation or not self.desired_playing:
-                        return
+                        active_generation = False
 
                 data = await process.stdout.read(32768)
                 if not data:
                     break
+                if not active_generation:
+                    buffer.clear()
+                    continue
                 buffer.extend(data)
-                while len(buffer) >= CHUNK_BYTES:
+                while (
+                    len(buffer) >= CHUNK_BYTES
+                    and generation == self._generation
+                    and self.desired_playing
+                ):
                     raw_chunk = bytes(buffer[:CHUNK_BYTES])
                     del buffer[:CHUNK_BYTES]
                     chunk = self._apply_live_pcm_gain(raw_chunk)
@@ -1288,6 +1330,8 @@ class AqaraM1SMediaGroupManager:
                     await self._fanout_frame(chunk, sequence)
                     self._sequence += 1
                     self._last_pcm_monotonic = time.monotonic()
+                if generation != self._generation or not self.desired_playing:
+                    buffer.clear()
         except asyncio.CancelledError:
             raise
         except Exception as err:
@@ -1306,10 +1350,12 @@ class AqaraM1SMediaGroupManager:
             return
         lines: list[str] = []
         try:
-            while generation == self._generation:
+            while not self._shutting_down:
                 line = await process.stderr.readline()
                 if not line:
                     break
+                if generation != self._generation:
+                    continue
                 text = line.decode(errors="replace").strip()
                 if text:
                     lines.append(text)

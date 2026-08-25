@@ -64,15 +64,17 @@ PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
 # Single-player stable transport. Keep a bounded HA-side PCM jitter buffer so
 # short scheduler/network stalls do not starve aplay, while volume/mute is still
 # applied only when a chunk leaves the buffer. This keeps audible volume latency
-# below roughly one second without allowing multi-second TCP/FIFO buildup.
-SINGLE_JITTER_BUFFER_SECONDS = 0.80
-SINGLE_PREBUFFER_SECONDS = 0.60
+# below a few seconds without returning to the old 5-6 s volume lag.
+SINGLE_JITTER_BUFFER_SECONDS = 2.00
+SINGLE_PREBUFFER_SECONDS = 1.50
+SINGLE_REBUFFER_RESUME_SECONDS = 1.00
 SINGLE_JITTER_BUFFER_CHUNKS = max(1, int(SINGLE_JITTER_BUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_PREBUFFER_CHUNKS = max(1, int(SINGLE_PREBUFFER_SECONDS / PCM_CHUNK_SECONDS))
-SINGLE_LOW_QUEUE_CHUNKS = max(2, int(0.12 / PCM_CHUNK_SECONDS))
-SINGLE_WRITE_HIGH_WATER_BYTES = PCM_CHUNK_BYTES * 12
-SINGLE_WRITE_LOW_WATER_BYTES = PCM_CHUNK_BYTES * 6
-SINGLE_SOCKET_SNDBUF_BYTES = PCM_CHUNK_BYTES * 12
+SINGLE_REBUFFER_RESUME_CHUNKS = max(1, int(SINGLE_REBUFFER_RESUME_SECONDS / PCM_CHUNK_SECONDS))
+SINGLE_LOW_QUEUE_CHUNKS = max(2, int(0.30 / PCM_CHUNK_SECONDS))
+SINGLE_WRITE_HIGH_WATER_BYTES = PCM_CHUNK_BYTES * 16
+SINGLE_WRITE_LOW_WATER_BYTES = PCM_CHUNK_BYTES * 8
+SINGLE_SOCKET_SNDBUF_BYTES = PCM_CHUNK_BYTES * 16
 SINGLE_PACE_REBASE_SECONDS = 0.50
 SINGLE_LOW_QUEUE_LOG_INTERVAL = 30.0
 SINGLE_SOURCE_STALL_TIMEOUT = 5.0
@@ -80,8 +82,9 @@ GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 WRITER_DRAIN_TIMEOUT = 2.0
 # Teardown must never hold the single-player transport lock indefinitely.
-# Stop/Play only detaches the active session.  The watcher remains the sole
-# coroutine that awaits/reaps its FFmpeg process; a separate escalator may
+# Stop/Play only detaches the active session. The producer keeps draining
+# FFmpeg stdout and discards PCM after detach; the watcher remains the sole
+# coroutine that awaits/reaps its FFmpeg process. A separate escalator may
 # terminate/kill a stale process but never calls process.wait().
 WRITER_CLOSE_TIMEOUT = 0.50
 FFMPEG_TERMINATE_TIMEOUT = 1.50
@@ -460,7 +463,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "writer_close_timeout_seconds": WRITER_CLOSE_TIMEOUT,
-            "ffmpeg_reap_mode": "watcher_owned_async",
+            "ffmpeg_reap_mode": "watcher_owned_detach_drain",
             "ffmpeg_terminate_grace_seconds": FFMPEG_TERMINATE_TIMEOUT,
             "ffmpeg_kill_grace_seconds": FFMPEG_KILL_TIMEOUT,
             "user_stop_remote_cleanup": "deferred_until_next_play",
@@ -468,6 +471,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_pcm_pace_ms": int(PCM_CHUNK_SECONDS * 1000),
             "single_jitter_buffer_ms": int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
             "single_prebuffer_ms": int(SINGLE_PREBUFFER_SECONDS * 1000),
+            "single_rebuffer_resume_ms": int(SINGLE_REBUFFER_RESUME_SECONDS * 1000),
             "single_source_stall_timeout_seconds": SINGLE_SOURCE_STALL_TIMEOUT,
             "single_write_high_water_ms": int(
                 SINGLE_WRITE_HIGH_WATER_BYTES / (PCM_RATE * PCM_SAMPLE_BYTES) * 1000
@@ -569,6 +573,47 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 self.client.host,
                 process.pid,
                 reason,
+            )
+
+    async def _terminate_process_while_stdout_drains(
+        self,
+        process: asyncio.subprocess.Process,
+        producer_task: asyncio.Task,
+        *,
+        reason: str,
+    ) -> None:
+        """Terminate FFmpeg while its stdout reader remains active."""
+        if process.returncode is not None:
+            return
+        with suppress(ProcessLookupError):
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=FFMPEG_TERMINATE_TIMEOUT)
+            return
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Aqara media watcher terminate timeout while draining stdout "
+                "entity=%s host=%s pid=%s reason=%s; escalating to kill",
+                self.entity_id,
+                self.client.host,
+                process.pid,
+                reason,
+            )
+
+        with suppress(ProcessLookupError):
+            process.kill()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=FFMPEG_KILL_TIMEOUT)
+        except asyncio.TimeoutError:
+            _LOGGER.error(
+                "Aqara media watcher could not reap FFmpeg after kill with "
+                "stdout reader active entity=%s host=%s pid=%s reason=%s "
+                "producer_done=%s",
+                self.entity_id,
+                self.client.host,
+                process.pid,
+                reason,
+                producer_task.done(),
             )
 
     def _schedule_detached_process_escalation(
@@ -1267,6 +1312,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         producer_error: Exception | None = None
         low_queue_events = 0
         silence_fill_events = 0
+        rebuffer_events = 0
+        rebuffering = False
         last_low_queue_log = 0.0
         last_real_pcm_monotonic = time.monotonic()
 
@@ -1276,15 +1323,26 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             try:
                 if process.stdout is None:
                     raise RuntimeError("FFmpeg PCM stdout pipe is unavailable")
-                while self._ffmpeg is process and not self._shutting_down:
+                while not self._shutting_down:
                     data = await process.stdout.read(PCM_CHUNK_BYTES * 8)
                     if not data:
                         break
+                    if self._ffmpeg is not process:
+                        buffer.clear()
+                        continue
                     buffer.extend(data)
                     while len(buffer) >= PCM_CHUNK_BYTES:
                         raw_chunk = bytes(buffer[:PCM_CHUNK_BYTES])
                         del buffer[:PCM_CHUNK_BYTES]
-                        await queue.put(raw_chunk)
+                        while self._ffmpeg is process and not self._shutting_down:
+                            try:
+                                await asyncio.wait_for(queue.put(raw_chunk), timeout=0.05)
+                                break
+                            except asyncio.TimeoutError:
+                                continue
+                        if self._ffmpeg is not process or self._shutting_down:
+                            buffer.clear()
+                            break
             except asyncio.CancelledError:
                 raise
             except Exception as err:
@@ -1355,17 +1413,45 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                             silence_fill_events,
                         )
 
-                if queue.empty() and not producer_done.is_set():
-                    # Keep the hub's aplay pipeline alive during a very short
-                    # source/scheduler gap. One silent frame is preferable to an
-                    # ALSA underrun and does not advance buffered source audio.
-                    if time.monotonic() - last_real_pcm_monotonic > SINGLE_SOURCE_STALL_TIMEOUT:
+                if not rebuffering and queue.empty() and not producer_done.is_set():
+                    rebuffering = True
+                    rebuffer_events += 1
+                    _LOGGER.warning(
+                        "Aqara media single rebuffer started entity=%s session=%s "
+                        "host=%s rebuffer_events=%s silence_fill_events=%s",
+                        self.entity_id,
+                        session,
+                        self.client.host,
+                        rebuffer_events,
+                        silence_fill_events,
+                    )
+
+                if rebuffering:
+                    if producer_done.is_set() or queue.qsize() >= SINGLE_REBUFFER_RESUME_CHUNKS:
+                        rebuffering = False
+                        _LOGGER.info(
+                            "Aqara media single rebuffer ended entity=%s session=%s "
+                            "host=%s queued_ms=%s",
+                            self.entity_id,
+                            session,
+                            self.client.host,
+                            int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
+                        )
+                    elif time.monotonic() - last_real_pcm_monotonic > SINGLE_SOURCE_STALL_TIMEOUT:
                         raise RuntimeError(
                             f"PCM source stalled for more than {SINGLE_SOURCE_STALL_TIMEOUT:.1f}s"
                         )
-                    raw_chunk = PCM_SILENCE_CHUNK
-                    silence_fill_events += 1
-                else:
+                    else:
+                        raw_chunk = PCM_SILENCE_CHUNK
+                        silence_fill_events += 1
+                        writer.write(self._apply_live_pcm_gain(raw_chunk))
+                        await asyncio.wait_for(
+                            writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                        )
+                        next_send_monotonic += PCM_CHUNK_SECONDS
+                        continue
+
+                if not rebuffering:
                     try:
                         raw_chunk = queue.get_nowait()
                         last_real_pcm_monotonic = time.monotonic()
@@ -1380,20 +1466,33 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         silence_fill_events += 1
 
                 # Volume/mute is deliberately applied here, not in the producer.
-                # Therefore the 0.8 s jitter buffer does not add 0.8 s of volume lag.
+                # Therefore the 2.0 s jitter buffer does not add 2.0 s of volume lag.
                 writer.write(self._apply_live_pcm_gain(raw_chunk))
                 await asyncio.wait_for(
                     writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
                 )
                 next_send_monotonic += PCM_CHUNK_SECONDS
 
-            if not producer_task.done():
+            detached = self._ffmpeg is not process and not self._shutting_down
+            if not producer_task.done() and not detached:
                 producer_task.cancel()
             with suppress(asyncio.CancelledError):
                 await producer_task
 
             await process.wait()
             stderr_text = await stderr_task
+
+            if detached:
+                _LOGGER.debug(
+                    "Aqara media detached FFmpeg drained and reaped entity=%s "
+                    "session=%s pid=%s host=%s returncode=%s",
+                    self.entity_id,
+                    session,
+                    process.pid,
+                    self.client.host,
+                    process.returncode,
+                )
+                return
 
             if self._ffmpeg is not process or self._shutting_down:
                 return
@@ -1415,15 +1514,38 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             )
             raise
         except Exception as err:
+            if self._ffmpeg is not process and not self._shutting_down:
+                with suppress(asyncio.CancelledError):
+                    await producer_task
+                await process.wait()
+                stderr_text = await stderr_task
+                _LOGGER.debug(
+                    "Aqara media detached watcher ignored playout exception "
+                    "entity=%s session=%s pid=%s host=%s returncode=%s error=%r "
+                    "stderr=%r",
+                    self.entity_id,
+                    session,
+                    process.pid,
+                    self.client.host,
+                    process.returncode,
+                    err,
+                    stderr_text,
+                )
+                return
             pump_error = err
+            if process.returncode is None:
+                await self._terminate_process_while_stdout_drains(
+                    process,
+                    producer_task,
+                    reason="watcher_exception",
+                )
+            if not producer_task.done():
+                with suppress(asyncio.TimeoutError, asyncio.CancelledError):
+                    await asyncio.wait_for(producer_task, timeout=1.0)
             if not producer_task.done():
                 producer_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await producer_task
-            if process.returncode is None:
-                await self._terminate_process_bounded(
-                    process, reason="watcher_exception"
-                )
+                with suppress(asyncio.CancelledError):
+                    await producer_task
             if not stderr_task.done():
                 with suppress(asyncio.TimeoutError):
                     stderr_text = await asyncio.wait_for(stderr_task, timeout=1.0)
