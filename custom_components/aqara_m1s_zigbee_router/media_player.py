@@ -79,6 +79,11 @@ SINGLE_SOURCE_STALL_TIMEOUT = 5.0
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 WRITER_DRAIN_TIMEOUT = 2.0
+# Teardown must never hold the single-player transport lock indefinitely.
+WRITER_CLOSE_TIMEOUT = 0.50
+WATCH_TASK_CANCEL_GRACE = 0.50
+FFMPEG_TERMINATE_TIMEOUT = 1.50
+FFMPEG_KILL_TIMEOUT = 1.00
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
 
@@ -452,6 +457,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "volume_step_percent": 0.1,
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
+            "writer_close_timeout_seconds": WRITER_CLOSE_TIMEOUT,
+            "watch_task_cancel_grace_seconds": WATCH_TASK_CANCEL_GRACE,
+            "user_stop_remote_cleanup": "deferred_until_next_play",
             "single_stable_jitter_buffer": True,
             "single_pcm_pace_ms": int(PCM_CHUNK_SECONDS * 1000),
             "single_jitter_buffer_ms": int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
@@ -480,6 +488,107 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+
+    async def _cancel_transport_task_bounded(
+        self, task: asyncio.Task | None, *, reason: str
+    ) -> None:
+        """Cancel a transport watcher without allowing teardown to wedge Play."""
+        if task is None or task is asyncio.current_task():
+            return
+        if not task.done():
+            task.cancel()
+        done, _ = await asyncio.wait({task}, timeout=WATCH_TASK_CANCEL_GRACE)
+        if done:
+            with suppress(asyncio.CancelledError, Exception):
+                task.result()
+            return
+        if not done:
+            _LOGGER.warning(
+                "Aqara media transport task did not cancel within %.2fs "
+                "entity=%s host=%s reason=%s; continuing bounded teardown",
+                WATCH_TASK_CANCEL_GRACE,
+                self.entity_id,
+                self.client.host,
+                reason,
+            )
+
+    async def _close_writer_bounded(
+        self, writer: asyncio.StreamWriter | None, *, reason: str
+    ) -> None:
+        """Close one TCP writer, aborting its transport if FIN teardown wedges."""
+        if writer is None:
+            return
+        writer.close()
+        close_task = self.hass.async_create_task(writer.wait_closed())
+        done, _ = await asyncio.wait({close_task}, timeout=WRITER_CLOSE_TIMEOUT)
+        if done:
+            try:
+                close_task.result()
+                return
+            except (OSError, ConnectionError) as err:
+                _LOGGER.warning(
+                    "Aqara media writer close failed entity=%s host=%s reason=%s "
+                    "error=%r; aborting transport",
+                    self.entity_id,
+                    self.client.host,
+                    reason,
+                    err,
+                )
+        else:
+            _LOGGER.warning(
+                "Aqara media writer close timeout entity=%s host=%s reason=%s "
+                "timeout=%.2fs; aborting transport",
+                self.entity_id,
+                self.client.host,
+                reason,
+                WRITER_CLOSE_TIMEOUT,
+            )
+            close_task.cancel()
+            # Do not await a wait_closed() coroutine that already exceeded the
+            # hard bound. Consume any eventual non-cancellation exception.
+            close_task.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
+        transport = getattr(writer, "transport", None)
+        if transport is not None:
+            with suppress(Exception):
+                transport.abort()
+        # Yield once so callbacks caused by abort can run, but never wait again.
+        await asyncio.sleep(0)
+
+    async def _terminate_process_bounded(
+        self, process: asyncio.subprocess.Process | None, *, reason: str
+    ) -> None:
+        """Terminate/kill FFmpeg with hard time bounds."""
+        if process is None or process.returncode is not None:
+            return
+        with suppress(ProcessLookupError):
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=FFMPEG_TERMINATE_TIMEOUT)
+            return
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Aqara media FFmpeg terminate timeout entity=%s host=%s pid=%s "
+                "reason=%s; killing process",
+                self.entity_id,
+                self.client.host,
+                process.pid,
+                reason,
+            )
+        with suppress(ProcessLookupError):
+            process.kill()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=FFMPEG_KILL_TIMEOUT)
+        except asyncio.TimeoutError:
+            _LOGGER.error(
+                "Aqara media FFmpeg did not reap after kill entity=%s host=%s "
+                "pid=%s reason=%s",
+                self.entity_id,
+                self.client.host,
+                process.pid,
+                reason,
+            )
 
     async def async_shutdown(self) -> None:
         """Stop FFmpeg and every watchdog task without clearing resume intent."""
@@ -601,12 +710,31 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 await self._start_locked(generation)
 
     async def async_media_stop(self) -> None:
-        self._next_play_generation("user_stop")
+        generation = self._next_play_generation("user_stop")
         self._cancel_recovery_tasks_now()
         self._resume_after_reconnect = False
         self._watchdog_restart_attempts = 0
+        _LOGGER.info(
+            "Aqara media STOP requested entity=%s host=%s generation=%s",
+            self.entity_id,
+            self.client.host,
+            generation,
+        )
         async with self._lock:
-            await self._stop_locked(update_state=True, reason="user_stop")
+            # Do not run a potentially slow Telnet cleanup while holding the
+            # transport lock. Closing/aborting the TCP stream makes hub-side nc
+            # reach EOF; the next REMOTE_START_COMMAND always begins with the
+            # exact PID/port-scoped cleanup before creating a fresh receiver.
+            await self._stop_locked(
+                update_state=True, reason="user_stop", remote_cleanup=False
+            )
+        _LOGGER.info(
+            "Aqara media STOP local teardown complete entity=%s host=%s "
+            "generation=%s; remote receiver cleanup deferred to next Play",
+            self.entity_id,
+            self.client.host,
+            generation,
+        )
         await self._release_individual_audio()
 
     async def async_turn_off(self) -> None:
@@ -943,9 +1071,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             )
 
         if not self._generation_is_current(generation):
-            writer.close()
-            with suppress(Exception):
-                await writer.wait_closed()
+            await self._close_writer_bounded(
+                writer, reason="stale_after_tcp_connect"
+            )
             await self._cleanup_stale_receiver_locked(generation, "after_tcp_connect")
             return
 
@@ -982,9 +1110,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
         except Exception as err:
-            writer.close()
-            with suppress(Exception):
-                await writer.wait_closed()
+            await self._close_writer_bounded(
+                writer, reason="ffmpeg_spawn_failure"
+            )
             if self._stream_writer is writer:
                 self._stream_writer = None
             with suppress(Exception):
@@ -1001,15 +1129,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             raise
 
         if not self._generation_is_current(generation):
-            process.terminate()
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(process.wait(), timeout=2.0)
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
-            writer.close()
-            with suppress(Exception):
-                await writer.wait_closed()
+            await self._terminate_process_bounded(
+                process, reason="stale_after_ffmpeg_start"
+            )
+            await self._close_writer_bounded(
+                writer, reason="stale_after_ffmpeg_start"
+            )
             if self._stream_writer is writer:
                 self._stream_writer = None
             await self._cleanup_stale_receiver_locked(generation, "after_ffmpeg_start")
@@ -1248,12 +1373,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             with suppress(asyncio.CancelledError):
                 await producer_task
             if process.returncode is None:
-                process.terminate()
-                with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(process.wait(), timeout=2.0)
-                if process.returncode is None:
-                    process.kill()
-                    await process.wait()
+                await self._terminate_process_bounded(
+                    process, reason="watcher_exception"
+                )
             if not stderr_task.done():
                 with suppress(asyncio.TimeoutError):
                     stderr_text = await asyncio.wait_for(stderr_task, timeout=1.0)
@@ -1278,9 +1400,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._ffmpeg_started_monotonic = None
         if self._stream_writer is writer:
             self._stream_writer = None
-        writer.close()
-        with suppress(Exception):
-            await writer.wait_closed()
+        await self._close_writer_bounded(writer, reason="watcher_exit")
 
         stable_task = self._watchdog_stable_task
         self._watchdog_stable_task = None
@@ -1559,31 +1679,28 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 self._watchdog_stable_task = None
 
     async def _stop_local_ffmpeg(self, reason: str) -> None:
+        """Detach the local transport quickly and with hard close bounds."""
         process = self._ffmpeg
         session = self._ffmpeg_session
         started = self._ffmpeg_started_monotonic
+
+        # Clear ownership first. A newly accepted Play generation must never
+        # inherit the old writer/process while teardown is in progress.
         self._ffmpeg = None
         self._ffmpeg_started_monotonic = None
         watch_task = self._watch_task
         self._watch_task = None
-        await self._cancel_task(watch_task)
         writer = self._stream_writer
         self._stream_writer = None
-        if writer is not None:
-            writer.close()
-            with suppress(Exception):
-                await writer.wait_closed()
         self._ffmpeg_nice_applied = False
+
+        await self._cancel_transport_task_bounded(watch_task, reason=reason)
+        await self._close_writer_bounded(writer, reason=reason)
+        await self._terminate_process_bounded(process, reason=reason)
+
         if process is None:
             return
         runtime = max(0.0, time.monotonic() - started) if started else 0.0
-        if process.returncode is None:
-            process.terminate()
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(process.wait(), timeout=2)
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
         _LOGGER.info(
             "Aqara media FFmpeg stopped intentionally entity=%s session=%s "
             "pid=%s host=%s reason=%s returncode=%s runtime=%.1fs",
@@ -1596,15 +1713,26 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             runtime,
         )
 
-    async def _stop_locked(self, update_state: bool, reason: str) -> None:
+    async def _stop_locked(
+        self, update_state: bool, reason: str, *, remote_cleanup: bool = True
+    ) -> None:
         await self._stop_local_ffmpeg(reason)
-        try:
-            await self.hass.async_add_executor_job(
-                self.client.run_command,
-                REMOTE_STOP_COMMAND,
+        if remote_cleanup:
+            try:
+                await self.hass.async_add_executor_job(
+                    self.client.run_command,
+                    REMOTE_STOP_COMMAND,
+                )
+            except Exception as err:  # Hub may already be offline during unload.
+                _LOGGER.debug("Could not stop Aqara radio receiver: %s", err)
+        else:
+            _LOGGER.debug(
+                "Aqara media skipped synchronous remote stop entity=%s host=%s "
+                "reason=%s; next start performs scoped cleanup",
+                self.entity_id,
+                self.client.host,
+                reason,
             )
-        except Exception as err:  # Hub may already be offline during unload.
-            _LOGGER.debug("Could not stop Aqara radio receiver: %s", err)
         if update_state:
             self._attr_state = MediaPlayerState.IDLE
             self.async_write_ha_state()

@@ -1,3 +1,13 @@
+# v0.9.3 - SINGLE STOP/PLAY RECOVERY
+
+- Fix single-player Stop -> Play lockups by making local transport teardown hard-bounded.
+- TCP writer close now has a 0.50 s hard bound; a stuck close is aborted instead of holding the media-player lock indefinitely.
+- FFmpeg watcher cancellation and terminate/kill are bounded so an old session cannot block a new Play forever.
+- User Stop no longer performs synchronous Telnet receiver cleanup while holding the transport lock. Closing the single TCP stream lets hub-side nc reach EOF, and every subsequent REMOTE_START_COMMAND still begins with the exact PID/port-scoped cleanup for port 12346.
+- Added explicit STOP, writer-close timeout, transport-abort and teardown diagnostics.
+- Retains the v0.9.2 0.8 s jitter buffer, 0.6 s prebuffer, live volume behavior and moderate FFmpeg/aplay priorities.
+- Sound transport and media-group code are unchanged byte-for-byte from v0.9.2.
+
 # v0.9.2 - SINGLE STABLE BUFFER
 
 - Single player: replace the ultra-small v0.9.1 path with a bounded 0.8 s HA-side PCM jitter buffer and 0.6 s prebuffer.

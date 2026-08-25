@@ -1,4 +1,4 @@
-**Current package: v0.9.2 SINGLE STABLE BUFFER**
+**Current package: v0.9.3 SINGLE STOP/PLAY RECOVERY**
 
 # Aqara M1S Zigbee Router — Complete conversion and Home Assistant integration
 
