@@ -288,7 +288,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     ) -> None:
         """Clean only the single-player 12346 receiver after a superseded start."""
         self._last_superseded_generation = generation
-        _LOGGER.info(
+        _LOGGER.warning(
             "Aqara media request superseded entity=%s host=%s "
             "generation=%s current_generation=%s phase=%s",
             self.entity_id,
@@ -674,7 +674,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._stream_writer = new_writer
         self._single_receiver_rebuilds += 1
         self._last_receiver_rebuild_reason = reason
-        _LOGGER.info(
+        _LOGGER.warning(
             "Aqara media single TCP receiver recovered entity=%s session=%s "
             "generation=%s host=%s pid=%s reason=%s",
             self.entity_id,
@@ -955,7 +955,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 self.hass, media_id, self.entity_id
             )
             if not self._generation_is_current(generation):
-                _LOGGER.info(
+                _LOGGER.warning(
                     "Aqara media request superseded before resolve finished "
                     "entity=%s host=%s generation=%s current_generation=%s",
                     self.entity_id, self.client.host, generation, self._play_generation
@@ -974,8 +974,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
         async with self._lock:
             if not self._generation_is_current(generation):
-                _LOGGER.info(
-                    "Aqara media queued request discarded entity=%s host=%s "
+                _LOGGER.warning(
+                    "Aqara media request superseded queued request discarded "
+                    "entity=%s host=%s "
                     "generation=%s current_generation=%s",
                     self.entity_id, self.client.host, generation, self._play_generation
                 )
@@ -1054,25 +1055,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Apply individual-player volume live to the running PCM stream."""
-        old_volume = float(self._attr_volume_level or 0.0)
-        old_effective = self._effective_gain()
-        normalized = self._normalize_volume(float(volume))
-        self._attr_volume_level = normalized
-        _LOGGER.warning(
-            "Aqara media_player volume event entity=%s host=%s requested=%.4f "
-            "old=%.4f applied=%.4f effective_before=%.4f effective_after=%.4f "
-            "muted=%s state=%s playback_requested=%s",
-            self.entity_id,
-            self.client.host,
-            float(volume),
-            old_volume,
-            normalized,
-            old_effective,
-            self._effective_gain(),
-            self._attr_is_volume_muted,
-            self._attr_state,
-            self._playback_requested,
-        )
+        self._attr_volume_level = self._normalize_volume(float(volume))
         self.async_write_ha_state()
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)
@@ -1097,22 +1080,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Apply mute live through the same PCM gain path."""
-        old_muted = self._attr_is_volume_muted
-        old_effective = self._effective_gain()
         self._attr_is_volume_muted = bool(mute)
-        _LOGGER.warning(
-            "Aqara media_player mute event entity=%s host=%s requested=%s "
-            "old=%s effective_before=%.4f effective_after=%.4f "
-            "state=%s playback_requested=%s",
-            self.entity_id,
-            self.client.host,
-            bool(mute),
-            old_muted,
-            old_effective,
-            self._effective_gain(),
-            self._attr_state,
-            self._playback_requested,
-        )
         self.async_write_ha_state()
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)
@@ -1380,7 +1348,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if not self._generation_is_current(generation):
             return
 
-        _LOGGER.info(
+        _LOGGER.warning(
             "Aqara media receiver start entity=%s host=%s generation=%s port=%s",
             self.entity_id, self.client.host, generation, RADIO_PORT
         )
@@ -1622,12 +1590,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     "single TCP recovery burst limit exceeded"
                 ) from error
 
-            log = (
-                _LOGGER.warning
-                if tcp_recovery_events >= SINGLE_TCP_RECOVERY_BURST_LIMIT
-                else _LOGGER.info
-            )
-            log(
+            _LOGGER.warning(
                 "Aqara media single receiver fault; rebuilding receiver "
                 "and dropping stale PCM entity=%s session=%s generation=%s "
                 "host=%s pid=%s stage=%s cause=%s recovery=%s/%s error=%r",
@@ -1664,7 +1627,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             await asyncio.wait_for(
                 writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
             )
-            _LOGGER.info(
+            _LOGGER.warning(
                 "Aqara media single receiver resumed after stale PCM drop "
                 "entity=%s session=%s generation=%s host=%s pid=%s "
                 "dropped_ms=%s silence_ms=%s cause=%s",

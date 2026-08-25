@@ -1,8 +1,9 @@
-## v0.10.7 - Event trace diagnostics
+## v0.10.8 - Playback event trace diagnostics
 
-- Add WARNING-level diagnostics for media-player volume and mute commands.
-- Add WARNING-level diagnostics for integration Number slider changes: Sound Playback Volume and Fine Volume Trim.
-- No audio/playback behavior changes: gain path, buffer, receiver policy, FFmpeg nice -5 and aplay nice -3 remain as in v0.10.6.
+- Add WARNING-level diagnostics for single-player playback recovery events:
+  receiver start, request superseded, receiver fault, receiver recovered, receiver resumed, FFmpeg/PCM ended unexpectedly and watchdog restarting.
+- Remove the previous noisy volume-command tracing; volume behavior is unchanged from v0.10.6/v0.10.0.
+- No audio/playback behavior changes: gain path, buffer, receiver policy, FFmpeg nice -5 and aplay nice -3 remain unchanged.
 - `media_group.py` and `sound_player.py` are unchanged from v0.10.6.
 
 ## v0.10.6 - v0.10.0 exact volume path
