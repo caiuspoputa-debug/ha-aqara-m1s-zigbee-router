@@ -80,10 +80,12 @@ GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 WRITER_DRAIN_TIMEOUT = 2.0
 # Teardown must never hold the single-player transport lock indefinitely.
+# Stop/Play only detaches the active session.  The watcher remains the sole
+# coroutine that awaits/reaps its FFmpeg process; a separate escalator may
+# terminate/kill a stale process but never calls process.wait().
 WRITER_CLOSE_TIMEOUT = 0.50
-WATCH_TASK_CANCEL_GRACE = 0.50
 FFMPEG_TERMINATE_TIMEOUT = 1.50
-FFMPEG_KILL_TIMEOUT = 1.00
+FFMPEG_KILL_TIMEOUT = 3.00
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
 
@@ -458,7 +460,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "writer_close_timeout_seconds": WRITER_CLOSE_TIMEOUT,
-            "watch_task_cancel_grace_seconds": WATCH_TASK_CANCEL_GRACE,
+            "ffmpeg_reap_mode": "watcher_owned_async",
+            "ffmpeg_terminate_grace_seconds": FFMPEG_TERMINATE_TIMEOUT,
+            "ffmpeg_kill_grace_seconds": FFMPEG_KILL_TIMEOUT,
             "user_stop_remote_cleanup": "deferred_until_next_play",
             "single_stable_jitter_buffer": True,
             "single_pcm_pace_ms": int(PCM_CHUNK_SECONDS * 1000),
@@ -488,29 +492,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             task.cancel()
         with suppress(asyncio.CancelledError):
             await task
-
-    async def _cancel_transport_task_bounded(
-        self, task: asyncio.Task | None, *, reason: str
-    ) -> None:
-        """Cancel a transport watcher without allowing teardown to wedge Play."""
-        if task is None or task is asyncio.current_task():
-            return
-        if not task.done():
-            task.cancel()
-        done, _ = await asyncio.wait({task}, timeout=WATCH_TASK_CANCEL_GRACE)
-        if done:
-            with suppress(asyncio.CancelledError, Exception):
-                task.result()
-            return
-        if not done:
-            _LOGGER.warning(
-                "Aqara media transport task did not cancel within %.2fs "
-                "entity=%s host=%s reason=%s; continuing bounded teardown",
-                WATCH_TASK_CANCEL_GRACE,
-                self.entity_id,
-                self.client.host,
-                reason,
-            )
 
     async def _close_writer_bounded(
         self, writer: asyncio.StreamWriter | None, *, reason: str
@@ -559,7 +540,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     async def _terminate_process_bounded(
         self, process: asyncio.subprocess.Process | None, *, reason: str
     ) -> None:
-        """Terminate/kill FFmpeg with hard time bounds."""
+        """Terminate and reap FFmpeg when called from its owning watcher."""
         if process is None or process.returncode is not None:
             return
         with suppress(ProcessLookupError):
@@ -569,8 +550,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             return
         except asyncio.TimeoutError:
             _LOGGER.warning(
-                "Aqara media FFmpeg terminate timeout entity=%s host=%s pid=%s "
-                "reason=%s; killing process",
+                "Aqara media watcher terminate timeout entity=%s host=%s pid=%s "
+                "reason=%s; escalating to kill",
                 self.entity_id,
                 self.client.host,
                 process.pid,
@@ -582,13 +563,80 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             await asyncio.wait_for(process.wait(), timeout=FFMPEG_KILL_TIMEOUT)
         except asyncio.TimeoutError:
             _LOGGER.error(
-                "Aqara media FFmpeg did not reap after kill entity=%s host=%s "
-                "pid=%s reason=%s",
+                "Aqara media watcher could not reap FFmpeg after kill entity=%s "
+                "host=%s pid=%s reason=%s",
                 self.entity_id,
                 self.client.host,
                 process.pid,
                 reason,
             )
+
+    def _schedule_detached_process_escalation(
+        self,
+        process: asyncio.subprocess.Process | None,
+        *,
+        reason: str,
+        session: int,
+    ) -> None:
+        """Signal an old FFmpeg without waiting for it in Stop/Play."""
+        if process is None or process.returncode is not None:
+            return
+
+        # Stop is deliberately non-blocking: ownership has already moved away
+        # from this process.  Its existing watcher drains/reaps it.
+        with suppress(ProcessLookupError):
+            process.terminate()
+
+        async def _escalate() -> None:
+            try:
+                await asyncio.sleep(FFMPEG_TERMINATE_TIMEOUT)
+                if process.returncode is not None:
+                    return
+                _LOGGER.warning(
+                    "Aqara media detached FFmpeg still running after terminate; "
+                    "killing in background entity=%s session=%s host=%s pid=%s "
+                    "reason=%s",
+                    self.entity_id,
+                    session,
+                    self.client.host,
+                    process.pid,
+                    reason,
+                )
+                with suppress(ProcessLookupError):
+                    process.kill()
+
+                # Never call process.wait() here.  The original watcher is the
+                # sole reaper and may still be draining subprocess pipes.
+                await asyncio.sleep(FFMPEG_KILL_TIMEOUT)
+                if process.returncode is None:
+                    _LOGGER.warning(
+                        "Aqara media detached FFmpeg has no returncode yet after "
+                        "background kill entity=%s session=%s host=%s pid=%s "
+                        "reason=%s; watcher remains responsible for reap",
+                        self.entity_id,
+                        session,
+                        self.client.host,
+                        process.pid,
+                        reason,
+                    )
+            except asyncio.CancelledError:
+                return
+            except Exception as err:
+                _LOGGER.debug(
+                    "Aqara media detached FFmpeg escalation failed entity=%s "
+                    "session=%s host=%s pid=%s reason=%s error=%r",
+                    self.entity_id,
+                    session,
+                    self.client.host,
+                    process.pid,
+                    reason,
+                    err,
+                )
+
+        self.hass.async_create_background_task(
+            _escalate(),
+            f"aqara_m1s_ffmpeg_escalate_{self.entry.entry_id}_{session}",
+        )
 
     async def async_shutdown(self) -> None:
         """Stop FFmpeg and every watchdog task without clearing resume intent."""
@@ -1679,13 +1727,14 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 self._watchdog_stable_task = None
 
     async def _stop_local_ffmpeg(self, reason: str) -> None:
-        """Detach the local transport quickly and with hard close bounds."""
+        """Detach current transport immediately; reap old FFmpeg asynchronously."""
         process = self._ffmpeg
         session = self._ffmpeg_session
         started = self._ffmpeg_started_monotonic
 
-        # Clear ownership first. A newly accepted Play generation must never
-        # inherit the old writer/process while teardown is in progress.
+        # Invalidate ownership before doing any I/O.  A new Play generation can
+        # now create its own process/writer and an old watcher cannot overwrite
+        # the new session because all watcher state updates are identity-guarded.
         self._ffmpeg = None
         self._ffmpeg_started_monotonic = None
         watch_task = self._watch_task
@@ -1694,16 +1743,22 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._stream_writer = None
         self._ffmpeg_nice_applied = False
 
-        await self._cancel_transport_task_bounded(watch_task, reason=reason)
+        # Do NOT cancel/await watch_task here.  Cancelling its stdout/stderr
+        # readers and simultaneously awaiting process.wait() was the v0.9.3
+        # Stop -> terminate timeout -> kill -> reap timeout failure.  The old
+        # watcher notices self._ffmpeg is no longer its process, exits playout,
+        # drains/reaps FFmpeg, and returns without touching the new session.
         await self._close_writer_bounded(writer, reason=reason)
-        await self._terminate_process_bounded(process, reason=reason)
+        self._schedule_detached_process_escalation(
+            process, reason=reason, session=session
+        )
 
         if process is None:
             return
         runtime = max(0.0, time.monotonic() - started) if started else 0.0
         _LOGGER.info(
-            "Aqara media FFmpeg stopped intentionally entity=%s session=%s "
-            "pid=%s host=%s reason=%s returncode=%s runtime=%.1fs",
+            "Aqara media FFmpeg detached entity=%s session=%s pid=%s host=%s "
+            "reason=%s returncode=%s runtime=%.1fs watcher_active=%s",
             self.entity_id,
             session,
             process.pid,
@@ -1711,6 +1766,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             reason,
             process.returncode,
             runtime,
+            bool(watch_task and not watch_task.done()),
         )
 
     async def _stop_locked(

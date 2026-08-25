@@ -1,3 +1,11 @@
+## v0.9.4 - Single async FFmpeg reap
+
+- Fix repeated Stop/Play `FFmpeg terminate timeout` / `did not reap after kill` warnings.
+- Stop detaches the old single-player session immediately instead of cancelling its watcher and waiting on the same subprocess.
+- The original watcher remains the sole FFmpeg reaper; a background escalator may terminate/kill a stale process but never calls `process.wait()`.
+- Old watcher state remains identity/generation guarded and cannot overwrite a newer Play session.
+- Group and priority-sound transports are unchanged.
+
 # v0.9.3 - SINGLE STOP/PLAY RECOVERY
 
 - Fix single-player Stop -> Play lockups by making local transport teardown hard-bounded.
