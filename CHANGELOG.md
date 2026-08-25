@@ -1,3 +1,12 @@
+## v0.10.4 - ALSA-only stale rebuild
+
+- Fix v0.10.3 over-recovery: TCP `FIN_WAIT`/`TIME_WAIT` entries can be old socket residue while ALSA is still healthy.
+- Keep TCP stale state as diagnostics only; it no longer triggers a receiver rebuild by itself.
+- Rebuild the single-player receiver during playback only when ALSA is clearly unhealthy: large negative delay or availability above the real hardware buffer.
+- Keep the v0.10.2/v0.10.3 35 ms PCM pacing, 2 s hub buffer request, fast main volume, filtered Fine Volume Trim, and scoped receiver cleanup.
+- Preserve FFmpeg nice -5 / hub aplay nice -3. No sound-priority changes.
+- `media_group.py` and `sound_player.py` behavior is unchanged from v0.10.0.
+
 ## v0.10.3 - Stale receiver rebuild
 
 - Detect a stale single-player hub receiver during playback, not only after TCP writer failure.

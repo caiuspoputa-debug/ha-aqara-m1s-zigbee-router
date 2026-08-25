@@ -537,6 +537,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_receiver_stale_delay_ms": int(
                 SINGLE_RECEIVER_STALE_DELAY_FRAMES / PCM_RATE * 1000
             ),
+            "single_receiver_stale_policy": "alsa_unhealthy_only",
+            "single_receiver_tcp_stale_diagnostic_only": True,
             "single_receiver_rebuilds": self._single_receiver_rebuilds,
             "last_receiver_health": self._last_receiver_health,
             "last_receiver_rebuild_reason": self._last_receiver_rebuild_reason,
@@ -746,8 +748,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 buffer_size = self._parse_receiver_int(line)
 
         stale_reasons: list[str] = []
-        if tcp_stale:
-            stale_reasons.append("tcp_stale:" + ",".join(tcp_stale_states))
         if delay is not None and delay <= -SINGLE_RECEIVER_STALE_DELAY_FRAMES:
             stale_reasons.append(f"alsa_delay:{delay}")
         if (
@@ -762,6 +762,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "reason": ";".join(stale_reasons),
             "tcp_stale_states": tcp_stale_states,
             "tcp_established": has_established,
+            "tcp_stale_diagnostic_only": tcp_stale,
             "alsa_state": state,
             "alsa_delay_frames": delay,
             "alsa_avail_frames": avail,
