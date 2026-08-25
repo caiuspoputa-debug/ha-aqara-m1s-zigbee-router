@@ -487,13 +487,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "volume_stream_restart": False,
             "volume_step_percent": 0.1,
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
-            "fine_trim_apply_mode": "legacy_live_gain",
-            "applied_effective_volume_percent": round(
-                self._gain_current * 100.0, 2
-            ),
-            "target_effective_volume_percent": round(
-                self._gain_target * 100.0, 2
-            ),
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "writer_close_timeout_seconds": WRITER_CLOSE_TIMEOUT,
             "ffmpeg_reap_mode": "watcher_owned_detach_drain",
@@ -1106,8 +1099,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     def set_fine_volume_trim_percent(self, value: float) -> None:
         """Apply a fine absolute percentage-point trim to live PCM gain."""
         self._fine_volume_trim_percent = self._normalize_fine_volume_trim_percent(value)
-        # _apply_live_pcm_gain() samples _effective_gain() on every PCM chunk,
-        # so no FFmpeg/TCP/aplay restart is needed.
+        # _apply_live_pcm_gain() samples _effective_gain() for every 20 ms PCM
+        # chunk, so no FFmpeg/TCP/aplay restart is needed. If the media-player
+        # entity is already registered, refresh its diagnostic attributes too.
         if self.entity_id is not None:
             self.async_write_ha_state()
 

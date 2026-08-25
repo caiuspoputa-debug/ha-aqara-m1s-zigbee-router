@@ -1,3 +1,12 @@
+## v0.10.6 - v0.10.0 exact volume path
+
+- Restore the individual media-player main volume and Fine Volume Trim code path to match v0.10.0 exactly.
+- Restore the v0.10.0 volume diagnostics shape: no separate applied/target fine-trim gain attributes.
+- Keep Fine Volume Trim range at `-2.00..+1.00%`, as in v0.10.0.
+- Keep the v0.10.4 ALSA-only stale receiver rebuild policy, 35 ms PCM pacing, 2 s hub buffer request, and scoped receiver cleanup.
+- Preserve FFmpeg nice -5 / hub aplay nice -3. No sound-priority changes.
+- `number.py`, `media_group.py`, and `sound_player.py` behavior is unchanged from v0.10.0.
+
 ## v0.10.5 - Legacy live volume gain
 
 - Restore the pre-v0.10.1 live gain path used by v0.9.9/v0.10.0.
