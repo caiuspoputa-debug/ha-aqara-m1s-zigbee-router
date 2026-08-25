@@ -57,7 +57,9 @@ WATCHDOG_SLOW_RETRY_DELAY = 60.0
 PCM_RATE = 32000
 PCM_CHANNELS = 1
 PCM_SAMPLE_BYTES = 4
-PCM_CHUNK_SECONDS = 0.02
+# The M1S ALSA driver reports period_size=1120 at 32 kHz, i.e. 35 ms.
+# Pace single-player PCM in the same unit so aplay receives period-aligned data.
+PCM_CHUNK_SECONDS = 0.035
 PCM_CHUNK_BYTES = int(
     PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * PCM_CHUNK_SECONDS
 )
@@ -89,9 +91,11 @@ SINGLE_TCP_RECOVERY_DROP_SECONDS = 0.50
 SINGLE_TCP_RECOVERY_DROP_CHUNKS = max(
     1, int(SINGLE_TCP_RECOVERY_DROP_SECONDS / PCM_CHUNK_SECONDS)
 )
-GAIN_RAMP_SECONDS = 0.20
+GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
-LIVE_GAIN_TARGET_DEBOUNCE_SECONDS = 0.15
+FINE_TRIM_GAIN_RAMP_SECONDS = 0.20
+FINE_TRIM_GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * FINE_TRIM_GAIN_RAMP_SECONDS))
+FINE_TRIM_TARGET_DEBOUNCE_SECONDS = 0.15
 WRITER_DRAIN_TIMEOUT = 1.0
 # Teardown must never hold the single-player transport lock indefinitely.
 # Stop/Play only detaches the active session. The producer keeps draining
@@ -104,7 +108,7 @@ FFMPEG_KILL_TIMEOUT = 3.00
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
 APLAY_BUFFER_TIME_US = 2000000
-APLAY_PERIOD_TIME_US = 50000
+APLAY_PERIOD_TIME_US = 35000
 
 REMOTE_STOP_COMMAND = (
     # First stop the exact PIDs recorded when this integration started the
@@ -193,6 +197,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # Absolute percentage-point trim applied after the main volume.
         # Example: 6.0% main + 0.27% trim = 6.27% effective gain.
         self._fine_volume_trim_percent = 0.0
+        self._fine_volume_trim_applied_percent = 0.0
+        self._fine_volume_trim_pending_since = 0.0
         self._attr_media_content_type = MediaType.MUSIC
         self._attr_media_title = None
         self._media_url: str | None = None
@@ -208,12 +214,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._ffmpeg_nice_applied = False
         self._gain_current = self._effective_gain()
         self._gain_target = self._gain_current
-        self._gain_requested = self._gain_current
-        self._gain_pending_since = 0.0
         self._gain_ramp_start = self._gain_current
         self._gain_ramp_remaining = 0
-        self._gain_target_updates = 0
-        self._gain_target_coalesced = 0
+        self._gain_ramp_total = GAIN_RAMP_SAMPLES
+        self._fine_trim_target_updates = 0
+        self._fine_trim_target_coalesced = 0
         self._watchdog_restart_task: asyncio.Task | None = None
         self._watchdog_stable_task: asyncio.Task | None = None
         self._watchdog_slow_retry_task: asyncio.Task | None = None
@@ -483,18 +488,22 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "volume_apply_mode": "live_pcm_software_gain",
             "volume_stream_restart": False,
             "volume_step_percent": 0.1,
-            "live_gain_target_debounce_ms": int(
-                LIVE_GAIN_TARGET_DEBOUNCE_SECONDS * 1000
+            "fine_trim_target_debounce_ms": int(
+                FINE_TRIM_TARGET_DEBOUNCE_SECONDS * 1000
             ),
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
+            "fine_trim_gain_ramp_ms": int(FINE_TRIM_GAIN_RAMP_SECONDS * 1000),
             "applied_effective_volume_percent": round(
                 self._gain_current * 100.0, 2
             ),
             "target_effective_volume_percent": round(
                 self._gain_target * 100.0, 2
             ),
-            "live_gain_target_updates": self._gain_target_updates,
-            "live_gain_target_coalesced": self._gain_target_coalesced,
+            "fine_volume_trim_applied_percent": round(
+                self._fine_volume_trim_applied_percent, 2
+            ),
+            "fine_trim_target_updates": self._fine_trim_target_updates,
+            "fine_trim_target_coalesced": self._fine_trim_target_coalesced,
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "writer_close_timeout_seconds": WRITER_CLOSE_TIMEOUT,
             "ffmpeg_reap_mode": "watcher_owned_detach_drain",
@@ -1019,9 +1028,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     def set_fine_volume_trim_percent(self, value: float) -> None:
         """Apply a fine absolute percentage-point trim to live PCM gain."""
-        self._fine_volume_trim_percent = self._normalize_fine_volume_trim_percent(value)
-        # The PCM clock coalesces rapid trim/volume slider movement before it
-        # changes the live gain target. No FFmpeg/TCP/aplay restart is needed.
+        safe_value = self._normalize_fine_volume_trim_percent(value)
+        if safe_value != self._fine_volume_trim_percent:
+            self._fine_volume_trim_percent = safe_value
+            self._fine_volume_trim_pending_since = time.monotonic()
+            self._fine_trim_target_coalesced += 1
+        # The PCM clock coalesces rapid fine-trim slider movement before it
+        # changes the applied trim. The main HA volume remains immediate.
         if self.entity_id is not None:
             self.async_write_ha_state()
 
@@ -1033,40 +1046,45 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # audible when the main Home Assistant volume is explicitly zero.
         if main_gain <= 0.0:
             return 0.0
-        trimmed_gain = main_gain + (self._fine_volume_trim_percent / 100.0)
+        trimmed_gain = main_gain + (self._fine_volume_trim_applied_percent / 100.0)
         return max(0.0, min(1.0, trimmed_gain))
 
     def _reset_live_gain(self) -> None:
+        self._fine_volume_trim_applied_percent = self._fine_volume_trim_percent
+        self._fine_volume_trim_pending_since = 0.0
         target = self._effective_gain()
         self._gain_current = target
         self._gain_target = target
-        self._gain_requested = target
-        self._gain_pending_since = 0.0
         self._gain_ramp_start = target
         self._gain_ramp_remaining = 0
+        self._gain_ramp_total = GAIN_RAMP_SAMPLES
 
-    def _coalesced_gain_target(self) -> float:
-        requested = self._effective_gain()
+    def _apply_fine_trim_debounce(self) -> bool:
         now = time.monotonic()
-        if requested != self._gain_requested:
-            self._gain_requested = requested
-            self._gain_pending_since = now
-            self._gain_target_coalesced += 1
-
-        if self._gain_requested != self._gain_target:
-            pending_since = self._gain_pending_since or now
-            if now - pending_since >= LIVE_GAIN_TARGET_DEBOUNCE_SECONDS:
-                self._gain_ramp_start = self._gain_current
-                self._gain_target = self._gain_requested
-                self._gain_ramp_remaining = GAIN_RAMP_SAMPLES
-                self._gain_pending_since = 0.0
-                self._gain_target_updates += 1
-
-        return self._gain_target
+        if self._fine_volume_trim_percent == self._fine_volume_trim_applied_percent:
+            self._fine_volume_trim_pending_since = 0.0
+            return False
+        pending_since = self._fine_volume_trim_pending_since or now
+        if now - pending_since < FINE_TRIM_TARGET_DEBOUNCE_SECONDS:
+            return False
+        self._fine_volume_trim_applied_percent = self._fine_volume_trim_percent
+        self._fine_volume_trim_pending_since = 0.0
+        self._fine_trim_target_updates += 1
+        return True
 
     def _apply_live_pcm_gain(self, chunk: bytes) -> bytes:
-        """Scale one S32_LE PCM chunk with debounced anti-click gain."""
-        target = self._coalesced_gain_target()
+        """Scale one S32_LE PCM chunk with immediate volume and filtered trim."""
+        fine_trim_changed = self._apply_fine_trim_debounce()
+        target = self._effective_gain()
+        if target != self._gain_target:
+            self._gain_ramp_start = self._gain_current
+            self._gain_target = target
+            self._gain_ramp_total = (
+                FINE_TRIM_GAIN_RAMP_SAMPLES
+                if fine_trim_changed
+                else GAIN_RAMP_SAMPLES
+            )
+            self._gain_ramp_remaining = self._gain_ramp_total
 
         if self._gain_ramp_remaining <= 0:
             self._gain_current = target
@@ -1088,7 +1106,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             start_gain = self._gain_ramp_start
             change = self._gain_target - start_gain
             remaining = self._gain_ramp_remaining
-            total = GAIN_RAMP_SAMPLES
+            total = max(1, self._gain_ramp_total)
             elapsed = total - remaining
             for index, sample in enumerate(samples):
                 if remaining > 0:

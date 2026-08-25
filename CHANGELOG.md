@@ -1,11 +1,22 @@
+## v0.10.2 - Stable playback recovery
+
+- Pace single-player PCM in 35 ms chunks, matching the observed M1S ALSA period size (`period_size=1120` at 32 kHz).
+- Set single-player hub `aplay` period request to 35 ms while keeping the 2 s buffer request.
+- Keep the main Home Assistant volume slider immediate with the normal 40 ms anti-click ramp.
+- Filter only `Fine Volume Trim`: 150 ms debounce and 200 ms ramp.
+- On single TCP writer/backpressure fault, rebuild only the hub receiver, drop up to 500 ms of stale queued PCM, send 500 ms of silence cushion, and continue the same FFmpeg stream.
+- Keep `Fine Volume Trim` at `-2.00..+1.00%` and preserve FFmpeg nice -5 / hub aplay nice -3.
+- `media_group.py` and `sound_player.py` behavior is unchanged from v0.10.0.
+
 ## v0.10.1 - Fine trim debounce and clean TCP recovery
 
 - Protect the single-player live PCM gain path from rapid `Fine Volume Trim` slider changes.
-- Coalesce repeated fine-trim/main-gain requests for 150 ms before changing the audio gain target.
-- Increase the single-player anti-click gain ramp from 40 ms to 200 ms, so repeated trim changes do not reset very short ramps and create distortion.
+- Keep the main Home Assistant volume slider immediate while coalescing only Fine Volume Trim requests for 150 ms.
+- Keep the main-volume anti-click ramp at 40 ms and apply Fine Volume Trim changes with a smoother 200 ms ramp.
+- Pace single-player PCM in 35 ms chunks, matching the observed M1S ALSA period size (`period_size=1120` at 32 kHz).
 - On a single TCP writer/backpressure fault, rebuild only the hub receiver, drop up to 500 ms of stale queued PCM, send 500 ms of silence cushion, and continue the same FFmpeg stream.
 - Skip replaying the failed PCM chunk after recovery, to avoid carrying a distorted transition into the new receiver.
-- Keep `Fine Volume Trim` at `-2.00..+1.00%`, keep the 2 s hub `aplay` buffer, and preserve FFmpeg nice -5 / hub aplay nice -3.
+- Keep `Fine Volume Trim` at `-2.00..+1.00%`, keep the 2 s hub `aplay` buffer request, and preserve FFmpeg nice -5 / hub aplay nice -3.
 - `media_group.py` and `sound_player.py` behavior is unchanged from v0.10.0.
 
 ## v0.10.0 - Fine trim negative range
