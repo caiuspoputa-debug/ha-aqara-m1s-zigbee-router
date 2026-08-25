@@ -1,3 +1,11 @@
+## v0.9.5 - Single detached drain reap
+
+- Fix intentional single-player Stop teardown after v0.9.4 by treating detached sessions as normal watcher exits.
+- Producer keeps draining FFmpeg stdout after Stop and discards PCM instead of stopping reads and leaving subprocess pipes blocked.
+- Stop remains non-blocking: one background escalator may terminate/kill, while the watcher remains the only code path that awaits/reaps FFmpeg.
+- Detached watcher ignores playout/socket exceptions and does not enter watcher_exception recovery.
+- Group and priority-sound transports are unchanged.
+
 ## v0.9.4 - Single async FFmpeg reap
 
 - Fix repeated Stop/Play `FFmpeg terminate timeout` / `did not reap after kill` warnings.
@@ -204,5 +212,5 @@
 - Based on the known-good v0.6.3 audio-priority transport.
 - Rapid single-player track changes now invalidate older queued starts; only the latest request may start port 12346.
 - Priority sounds immediately invalidate queued single-audio starts before waiting for the transport lock.
-- Superseded starts clean only the dedicated single receiver/FIFO and never use broad `killall nc` logic.
+- Superseded starts clean only the dedicated single receiver/FIFO and never use broad `nc` process-kill logic.
 - Added generation/supersede logging and diagnostics while keeping the sound transport unchanged.

@@ -442,7 +442,7 @@ If it is an old Telnet shell and not the current session, stop it with:
 kill -9 PARENT_PID
 ```
 
-Do not use `killall nc`, because the hub may have other active `nc` tunnels.
+Do not use broad `nc` process kills, because the hub may have other active `nc` tunnels.
 
 After a physical restart, stock services may start again. Stop the watchdog and
 free the UART before ISP:
@@ -831,7 +831,7 @@ data:
 Home Assistant resolves `media-source://` identifiers and FFmpeg transcodes
 the input to mono, 32000 Hz, signed 32-bit PCM. The hub receives it on TCP port
 `12346` and plays it with `aplay`. Cleanup is PID-scoped and never uses
-`killall nc`, because the hub may use other `nc` processes.
+broad `nc` process kills, because the hub may use other `nc` processes.
 
 The separate **Radio Favorites** integration can select this entity as its
 target and provides a reusable station catalogue.

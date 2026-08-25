@@ -510,7 +510,7 @@ for p in $(ps w | grep '[c]at /dev/ttyS1' | awk '{print $1}'); do
  done
 ```
 
-Nu folosi `killall nc`; hubul poate avea tuneluri audio sau UART legitime.
+Nu folosi opriri generale pentru procesele `nc`; hubul poate avea tuneluri audio sau UART legitime.
 
 ---
 
@@ -1399,7 +1399,7 @@ ps w | grep -E '[n]c -l -p 12346|[n]c -l -p 12347|[n]c -l -p 12348|[a]play'
 netstat -lnt | grep -E ':(12346|12347|12348|12349)( |$)'
 ```
 
-Nu folosi `killall nc` sau `killall aplay`. Integrarea folosește PID files și filtre pe linia de comandă tocmai pentru a nu întrerupe alte funcții.
+Nu folosi opriri generale pentru procesele `nc` sau `aplay`. Integrarea folosește PID files și filtre pe linia de comandă tocmai pentru a nu întrerupe alte funcții.
 
 ---
 
