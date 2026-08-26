@@ -1663,7 +1663,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 return
             except asyncio.TimeoutError as err:
                 consecutive_drain_timeouts += 1
-                if consecutive_drain_timeouts < 2:
+                if stage != "playout" and consecutive_drain_timeouts < 2:
                     _LOGGER.warning(
                         "Aqara media single TCP drain timeout tolerated "
                         "entity=%s session=%s generation=%s host=%s pid=%s "
@@ -1680,7 +1680,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     )
                     return
                 _LOGGER.warning(
-                    "Aqara media single TCP drain timeout repeated; rebuilding "
+                    "Aqara media single TCP drain timeout; rebuilding "
                     "receiver entity=%s session=%s generation=%s host=%s pid=%s "
                     "stage=%s timeout=%ss consecutive_timeouts=%s "
                     "action=rebuild_receiver",
