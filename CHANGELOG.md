@@ -1,3 +1,11 @@
+## v0.10.9 - Soft ALSA health diagnostics
+
+- Stop rebuilding the single-player receiver from ALSA health-check anomalies while ALSA still reports `RUNNING` or `PREPARED`.
+- Keep ALSA health anomalies as rate-limited diagnostics only; real TCP writer failures and FFmpeg/PCM exits still trigger recovery.
+- Reduce the single-player receiver health probe from 5 seconds to 30 seconds to avoid unnecessary telnet/proc churn during playback.
+- No volume changes and no sound-priority changes. FFmpeg nice -5 and aplay nice -3 remain unchanged.
+- `media_group.py`, `sound_player.py`, and `number.py` are unchanged from v0.10.8/v0.10.6.
+
 ## v0.10.8 - Playback event trace diagnostics
 
 - Add WARNING-level diagnostics for single-player playback recovery events:

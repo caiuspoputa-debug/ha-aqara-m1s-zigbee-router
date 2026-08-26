@@ -91,7 +91,8 @@ SINGLE_TCP_RECOVERY_DROP_SECONDS = 0.50
 SINGLE_TCP_RECOVERY_DROP_CHUNKS = max(
     1, int(SINGLE_TCP_RECOVERY_DROP_SECONDS / PCM_CHUNK_SECONDS)
 )
-SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS = 5.0
+SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS = 30.0
+SINGLE_RECEIVER_HEALTH_WARNING_INTERVAL_SECONDS = 120.0
 SINGLE_RECEIVER_STALE_DELAY_FRAMES = int(PCM_RATE * 0.20)
 SINGLE_RECEIVER_STALE_AVAIL_MULTIPLIER = 2
 GAIN_RAMP_SECONDS = 0.04
@@ -511,10 +512,15 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_receiver_health_interval_seconds": (
                 SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS
             ),
+            "single_receiver_health_warning_interval_seconds": (
+                SINGLE_RECEIVER_HEALTH_WARNING_INTERVAL_SECONDS
+            ),
             "single_receiver_stale_delay_ms": int(
                 SINGLE_RECEIVER_STALE_DELAY_FRAMES / PCM_RATE * 1000
             ),
-            "single_receiver_stale_policy": "alsa_unhealthy_only",
+            "single_receiver_stale_policy": (
+                "observe_running_alsa_rebuild_only_nonrunning_or_tcp_fault"
+            ),
             "single_receiver_tcp_stale_diagnostic_only": True,
             "single_receiver_rebuilds": self._single_receiver_rebuilds,
             "last_receiver_health": self._last_receiver_health,
@@ -1529,6 +1535,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         last_real_pcm_monotonic = time.monotonic()
         health_task: asyncio.Task | None = None
         last_health_probe = 0.0
+        last_health_warning_log = 0.0
 
         async def _produce_pcm() -> None:
             nonlocal producer_error
@@ -1716,11 +1723,37 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         self._last_receiver_health = health
                         if health.get("stale"):
                             cause = str(health.get("reason") or "receiver_stale")
-                            await _rebuild_receiver_and_resync(
-                                stage="health_check",
-                                cause=cause,
-                            )
-                            next_send_monotonic = time.monotonic()
+                            alsa_state = str(health.get("alsa_state") or "").upper()
+                            if alsa_state and alsa_state not in ("RUNNING", "PREPARED"):
+                                await _rebuild_receiver_and_resync(
+                                    stage="health_check",
+                                    cause=f"{cause};alsa_state:{alsa_state}",
+                                )
+                                next_send_monotonic = time.monotonic()
+                            elif (
+                                now - last_health_warning_log
+                                >= SINGLE_RECEIVER_HEALTH_WARNING_INTERVAL_SECONDS
+                            ):
+                                last_health_warning_log = now
+                                _LOGGER.warning(
+                                    "Aqara media single receiver health anomaly "
+                                    "observed; keeping stream active entity=%s "
+                                    "session=%s generation=%s host=%s pid=%s "
+                                    "cause=%s alsa_state=%s delay_frames=%s "
+                                    "avail_frames=%s buffer_frames=%s "
+                                    "tcp_established=%s action=observe_only",
+                                    self.entity_id,
+                                    session,
+                                    generation,
+                                    self.client.host,
+                                    process.pid,
+                                    cause,
+                                    health.get("alsa_state"),
+                                    health.get("alsa_delay_frames"),
+                                    health.get("alsa_avail_frames"),
+                                    health.get("alsa_buffer_frames"),
+                                    health.get("tcp_established"),
+                                )
                     health_task = None
 
                 if (
