@@ -1,3 +1,13 @@
+## v0.10.10 - Sound cleanup and upload timeout fixes
+
+- Remove stale sound play buttons from the Home Assistant entity registry after a successful hub sound-list refresh or integration reload.
+- Keep fallback sound buttons when the hub sound list cannot be read, without pruning registry entries on a transient hub/listing failure.
+- Give WAV upload steps dedicated longer Telnet timeouts for listener setup, final size/MD5 verification, base64 fallback and cleanup.
+- Shorten single-player TCP recovery resync from about 500 ms drop + 500 ms silence to about 140 ms drop + 140 ms silence.
+- Keep v0.10.9 ALSA health-check behavior: running ALSA anomalies are observed, not rebuilt.
+- No volume changes and no sound-priority changes. FFmpeg nice -5 and aplay nice -3 remain unchanged.
+- `media_group.py`, `sound_player.py`, and `number.py` are unchanged from v0.10.9.
+
 ## v0.10.9 - Soft ALSA health diagnostics
 
 - Stop rebuilding the single-player receiver from ALSA health-check anomalies while ALSA still reports `RUNNING` or `PREPARED`.

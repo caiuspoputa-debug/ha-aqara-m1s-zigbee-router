@@ -42,6 +42,47 @@ def key_for_path(path: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]+", "_", key).lower()
 
 
+def sound_button_unique_id(entry_id: str, path: str) -> str:
+    return f"{entry_id}_play_{key_for_path(path)}"
+
+
+def remove_stale_sound_button_registry_entries(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    wanted_paths: set[str],
+    *,
+    prune_missing_sound_buttons: bool,
+) -> None:
+    entity_registry = er.async_get(hass)
+    wanted_unique_ids = {
+        sound_button_unique_id(entry.entry_id, path) for path in wanted_paths
+    }
+    obsolete_unique_ids = {
+        f"{entry.entry_id}_delete_selected_sound",
+        f"{entry.entry_id}_play_selected_sound",
+    }
+    sound_button_prefix = f"{entry.entry_id}_play_"
+
+    for registry_entry in list(
+        er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+    ):
+        entity_id = registry_entry.entity_id
+        unique_id = str(registry_entry.unique_id or "")
+        if not entity_id.startswith("button."):
+            continue
+        if registry_entry.platform != DOMAIN:
+            continue
+
+        obsolete = unique_id in obsolete_unique_ids
+        missing_sound = (
+            prune_missing_sound_buttons
+            and unique_id.startswith(sound_button_prefix)
+            and unique_id not in wanted_unique_ids
+        )
+        if obsolete or missing_sound:
+            entity_registry.async_remove(entity_id)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -51,23 +92,22 @@ async def async_setup_entry(
     hass.data[DOMAIN].setdefault(DATA_PLAYBACK_VOLUME, {})
     hass.data[DOMAIN][DATA_PLAYBACK_VOLUME].setdefault(entry.entry_id, 50)
 
-    entity_registry = er.async_get(hass)
-    for obsolete_unique_id in (
-        f"{entry.entry_id}_delete_selected_sound",
-        f"{entry.entry_id}_play_selected_sound",
-    ):
-        obsolete_entity_id = entity_registry.async_get_entity_id(
-            "button",
-            DOMAIN,
-            obsolete_unique_id,
-        )
-        if obsolete_entity_id is not None:
-            entity_registry.async_remove(obsolete_entity_id)
-
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
-    sounds = await hass.async_add_executor_job(client.list_sounds)
-    if not sounds:
+    listed_sounds: list[str] | None
+    try:
+        listed_sounds = await hass.async_add_executor_job(client.list_sounds)
+    except (OSError, RuntimeError, TimeoutError):
+        listed_sounds = None
         sounds = FALLBACK_SOUNDS
+    else:
+        sounds = listed_sounds or FALLBACK_SOUNDS
+
+    remove_stale_sound_button_registry_entries(
+        hass,
+        entry,
+        set(sounds),
+        prune_missing_sound_buttons=listed_sounds is not None,
+    )
 
     sound_buttons = {
         path: AqaraM1SSoundButton(hass, entry, client, path)
@@ -93,7 +133,7 @@ class AqaraM1SSoundButton(ButtonEntity):
         self.client = client
         self.path = path
         self._attr_name = label_for_path(path)
-        self._attr_unique_id = f"{entry.entry_id}_play_{key_for_path(path)}"
+        self._attr_unique_id = sound_button_unique_id(entry.entry_id, path)
         self._attr_extra_state_attributes = {
             "file_path": path,
             "playback_route": "ffmpeg_to_aplay",
@@ -155,17 +195,28 @@ class AqaraM1SRefreshSoundsButton(ButtonEntity):
 
     async def _async_refresh_sound_buttons(self) -> None:
         async with self._refresh_lock:
-            sounds = await self.hass.async_add_executor_job(
-                self.client.list_sounds
-            )
-            if not sounds:
-                sounds = FALLBACK_SOUNDS
+            listed_sounds: list[str] | None
+            try:
+                listed_sounds = await self.hass.async_add_executor_job(
+                    self.client.list_sounds
+                )
+            except (OSError, RuntimeError, TimeoutError):
+                return
+            else:
+                sounds = listed_sounds or FALLBACK_SOUNDS
             wanted = set(sounds)
             current = set(self._sound_buttons)
 
             for path in current - wanted:
                 entity = self._sound_buttons.pop(path)
                 await entity.async_remove()
+
+            remove_stale_sound_button_registry_entries(
+                self.hass,
+                self.entry,
+                wanted,
+                prune_missing_sound_buttons=listed_sounds is not None,
+            )
 
             additions = []
             for path in sorted(wanted - current):

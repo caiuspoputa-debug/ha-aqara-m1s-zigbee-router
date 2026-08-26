@@ -21,6 +21,16 @@ UART_RESPONSE_REJOIN = bytes([0xA7, 0x4F, 0x4B, 0x00, 0xA3])
 UPLOAD_PORT = 12349
 UPLOAD_TEMP = "/tmp/ha_m1s_sound_upload.wav"
 UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
+UPLOAD_COMMAND_TIMEOUT = 30.0
+UPLOAD_FINALIZE_TIMEOUT = 45.0
+UPLOAD_BASE64_CHUNK_SIZE = 1024
+
+
+def _upload_cleanup_command() -> str:
+    return (
+        f"[ -f {UPLOAD_PID} ] && kill -9 \"$(cat {UPLOAD_PID})\" "
+        f"2>/dev/null; rm -f {UPLOAD_PID} {UPLOAD_TEMP}"
+    )
 
 UART_STOP_COMMAND = (
     f"for f in {UART_CAT_PID} {UART_NC_PID}; do "
@@ -215,7 +225,10 @@ class AqaraM1SClient:
                 pass
             raise
 
-    def _run_command_locked(self, command: str) -> str:
+    def _run_command_locked(
+        self, command: str, *, timeout: float | None = None
+    ) -> str:
+        command_timeout = self.timeout if timeout is None else float(timeout)
         sock = self._connect_locked()
 
         # Discard any delayed prompt/output left from the previous command.
@@ -237,9 +250,11 @@ class AqaraM1SClient:
             "printf '%s:END:%s\\n' \"$__m1s_tag\" \"$__m1s_rc\"\n"
         )
         sock.sendall(wrapped.encode())
-        response = self._read_until_any(sock, [end], timeout=self.timeout)
+        response = self._read_until_any(sock, [end], timeout=command_timeout)
         if begin not in response or end not in response:
-            raise TimeoutError(f"Command did not finish within {self.timeout} seconds")
+            raise TimeoutError(
+                f"Command did not finish within {command_timeout:.1f} seconds"
+            )
 
         # The marker is assembled through a shell variable, so even on hubs
         # that echo Telnet input the literal BEGIN/END frames occur only in the
@@ -247,12 +262,12 @@ class AqaraM1SClient:
         payload = response.rsplit(begin, 1)[1].split(end, 1)[0]
         return payload.strip("\r\n")
 
-    def run_command(self, command: str) -> str:
+    def run_command(self, command: str, *, timeout: float | None = None) -> str:
         with self._lock:
             last_error: Exception | None = None
             for attempt in range(2):
                 try:
-                    return self._run_command_locked(command)
+                    return self._run_command_locked(command, timeout=timeout)
                 except (OSError, ConnectionError, TimeoutError) as err:
                     last_error = err
                     self._close_locked()
@@ -516,7 +531,7 @@ class AqaraM1SClient:
             "echo __M1S_UPLOAD_LISTEN__ && break; "
             "sleep 0.1; i=$((i+1)); done"
         )
-        output = self.run_command(start_command)
+        output = self.run_command(start_command, timeout=UPLOAD_COMMAND_TIMEOUT)
         if "__M1S_UPLOAD_LISTEN__" not in output:
             raise ConnectionError("WAV upload listener did not start")
 
@@ -527,7 +542,9 @@ class AqaraM1SClient:
                 upload_sock = socket.create_connection(
                     (self.host, UPLOAD_PORT), timeout=2.0
                 )
-                upload_sock.settimeout(10.0)
+                upload_sock.settimeout(
+                    max(10.0, min(60.0, expected_size / 32768.0 + 10.0))
+                )
                 break
             except OSError as err:
                 last_error = err
@@ -545,10 +562,11 @@ class AqaraM1SClient:
         # nc is one-shot. Wait for it to close the file, then verify both size
         # and MD5 before replacing any existing destination file.
         finalize = (
-            "i=0; while [ $i -lt 30 ]; do "
+            "i=0; while [ $i -lt 100 ]; do "
             f"pid=$(cat {UPLOAD_PID} 2>/dev/null); "
+            f"size=$(wc -c < {UPLOAD_TEMP} 2>/dev/null || echo 0); "
             "[ -z \"$pid\" ] || ! kill -0 \"$pid\" 2>/dev/null || "
-            f"[ $(wc -c < {UPLOAD_TEMP} 2>/dev/null) -ge {expected_size} ] && break; "
+            f"[ \"${{size:-0}}\" -ge {expected_size} ] && break; "
             "sleep 0.2; i=$((i+1)); done; "
             f"actual=$(wc -c < {UPLOAD_TEMP} 2>/dev/null); "
             f"actual_md5=$(md5sum {UPLOAD_TEMP} 2>/dev/null | awk '{{print $1}}'); "
@@ -558,11 +576,21 @@ class AqaraM1SClient:
             f"rm -f {UPLOAD_PID}; echo __M1S_UPLOAD_OK__; "
             "else echo __M1S_UPLOAD_VERIFY_ERROR__:$actual:$actual_md5; fi"
         )
-        output = self.run_command(finalize)
+        try:
+            output = self.run_command(finalize, timeout=UPLOAD_FINALIZE_TIMEOUT)
+        except Exception:
+            try:
+                self.run_command(
+                    _upload_cleanup_command(),
+                    timeout=UPLOAD_COMMAND_TIMEOUT,
+                )
+            except Exception:
+                pass
+            raise
         if "__M1S_UPLOAD_OK__" not in output:
             self.run_command(
-                f"[ -f {UPLOAD_PID} ] && kill -9 \"$(cat {UPLOAD_PID})\" "
-                f"2>/dev/null; rm -f {UPLOAD_PID} {UPLOAD_TEMP}"
+                _upload_cleanup_command(),
+                timeout=UPLOAD_COMMAND_TIMEOUT,
             )
             raise IOError(f"WAV upload verification failed: {output}")
 
@@ -574,10 +602,16 @@ class AqaraM1SClient:
         expected_md5 = hashlib.md5(content).hexdigest()
         temp = "/tmp/ha_sound_upload.b64"
         decoded = "/tmp/ha_sound_upload_decoded.wav"
-        self.run_command(f"mkdir -p '{parent}'; rm -f {temp} {decoded}; : > {temp}")
-        for start in range(0, len(encoded), 1024):
-            chunk = encoded[start : start + 1024]
-            self.run_command(f"printf '%s' '{chunk}' >> {temp}")
+        self.run_command(
+            f"mkdir -p '{parent}'; rm -f {temp} {decoded}; : > {temp}",
+            timeout=UPLOAD_COMMAND_TIMEOUT,
+        )
+        for start in range(0, len(encoded), UPLOAD_BASE64_CHUNK_SIZE):
+            chunk = encoded[start : start + UPLOAD_BASE64_CHUNK_SIZE]
+            self.run_command(
+                f"printf '%s' '{chunk}' >> {temp}",
+                timeout=UPLOAD_COMMAND_TIMEOUT,
+            )
         output = self.run_command(
             f"base64 -d {temp} > {decoded} && "
             f"actual=$(wc -c < {decoded}); "
@@ -587,11 +621,12 @@ class AqaraM1SClient:
             f"mv {decoded} '{destination}'; chmod 664 '{destination}' 2>/dev/null; "
             "echo __M1S_UPLOAD_OK__; "
             "else echo __M1S_UPLOAD_VERIFY_ERROR__:$actual:$actual_md5; fi; "
-            f"rm -f {temp} {decoded}"
+            f"rm -f {temp} {decoded}",
+            timeout=UPLOAD_FINALIZE_TIMEOUT,
         )
         if "__M1S_UPLOAD_OK__" not in output:
             raise IOError(f"Base64 WAV upload verification failed: {output}")
 
     def delete_sound(self, path: str) -> None:
         path = self._safe_sound_path(path)
-        self.run_command(f"rm -f '{path}'")
+        self.run_command(f"rm -f '{path}'", timeout=UPLOAD_COMMAND_TIMEOUT)
