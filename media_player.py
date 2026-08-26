@@ -71,9 +71,13 @@ PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
 SINGLE_JITTER_BUFFER_SECONDS = 4.00
 SINGLE_PREBUFFER_SECONDS = 2.50
 SINGLE_REBUFFER_RESUME_SECONDS = 2.00
+SINGLE_REMOTE_PREFILL_SECONDS = 0.56
 SINGLE_JITTER_BUFFER_CHUNKS = max(1, int(SINGLE_JITTER_BUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_PREBUFFER_CHUNKS = max(1, int(SINGLE_PREBUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_REBUFFER_RESUME_CHUNKS = max(1, int(SINGLE_REBUFFER_RESUME_SECONDS / PCM_CHUNK_SECONDS))
+SINGLE_REMOTE_PREFILL_CHUNKS = max(
+    1, int(SINGLE_REMOTE_PREFILL_SECONDS / PCM_CHUNK_SECONDS)
+)
 SINGLE_LOW_QUEUE_CHUNKS = max(2, int(0.30 / PCM_CHUNK_SECONDS))
 SINGLE_WRITE_HIGH_WATER_BYTES = PCM_CHUNK_BYTES * 16
 SINGLE_WRITE_LOW_WATER_BYTES = PCM_CHUNK_BYTES * 8
@@ -91,8 +95,7 @@ SINGLE_TCP_RECOVERY_DROP_SECONDS = 0.14
 SINGLE_TCP_RECOVERY_DROP_CHUNKS = max(
     1, int(SINGLE_TCP_RECOVERY_DROP_SECONDS / PCM_CHUNK_SECONDS)
 )
-SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS = 30.0
-SINGLE_RECEIVER_HEALTH_WARNING_INTERVAL_SECONDS = 120.0
+SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS = 5.0
 SINGLE_RECEIVER_STALE_DELAY_FRAMES = int(PCM_RATE * 0.20)
 SINGLE_RECEIVER_STALE_AVAIL_MULTIPLIER = 2
 GAIN_RAMP_SECONDS = 0.04
@@ -129,10 +132,7 @@ REMOTE_STOP_COMMAND = (
 REMOTE_START_COMMAND = (
     REMOTE_STOP_COMMAND
     + f'; mkfifo {REMOTE_FIFO}; '
-    + f'(while [ -p {REMOTE_FIFO} ]; do '
-      f'nc -l -p {RADIO_PORT} </dev/null; '
-      'sleep 0.05; '
-      f'done) > {REMOTE_FIFO} '
+    + f'nc -l -p {RADIO_PORT} </dev/null > {REMOTE_FIFO} '
       '2>/tmp/aqara_m1s_radio_nc.log & '
     + f'echo $! > {REMOTE_NC_PID}; '
     + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} '
@@ -502,6 +502,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_jitter_buffer_ms": int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
             "single_prebuffer_ms": int(SINGLE_PREBUFFER_SECONDS * 1000),
             "single_rebuffer_resume_ms": int(SINGLE_REBUFFER_RESUME_SECONDS * 1000),
+            "single_remote_prefill_ms": int(SINGLE_REMOTE_PREFILL_SECONDS * 1000),
             "single_tcp_self_heal": True,
             "single_tcp_recovery_mode": "in_place_drop_stale_pcm",
             "single_tcp_recovery_window_seconds": SINGLE_TCP_RECOVERY_WINDOW_SECONDS,
@@ -515,14 +516,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_receiver_health_interval_seconds": (
                 SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS
             ),
-            "single_receiver_health_warning_interval_seconds": (
-                SINGLE_RECEIVER_HEALTH_WARNING_INTERVAL_SECONDS
-            ),
             "single_receiver_stale_delay_ms": int(
                 SINGLE_RECEIVER_STALE_DELAY_FRAMES / PCM_RATE * 1000
             ),
             "single_receiver_stale_policy": (
-                "observe_running_alsa_rebuild_only_nonrunning_or_tcp_fault"
+                "rebuild_on_alsa_pointer_underrun"
             ),
             "single_receiver_tcp_stale_diagnostic_only": True,
             "single_receiver_rebuilds": self._single_receiver_rebuilds,
@@ -1539,7 +1537,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         last_real_pcm_monotonic = time.monotonic()
         health_task: asyncio.Task | None = None
         last_health_probe = 0.0
-        last_health_warning_log = 0.0
 
         async def _produce_pcm() -> None:
             nonlocal producer_error
@@ -1586,6 +1583,25 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             _produce_pcm(),
             f"aqara_m1s_pcm_producer_{self.entry.entry_id}",
         )
+
+        async def _prefill_remote_receiver() -> int:
+            """Move a short PCM cushion from the HA queue to the hub pipeline."""
+            nonlocal consecutive_drain_timeouts
+            primed_chunks = 0
+            while primed_chunks < SINGLE_REMOTE_PREFILL_CHUNKS:
+                try:
+                    raw_chunk = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                writer.write(self._apply_live_pcm_gain(raw_chunk))
+                primed_chunks += 1
+
+            if primed_chunks:
+                await asyncio.wait_for(
+                    writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                )
+                consecutive_drain_timeouts = 0
+            return primed_chunks
 
         async def _rebuild_receiver_and_resync(
             *, stage: str, cause: str, error: Exception | None = None
@@ -1639,11 +1655,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             await asyncio.wait_for(
                 writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
             )
+            primed_chunks = await _prefill_remote_receiver()
             consecutive_drain_timeouts = 0
             _LOGGER.warning(
                 "Aqara media single receiver resumed after stale PCM drop "
                 "entity=%s session=%s generation=%s host=%s pid=%s "
-                "dropped_ms=%s silence_ms=%s cause=%s",
+                "dropped_ms=%s silence_ms=%s remote_prefill_ms=%s cause=%s",
                 self.entity_id,
                 session,
                 generation,
@@ -1651,6 +1668,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 process.pid,
                 int(dropped_chunks * PCM_CHUNK_SECONDS * 1000),
                 int(SINGLE_TCP_RECOVERY_SILENCE_SECONDS * 1000),
+                int(primed_chunks * PCM_CHUNK_SECONDS * 1000),
                 cause,
             )
 
@@ -1733,6 +1751,17 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 int((time.monotonic() - prebuffer_started) * 1000),
             )
 
+            primed_chunks = await _prefill_remote_receiver()
+            _LOGGER.info(
+                "Aqara media remote receiver prefilled entity=%s session=%s "
+                "host=%s remote_prefill_ms=%s remaining_ha_buffer_ms=%s",
+                self.entity_id,
+                session,
+                self.client.host,
+                int(primed_chunks * PCM_CHUNK_SECONDS * 1000),
+                int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
+            )
+
             next_send_monotonic = time.monotonic()
             while self._ffmpeg is process and not self._shutting_down:
                 if producer_error is not None:
@@ -1769,37 +1798,28 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         self._last_receiver_health = health
                         if health.get("stale"):
                             cause = str(health.get("reason") or "receiver_stale")
-                            alsa_state = str(health.get("alsa_state") or "").upper()
-                            if alsa_state and alsa_state not in ("RUNNING", "PREPARED"):
-                                await _rebuild_receiver_and_resync(
-                                    stage="health_check",
-                                    cause=f"{cause};alsa_state:{alsa_state}",
-                                )
-                                next_send_monotonic = time.monotonic()
-                            elif (
-                                now - last_health_warning_log
-                                >= SINGLE_RECEIVER_HEALTH_WARNING_INTERVAL_SECONDS
-                            ):
-                                last_health_warning_log = now
-                                _LOGGER.warning(
-                                    "Aqara media single receiver health anomaly "
-                                    "observed; keeping stream active entity=%s "
-                                    "session=%s generation=%s host=%s pid=%s "
-                                    "cause=%s alsa_state=%s delay_frames=%s "
-                                    "avail_frames=%s buffer_frames=%s "
-                                    "tcp_established=%s action=observe_only",
-                                    self.entity_id,
-                                    session,
-                                    generation,
-                                    self.client.host,
-                                    process.pid,
-                                    cause,
-                                    health.get("alsa_state"),
-                                    health.get("alsa_delay_frames"),
-                                    health.get("alsa_avail_frames"),
-                                    health.get("alsa_buffer_frames"),
-                                    health.get("tcp_established"),
-                                )
+                            _LOGGER.warning(
+                                "Aqara media ALSA playout underrun detected; "
+                                "rebuilding receiver entity=%s session=%s "
+                                "generation=%s host=%s pid=%s cause=%s "
+                                "alsa_state=%s delay_frames=%s avail_frames=%s "
+                                "buffer_frames=%s action=rebuild_receiver",
+                                self.entity_id,
+                                session,
+                                generation,
+                                self.client.host,
+                                process.pid,
+                                cause,
+                                health.get("alsa_state"),
+                                health.get("alsa_delay_frames"),
+                                health.get("alsa_avail_frames"),
+                                health.get("alsa_buffer_frames"),
+                            )
+                            await _rebuild_receiver_and_resync(
+                                stage="health_check",
+                                cause=cause,
+                            )
+                            next_send_monotonic = time.monotonic()
                     health_task = None
 
                 if (
