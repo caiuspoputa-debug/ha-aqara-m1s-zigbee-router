@@ -129,7 +129,10 @@ REMOTE_STOP_COMMAND = (
 REMOTE_START_COMMAND = (
     REMOTE_STOP_COMMAND
     + f'; mkfifo {REMOTE_FIFO}; '
-    + f'nc -l -p {RADIO_PORT} </dev/null > {REMOTE_FIFO} '
+    + f'(while [ -p {REMOTE_FIFO} ]; do '
+      f'nc -l -p {RADIO_PORT} </dev/null; '
+      'sleep 0.05; '
+      f'done) > {REMOTE_FIFO} '
       '2>/tmp/aqara_m1s_radio_nc.log & '
     + f'echo $! > {REMOTE_NC_PID}; '
     + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} '
