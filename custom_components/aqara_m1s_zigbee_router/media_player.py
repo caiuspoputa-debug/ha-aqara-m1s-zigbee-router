@@ -242,6 +242,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._shutting_down = False
         self._group_manager = None
         self._priority_sound_suspended = False
+        self._group_suspended = False
+        self._group_resume_requested = False
         # Monotonic user/audio intent generation. Every new Play/Stop/priority
         # request invalidates older queued starts so only the newest request
         # may touch the hub audio receiver (latest request wins).
@@ -280,6 +282,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             generation == self._play_generation
             and not self._shutting_down
             and not self._priority_sound_suspended
+            and not self._group_suspended
         )
 
     def _cancel_recovery_tasks_now(self) -> None:
@@ -405,6 +408,62 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         except Exception as err:
             _LOGGER.warning(
                 "Aqara media could not resume after priority sound entity=%s host=%s: %s",
+                self.entity_id,
+                self.client.host,
+                err,
+            )
+            self._schedule_watchdog_restart()
+
+    async def async_suspend_for_group(self) -> bool:
+        """Release the single receiver while preserving its playback intent."""
+        if self._shutting_down:
+            return False
+        generation = self._next_play_generation("group_preempt")
+        self._group_suspended = True
+        self._cancel_recovery_tasks_now()
+        should_resume = bool(
+            self._group_resume_requested
+            or (
+                self._resume_after_reconnect
+                and (self._resume_media_id or self._media_url)
+            )
+        )
+        self._group_resume_requested = should_resume
+        _LOGGER.info(
+            "Aqara media group preempt requested entity=%s host=%s generation=%s "
+            "resume=%s",
+            self.entity_id,
+            self.client.host,
+            generation,
+            should_resume,
+        )
+        async with self._lock:
+            await self._stop_locked(
+                update_state=True,
+                reason="group_preempt",
+                remote_cleanup=True,
+            )
+        return should_resume
+
+    async def async_resume_after_group(self, should_resume: bool) -> None:
+        """Resume the remembered individual source after leaving the group."""
+        should_resume = bool(should_resume or self._group_resume_requested)
+        self._group_resume_requested = False
+        self._group_suspended = False
+        if (
+            not should_resume
+            or self._shutting_down
+            or self._priority_sound_suspended
+            or not self._resume_after_reconnect
+            or (not self._resume_media_id and not self._media_url)
+        ):
+            return
+        try:
+            generation = self._next_play_generation("group_resume")
+            await self._restart_current_generation(generation)
+        except Exception as err:
+            _LOGGER.warning(
+                "Aqara media could not resume after group entity=%s host=%s: %s",
                 self.entity_id,
                 self.client.host,
                 err,

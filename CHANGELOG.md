@@ -1,3 +1,10 @@
+## v0.10.16 - Explicit individual/group receiver handoff
+
+- When a hub is enabled for the M1S media group, suspend only that hub's individual player and stop its scoped receiver on port 12346 before the group receiver starts on port 12347.
+- Preserve the individual player's remembered source and playback intent while the hub belongs to the group.
+- When the hub is removed from the group, stop its group receiver first and resume the remembered individual source when it had been playing before the handoff.
+- Keep integration sounds at the highest priority and leave all single-player buffering, playout, TCP recovery, volume, FFmpeg/aplay priorities, and sound-player behavior unchanged.
+
 ## v0.10.10 - Sound cleanup and upload timeout fixes
 
 - Remove stale sound play buttons from the Home Assistant entity registry after a successful hub sound-list refresh or integration reload.

@@ -25,7 +25,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import media_group_signal, media_group_volume_signal
+from .const import (
+    DATA_RADIO_PLAYERS,
+    DOMAIN,
+    media_group_signal,
+    media_group_volume_signal,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -150,6 +155,8 @@ class GroupMember:
     lag_since_monotonic: float | None = None
     lag_peak_chunks: int = 0
     detaching: bool = False
+    individual_suspended: bool = False
+    resume_individual: bool = False
 
 
 class AqaraM1SMediaGroupManager:
@@ -261,8 +268,13 @@ class AqaraM1SMediaGroupManager:
         await self._detach_member(
             entry_id, stop_remote=had_group_session, new_state="excluded"
         )
+        if member is not None:
+            await self._resume_individual_after_group(member)
 
     async def async_member_enabled(self, entry_id: str) -> None:
+        member = self.members.get(entry_id)
+        if member is not None:
+            await self._suspend_individual_for_group(member)
         self.set_selected(entry_id, True)
         if self.desired_playing:
             self._ensure_reconcile_task()
@@ -359,6 +371,51 @@ class AqaraM1SMediaGroupManager:
 
     def _signal_update(self) -> None:
         async_dispatcher_send(self.hass, media_group_signal())
+
+    def _radio_player(self, entry_id: str) -> Any | None:
+        return (
+            self.hass.data.get(DOMAIN, {})
+            .get(DATA_RADIO_PLAYERS, {})
+            .get(entry_id)
+        )
+
+    async def _suspend_individual_for_group(self, member: GroupMember) -> None:
+        player = self._radio_player(member.entry_id)
+        if player is None:
+            return
+        try:
+            should_resume = await player.async_suspend_for_group()
+        except Exception as err:
+            _LOGGER.warning(
+                "M1S group could not suspend individual member=%s: %s",
+                member.name,
+                err,
+            )
+            return
+        member.individual_suspended = True
+        member.resume_individual = bool(
+            member.resume_individual or should_resume
+        )
+        self.individual_intent.discard(member.entry_id)
+        self._signal_update()
+
+    async def _resume_individual_after_group(self, member: GroupMember) -> None:
+        if not member.individual_suspended:
+            return
+        should_resume = member.resume_individual
+        member.individual_suspended = False
+        member.resume_individual = False
+        player = self._radio_player(member.entry_id)
+        if player is None:
+            return
+        try:
+            await player.async_resume_after_group(should_resume)
+        except Exception as err:
+            _LOGGER.warning(
+                "M1S group could not resume individual member=%s: %s",
+                member.name,
+                err,
+            )
 
     @property
     def active_members(self) -> list[GroupMember]:
@@ -760,6 +817,14 @@ class AqaraM1SMediaGroupManager:
         if not self.desired_playing or not self.media_url:
             return
 
+        await asyncio.gather(
+            *(
+                self._suspend_individual_for_group(member)
+                for member in self.members.values()
+                if member.selected
+            )
+        )
+
         eligible = [m for m in self.members.values() if self._eligible(m)]
         prepare_tasks: list[asyncio.Task] = []
         for member in eligible:
@@ -1072,6 +1137,13 @@ class AqaraM1SMediaGroupManager:
         return task
 
     async def _prepare_member(self, member: GroupMember, *, initial: bool) -> bool:
+        if not self._eligible(member) or member.writer is not None:
+            return False
+        # The single player intentionally keeps its remote receiver warm after
+        # Stop. Repeat the scoped 12346 cleanup on a retry so ALSA is free for
+        # the next 12347 aplay attempt without delaying a clean first handoff.
+        if not member.individual_suspended or member.last_error is not None:
+            await self._suspend_individual_for_group(member)
         if not self._eligible(member) or member.writer is not None:
             return False
         member.last_prepare_attempt_monotonic = time.monotonic()
