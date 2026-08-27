@@ -48,7 +48,7 @@ REMOTE_FIFO = "/tmp/aqara_m1s_radio_fifo"
 REMOTE_NC_PID = "/tmp/aqara_m1s_radio_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_radio_aplay.pid"
 REMOTE_BUILD_MARKER = "/tmp/aqara_m1s_radio_build"
-SINGLE_BUILD_ID = "0.10.11-catchup4s-prefill1400"
+SINGLE_BUILD_ID = "0.10.12-catchup4s-prefill1400"
 
 WATCHDOG_RESTART_DELAY = 5.0
 WATCHDOG_FAST_RESTART_DELAY = 0.25
