@@ -439,7 +439,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         )
         async with self._lock:
             await self._stop_locked(
-                update_state=True,
+                update_state=self.entity_id is not None,
                 reason="group_preempt",
                 remote_cleanup=True,
             )
@@ -2460,4 +2460,5 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             )
         if update_state:
             self._attr_state = MediaPlayerState.IDLE
-            self.async_write_ha_state()
+            if self.entity_id is not None:
+                self.async_write_ha_state()
