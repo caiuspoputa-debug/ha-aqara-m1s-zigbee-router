@@ -1,3 +1,14 @@
+## v0.10.17 - Stable buffered group playout and aligned late join
+
+- Reworks only the shared M1S group transport; the individual media-player transport and the v0.10.16 individual/group handoff remain unchanged.
+- Aligns group PCM chunks to the M1S ALSA period: 35 ms / 1120 frames at 32 kHz mono S32_LE.
+- Adds a 4.0 s shared HA-side jitter buffer, 2.5 s startup prebuffer, 2.0 s rebuffer threshold and 1.4 s remote receiver prefill, matching the proven individual-player stability model.
+- Preserves the common playout clock through ordinary HA/network stalls and catches up from buffered PCM instead of rebasing after short scheduling delays.
+- Detects hub-side ALSA underrun/stale state per member and rebuilds only the affected group receiver; one hub no longer forces healthy peers to restart.
+- Late-joining hubs are primed from the recent shared PCM history, catch up to the live sequence while existing hubs continue uninterrupted, and are admitted to live fanout atomically at the same timeline boundary. This avoids joining one receiver roughly one buffer-length behind and producing audible echo.
+- Initial group members receive the same real PCM prefill concurrently before the common 35 ms playout clock starts.
+- Keeps the v0.10.16 scoped ownership transfer between port 12346 (individual) and port 12347 (group).
+
 ## v0.10.16 - Explicit individual/group receiver handoff
 
 - When a hub is enabled for the M1S media group, suspend only that hub's individual player and stop its scoped receiver on port 12346 before the group receiver starts on port 12347.
