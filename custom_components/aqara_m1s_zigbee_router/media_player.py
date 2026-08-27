@@ -47,6 +47,8 @@ RADIO_PORT = 12346
 REMOTE_FIFO = "/tmp/aqara_m1s_radio_fifo"
 REMOTE_NC_PID = "/tmp/aqara_m1s_radio_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_radio_aplay.pid"
+REMOTE_BUILD_MARKER = "/tmp/aqara_m1s_radio_build"
+SINGLE_BUILD_ID = "0.10.12-catchup4s-prefill1400"
 
 WATCHDOG_RESTART_DELAY = 5.0
 WATCHDOG_FAST_RESTART_DELAY = 0.25
@@ -71,14 +73,23 @@ PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
 SINGLE_JITTER_BUFFER_SECONDS = 4.00
 SINGLE_PREBUFFER_SECONDS = 2.50
 SINGLE_REBUFFER_RESUME_SECONDS = 2.00
+SINGLE_REMOTE_PREFILL_SECONDS = 1.40
 SINGLE_JITTER_BUFFER_CHUNKS = max(1, int(SINGLE_JITTER_BUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_PREBUFFER_CHUNKS = max(1, int(SINGLE_PREBUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_REBUFFER_RESUME_CHUNKS = max(1, int(SINGLE_REBUFFER_RESUME_SECONDS / PCM_CHUNK_SECONDS))
+SINGLE_REMOTE_PREFILL_CHUNKS = max(
+    1, int(SINGLE_REMOTE_PREFILL_SECONDS / PCM_CHUNK_SECONDS)
+)
 SINGLE_LOW_QUEUE_CHUNKS = max(2, int(0.30 / PCM_CHUNK_SECONDS))
 SINGLE_WRITE_HIGH_WATER_BYTES = PCM_CHUNK_BYTES * 16
 SINGLE_WRITE_LOW_WATER_BYTES = PCM_CHUNK_BYTES * 8
 SINGLE_SOCKET_SNDBUF_BYTES = PCM_CHUNK_BYTES * 16
-SINGLE_PACE_REBASE_SECONDS = 0.50
+# Preserve the playout clock through ordinary HA stalls so queued PCM catches up
+# and replenishes the hub-side cushion. Only abandon timing after the complete
+# four-second jitter window has been exceeded.
+SINGLE_PACE_REBASE_SECONDS = SINGLE_JITTER_BUFFER_SECONDS
+SINGLE_CATCHUP_LOG_THRESHOLD_SECONDS = 0.50
+SINGLE_CATCHUP_LOG_INTERVAL_SECONDS = 30.0
 SINGLE_LOW_QUEUE_LOG_INTERVAL = 30.0
 SINGLE_SOURCE_STALL_TIMEOUT = 5.0
 SINGLE_TCP_RECOVERY_WINDOW_SECONDS = 30.0
@@ -91,13 +102,12 @@ SINGLE_TCP_RECOVERY_DROP_SECONDS = 0.14
 SINGLE_TCP_RECOVERY_DROP_CHUNKS = max(
     1, int(SINGLE_TCP_RECOVERY_DROP_SECONDS / PCM_CHUNK_SECONDS)
 )
-SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS = 30.0
-SINGLE_RECEIVER_HEALTH_WARNING_INTERVAL_SECONDS = 120.0
+SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS = 5.0
 SINGLE_RECEIVER_STALE_DELAY_FRAMES = int(PCM_RATE * 0.20)
 SINGLE_RECEIVER_STALE_AVAIL_MULTIPLIER = 2
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
-WRITER_DRAIN_TIMEOUT = 1.0
+WRITER_DRAIN_TIMEOUT = 5.0
 # Teardown must never hold the single-player transport lock indefinitely.
 # Stop/Play only detaches the active session. The producer keeps draining
 # FFmpeg stdout and discards PCM after detach; the watcher remains the sole
@@ -123,12 +133,14 @@ REMOTE_STOP_COMMAND = (
     'kill -9 "$p" 2>/dev/null; done; '
     f'for p in $(ps w | grep "[a]play .*{REMOTE_FIFO}" | awk '"'"'{print $1}'"'"'); do '
     'kill -9 "$p" 2>/dev/null; done; '
-    f'rm -f {REMOTE_NC_PID} {REMOTE_APLAY_PID} {REMOTE_FIFO}'
+    f'rm -f {REMOTE_NC_PID} {REMOTE_APLAY_PID} {REMOTE_FIFO} '
+    f'{REMOTE_BUILD_MARKER}'
 )
 
 REMOTE_START_COMMAND = (
     REMOTE_STOP_COMMAND
     + f'; mkfifo {REMOTE_FIFO}; '
+    + f'echo {SINGLE_BUILD_ID} > {REMOTE_BUILD_MARKER}; '
     + f'nc -l -p {RADIO_PORT} </dev/null > {REMOTE_FIFO} '
       '2>/tmp/aqara_m1s_radio_nc.log & '
     + f'echo $! > {REMOTE_NC_PID}; '
@@ -499,6 +511,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_jitter_buffer_ms": int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
             "single_prebuffer_ms": int(SINGLE_PREBUFFER_SECONDS * 1000),
             "single_rebuffer_resume_ms": int(SINGLE_REBUFFER_RESUME_SECONDS * 1000),
+            "single_remote_prefill_ms": int(SINGLE_REMOTE_PREFILL_SECONDS * 1000),
+            "single_pcm_hub_rate": PCM_RATE,
+            "single_receiver_build": SINGLE_BUILD_ID,
             "single_tcp_self_heal": True,
             "single_tcp_recovery_mode": "in_place_drop_stale_pcm",
             "single_tcp_recovery_window_seconds": SINGLE_TCP_RECOVERY_WINDOW_SECONDS,
@@ -512,14 +527,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_receiver_health_interval_seconds": (
                 SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS
             ),
-            "single_receiver_health_warning_interval_seconds": (
-                SINGLE_RECEIVER_HEALTH_WARNING_INTERVAL_SECONDS
-            ),
             "single_receiver_stale_delay_ms": int(
                 SINGLE_RECEIVER_STALE_DELAY_FRAMES / PCM_RATE * 1000
             ),
             "single_receiver_stale_policy": (
-                "observe_running_alsa_rebuild_only_nonrunning_or_tcp_fault"
+                "rebuild_on_alsa_pointer_underrun"
             ),
             "single_receiver_tcp_stale_diagnostic_only": True,
             "single_receiver_rebuilds": self._single_receiver_rebuilds,
@@ -1531,11 +1543,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         rebuffering = False
         tcp_recovery_events = 0
         tcp_recovery_window_started = 0.0
+        consecutive_drain_timeouts = 0
+        playout_catchup_events = 0
+        last_catchup_log = 0.0
         last_low_queue_log = 0.0
         last_real_pcm_monotonic = time.monotonic()
         health_task: asyncio.Task | None = None
         last_health_probe = 0.0
-        last_health_warning_log = 0.0
 
         async def _produce_pcm() -> None:
             nonlocal producer_error
@@ -1583,10 +1597,30 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             f"aqara_m1s_pcm_producer_{self.entry.entry_id}",
         )
 
+        async def _prefill_remote_receiver() -> int:
+            """Move a short PCM cushion from the HA queue to the hub pipeline."""
+            nonlocal consecutive_drain_timeouts
+            primed_chunks = 0
+            while primed_chunks < SINGLE_REMOTE_PREFILL_CHUNKS:
+                try:
+                    raw_chunk = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                writer.write(self._apply_live_pcm_gain(raw_chunk))
+                primed_chunks += 1
+
+            if primed_chunks:
+                await asyncio.wait_for(
+                    writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                )
+                consecutive_drain_timeouts = 0
+            return primed_chunks
+
         async def _rebuild_receiver_and_resync(
             *, stage: str, cause: str, error: Exception | None = None
         ) -> None:
             nonlocal writer, tcp_recovery_events, tcp_recovery_window_started
+            nonlocal consecutive_drain_timeouts
             now = time.monotonic()
             if now - tcp_recovery_window_started > SINGLE_TCP_RECOVERY_WINDOW_SECONDS:
                 tcp_recovery_window_started = now
@@ -1634,10 +1668,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             await asyncio.wait_for(
                 writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
             )
+            primed_chunks = await _prefill_remote_receiver()
+            consecutive_drain_timeouts = 0
             _LOGGER.warning(
                 "Aqara media single receiver resumed after stale PCM drop "
                 "entity=%s session=%s generation=%s host=%s pid=%s "
-                "dropped_ms=%s silence_ms=%s cause=%s",
+                "dropped_ms=%s silence_ms=%s remote_prefill_ms=%s cause=%s",
                 self.entity_id,
                 session,
                 generation,
@@ -1645,18 +1681,59 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 process.pid,
                 int(dropped_chunks * PCM_CHUNK_SECONDS * 1000),
                 int(SINGLE_TCP_RECOVERY_SILENCE_SECONDS * 1000),
+                int(primed_chunks * PCM_CHUNK_SECONDS * 1000),
                 cause,
             )
 
         async def _write_chunk_to_hub(raw_chunk: bytes, *, stage: str) -> None:
+            nonlocal consecutive_drain_timeouts
             pcm = self._apply_live_pcm_gain(raw_chunk)
             try:
                 writer.write(pcm)
                 await asyncio.wait_for(
                     writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
                 )
+                consecutive_drain_timeouts = 0
                 return
-            except (asyncio.TimeoutError, OSError, ConnectionError) as err:
+            except asyncio.TimeoutError as err:
+                consecutive_drain_timeouts += 1
+                if consecutive_drain_timeouts < 2:
+                    _LOGGER.warning(
+                        "Aqara media first consecutive TCP drain timeout tolerated "
+                        "entity=%s session=%s generation=%s host=%s pid=%s "
+                        "stage=%s timeout=%ss consecutive_timeouts=%s "
+                        "action=keep_receiver",
+                        self.entity_id,
+                        session,
+                        generation,
+                        self.client.host,
+                        process.pid,
+                        stage,
+                        WRITER_DRAIN_TIMEOUT,
+                        consecutive_drain_timeouts,
+                    )
+                    return
+                _LOGGER.warning(
+                    "Aqara media single TCP drain timeout; rebuilding "
+                    "receiver entity=%s session=%s generation=%s host=%s pid=%s "
+                    "stage=%s timeout=%ss consecutive_timeouts=%s "
+                    "action=rebuild_receiver",
+                    self.entity_id,
+                    session,
+                    generation,
+                    self.client.host,
+                    process.pid,
+                    stage,
+                    WRITER_DRAIN_TIMEOUT,
+                    consecutive_drain_timeouts,
+                )
+                await _rebuild_receiver_and_resync(
+                    stage=stage,
+                    cause=err.__class__.__name__,
+                    error=err,
+                )
+                return
+            except (OSError, ConnectionError) as err:
                 await _rebuild_receiver_and_resync(
                     stage=stage,
                     cause=err.__class__.__name__,
@@ -1687,6 +1764,17 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 int((time.monotonic() - prebuffer_started) * 1000),
             )
 
+            primed_chunks = await _prefill_remote_receiver()
+            _LOGGER.info(
+                "Aqara media remote receiver prefilled entity=%s session=%s "
+                "host=%s remote_prefill_ms=%s remaining_ha_buffer_ms=%s",
+                self.entity_id,
+                session,
+                self.client.host,
+                int(primed_chunks * PCM_CHUNK_SECONDS * 1000),
+                int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
+            )
+
             next_send_monotonic = time.monotonic()
             while self._ffmpeg is process and not self._shutting_down:
                 if producer_error is not None:
@@ -1702,10 +1790,39 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 if delay > 0:
                     await asyncio.sleep(delay)
                     now = time.monotonic()
-                elif now - next_send_monotonic > SINGLE_PACE_REBASE_SECONDS:
-                    # A long HA event-loop stall must not trigger a multi-second
-                    # catch-up burst. Rebase, while retaining the jitter buffer.
-                    next_send_monotonic = now
+                else:
+                    lag = now - next_send_monotonic
+                    if lag > SINGLE_PACE_REBASE_SECONDS:
+                        _LOGGER.warning(
+                            "Aqara media playout clock rebased after jitter "
+                            "window exceeded entity=%s session=%s host=%s "
+                            "lag_ms=%s jitter_buffer_ms=%s action=rebase",
+                            self.entity_id,
+                            session,
+                            self.client.host,
+                            int(lag * 1000),
+                            int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
+                        )
+                        next_send_monotonic = now
+                    elif lag >= SINGLE_CATCHUP_LOG_THRESHOLD_SECONDS:
+                        playout_catchup_events += 1
+                        if (
+                            now - last_catchup_log
+                            >= SINGLE_CATCHUP_LOG_INTERVAL_SECONDS
+                        ):
+                            last_catchup_log = now
+                            _LOGGER.warning(
+                                "Aqara media playout catching up after HA stall "
+                                "entity=%s session=%s host=%s lag_ms=%s "
+                                "queued_ms=%s catchup_events=%s "
+                                "action=replenish_remote_buffer",
+                                self.entity_id,
+                                session,
+                                self.client.host,
+                                int(lag * 1000),
+                                int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
+                                playout_catchup_events,
+                            )
 
                 if health_task is not None and health_task.done():
                     try:
@@ -1723,37 +1840,28 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         self._last_receiver_health = health
                         if health.get("stale"):
                             cause = str(health.get("reason") or "receiver_stale")
-                            alsa_state = str(health.get("alsa_state") or "").upper()
-                            if alsa_state and alsa_state not in ("RUNNING", "PREPARED"):
-                                await _rebuild_receiver_and_resync(
-                                    stage="health_check",
-                                    cause=f"{cause};alsa_state:{alsa_state}",
-                                )
-                                next_send_monotonic = time.monotonic()
-                            elif (
-                                now - last_health_warning_log
-                                >= SINGLE_RECEIVER_HEALTH_WARNING_INTERVAL_SECONDS
-                            ):
-                                last_health_warning_log = now
-                                _LOGGER.warning(
-                                    "Aqara media single receiver health anomaly "
-                                    "observed; keeping stream active entity=%s "
-                                    "session=%s generation=%s host=%s pid=%s "
-                                    "cause=%s alsa_state=%s delay_frames=%s "
-                                    "avail_frames=%s buffer_frames=%s "
-                                    "tcp_established=%s action=observe_only",
-                                    self.entity_id,
-                                    session,
-                                    generation,
-                                    self.client.host,
-                                    process.pid,
-                                    cause,
-                                    health.get("alsa_state"),
-                                    health.get("alsa_delay_frames"),
-                                    health.get("alsa_avail_frames"),
-                                    health.get("alsa_buffer_frames"),
-                                    health.get("tcp_established"),
-                                )
+                            _LOGGER.warning(
+                                "Aqara media ALSA playout underrun detected; "
+                                "rebuilding receiver entity=%s session=%s "
+                                "generation=%s host=%s pid=%s cause=%s "
+                                "alsa_state=%s delay_frames=%s avail_frames=%s "
+                                "buffer_frames=%s action=rebuild_receiver",
+                                self.entity_id,
+                                session,
+                                generation,
+                                self.client.host,
+                                process.pid,
+                                cause,
+                                health.get("alsa_state"),
+                                health.get("alsa_delay_frames"),
+                                health.get("alsa_avail_frames"),
+                                health.get("alsa_buffer_frames"),
+                            )
+                            await _rebuild_receiver_and_resync(
+                                stage="health_check",
+                                cause=cause,
+                            )
+                            next_send_monotonic = time.monotonic()
                     health_task = None
 
                 if (
@@ -1972,7 +2080,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "Aqara media FFmpeg/PCM ended unexpectedly entity=%s session=%s generation=%s "
             "pid=%s host=%s returncode=%s runtime=%.1fs playback_requested=%s "
             "failure_kind=%s source=%s pump_error=%r stderr=%r "
-            "buffer_low_events=%s silence_fill_events=%s tcp_recovery_events=%s",
+            "buffer_low_events=%s silence_fill_events=%s tcp_recovery_events=%s "
+            "playout_catchup_events=%s",
             self.entity_id,
             session,
             generation,
@@ -1988,6 +2097,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             low_queue_events,
             silence_fill_events,
             tcp_recovery_events,
+            playout_catchup_events,
         )
         self._attr_state = MediaPlayerState.IDLE
         self.async_write_ha_state()
