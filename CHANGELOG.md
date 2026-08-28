@@ -1,5 +1,14 @@
 ## v0.10.17 - Stable buffered group playout and aligned late join
 
+## 0.10.19 - SOUND FAST HANDOFF
+
+- Reduced hub-sound startup latency while preserving `sound > single > group`.
+- Removed redundant pre-start sound cleanup roundtrip; the new start performs scoped cleanup in the same Telnet command.
+- Priority sound detaches single media locally and folds the exact 12346 cleanup into sound startup.
+- Reduced the fixed post-start settle delay from 350 ms to 100 ms.
+- Added startup timing diagnostics (`priority_ms`, `remote_start_ms`, `spawn_ms`, `total_ms`).
+- No changes to group/single media buffering, volume logic, watchdog policy, or Zigbee UART transport.
+
 - Reworks only the shared M1S group transport; the individual media-player transport and the v0.10.16 individual/group handoff remain unchanged.
 - Aligns group PCM chunks to the M1S ALSA period: 35 ms / 1120 frames at 32 kHz mono S32_LE.
 - Adds a 4.0 s shared HA-side jitter buffer, 2.5 s startup prebuffer, 2.0 s rebuffer threshold and 1.4 s remote receiver prefill, matching the proven individual-player stability model.
