@@ -365,9 +365,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if self._group_manager is not None:
             await self._group_manager.async_release_individual(self.entry.entry_id)
 
-    async def async_suspend_for_priority_sound(
-        self, *, remote_cleanup: bool = True
-    ) -> bool:
+    async def async_suspend_for_priority_sound(self) -> bool:
         """Temporarily stop this player's transport without forgetting its source."""
         if self._shutting_down:
             return False
@@ -387,11 +385,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # The generation bump above makes that start stale; taking this lock waits
         # for it to abort/clean up before the priority sound transport begins.
         async with self._lock:
-            await self._stop_locked(
-                update_state=True,
-                reason="priority_sound",
-                remote_cleanup=remote_cleanup,
-            )
+            await self._stop_locked(update_state=True, reason="priority_sound")
         # Keep remembered media/intent intact only when something was actually
         # playing or starting. _finish_priority() clears the suspend flag either way.
         return should_resume

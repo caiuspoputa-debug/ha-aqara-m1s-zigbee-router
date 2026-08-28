@@ -12,7 +12,6 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .client import AqaraM1SClient
-from .media_player import REMOTE_STOP_COMMAND as RADIO_REMOTE_STOP_COMMAND
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ REMOTE_SINK_PID = "/tmp/aqara_m1s_sound_sink_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_sound_aplay.pid"
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
-SOUND_START_SETTLE_DELAY = 0.10
+SOUND_SETTLE_DELAY = 0.35
 
 REMOTE_STOP_COMMAND = (
     f"for f in {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID}; do "
@@ -41,8 +40,6 @@ def remote_start_command(path: str) -> str:
     source = shlex.quote(path)
     return (
         REMOTE_STOP_COMMAND
-        + "; "
-        + RADIO_REMOTE_STOP_COMMAND
         + f"; mkfifo {REMOTE_FIFO}; "
         + f"nc -l -p {SINK_PORT} < /dev/null > {REMOTE_FIFO} "
           "2>/tmp/aqara_m1s_sound_sink_nc.log & "
@@ -80,20 +77,18 @@ class AqaraM1SSoundPlayer:
         self._watch_task: asyncio.Task | None = None
         self._interruption_active = False
         self._resume_radio = False
+        self._active_timing_start: float | None = None
+        self._active_timing: dict[str, int] | None = None
 
-    async def _begin_priority_locked(
-        self, *, remote_cleanup_single: bool
-    ) -> None:
+    async def _begin_priority_locked(self) -> None:
         """Release group/individual ownership before starting the proven sound path."""
         if self._interruption_active:
             return
         await self.group_manager.async_claim_sound(self.entry_id)
-        # Detach the HA-side single transport here. The sound start command
-        # performs the exact scoped 12346 cleanup in the same Telnet roundtrip.
-        self._resume_radio = await self.radio_player.async_suspend_for_priority_sound(
-            remote_cleanup=remote_cleanup_single
-        )
+        self._resume_radio = await self.radio_player.async_suspend_for_priority_sound()
         self._interruption_active = True
+        # Only a short ALSA settle delay. Do not manipulate hub sound transport here.
+        await asyncio.sleep(0.25)
 
     async def _finish_priority(self) -> None:
         if not self._interruption_active:
@@ -110,27 +105,39 @@ class AqaraM1SSoundPlayer:
             await self.group_manager.async_release_sound(self.entry_id)
 
     async def async_play(self, path: str, volume: int) -> None:
-        """Play one WAV with low-latency focus handoff and the proven transport."""
-        requested_at = time.monotonic()
+        """Play exactly one WAV using the known-good v0.6.0 transport."""
+        request_started = time.perf_counter()
+        timing: dict[str, int] = {}
         safe_volume = max(0, min(100, int(volume))) / 100.0
+        _LOGGER.info(
+            "Aqara M1S sound timing request entity=%s host=%s path=%s volume=%s",
+            self.entry_id,
+            self.client.host,
+            path,
+            volume,
+        )
         async with self._lock:
-            # The next start already performs scoped sound + single cleanup.
-            await self._stop_locked(
-                restore_previous=False, defer_remote_cleanup=True
-            )
-            priority_started = time.monotonic()
-            await self._begin_priority_locked(remote_cleanup_single=False)
-            priority_done = time.monotonic()
+            timing["button_to_lock_ms"] = self._elapsed_ms(request_started)
+
+            stage_started = time.perf_counter()
+            await self._stop_locked(restore_previous=False, remote_stop=False)
+            timing["existing_sound_stop_ms"] = self._elapsed_ms(stage_started)
+
+            stage_started = time.perf_counter()
+            await self._begin_priority_locked()
+            timing["arbitration_ms"] = self._elapsed_ms(stage_started)
             try:
-                remote_started = time.monotonic()
+                # Keep this sequence identical to v0.6.0 after focus arbitration.
+                stage_started = time.perf_counter()
                 await self.hass.async_add_executor_job(
                     self.client.run_command,
                     remote_start_command(path),
                 )
-                remote_done = time.monotonic()
-                # The hub command returns after both listeners and aplay start.
-                # Keep only a small scheduler cushion instead of fixed 350 ms.
-                await asyncio.sleep(SOUND_START_SETTLE_DELAY)
+                timing["remote_sound_start_ms"] = self._elapsed_ms(stage_started)
+
+                stage_started = time.perf_counter()
+                await asyncio.sleep(SOUND_SETTLE_DELAY)
+                timing["settle_ms"] = self._elapsed_ms(stage_started)
 
                 ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
                 input_url = f"tcp://{self.client.host}:{SOURCE_PORT}?tcp_nodelay=1"
@@ -141,6 +148,8 @@ class AqaraM1SSoundPlayer:
                     "-hide_banner",
                     "-loglevel",
                     "warning",
+                    "-progress",
+                    "pipe:2",
                     "-re",
                     "-i",
                     input_url,
@@ -159,34 +168,43 @@ class AqaraM1SSoundPlayer:
                 ]
 
                 try:
+                    stage_started = time.perf_counter()
                     process = await asyncio.create_subprocess_exec(
                         *args,
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=asyncio.subprocess.PIPE,
                     )
+                    timing["ffmpeg_spawn_ms"] = self._elapsed_ms(stage_started)
                 except FileNotFoundError as err:
                     await self._remote_stop()
                     await self._finish_priority()
                     raise RuntimeError("FFmpeg was not found on Home Assistant") from err
 
-                spawned_at = time.monotonic()
                 self._ffmpeg = process
+                self._active_timing_start = request_started
+                self._active_timing = timing
                 self._try_set_ffmpeg_priority(process.pid)
-                self._watch_task = self.hass.async_create_task(self._watch(process))
+                timing["button_to_ffmpeg_spawn_ms"] = self._elapsed_ms(request_started)
                 _LOGGER.info(
-                    "Aqara M1S sound fast start entry=%s host=%s pid=%s "
-                    "priority_ms=%s remote_start_ms=%s settle_ms=%s spawn_ms=%s total_ms=%s",
+                    "Aqara M1S sound timing start entity=%s host=%s "
+                    "button_to_lock_ms=%s existing_sound_stop_ms=%s arbitration_ms=%s "
+                    "remote_sound_start_ms=%s settle_ms=%s ffmpeg_spawn_ms=%s "
+                    "button_to_ffmpeg_spawn_ms=%s",
                     self.entry_id,
                     self.client.host,
-                    process.pid,
-                    int((priority_done - priority_started) * 1000),
-                    int((remote_done - remote_started) * 1000),
-                    int(SOUND_START_SETTLE_DELAY * 1000),
-                    int((spawned_at - remote_done - SOUND_START_SETTLE_DELAY) * 1000),
-                    int((spawned_at - requested_at) * 1000),
+                    timing.get("button_to_lock_ms"),
+                    timing.get("existing_sound_stop_ms"),
+                    timing.get("arbitration_ms"),
+                    timing.get("remote_sound_start_ms"),
+                    timing.get("settle_ms"),
+                    timing.get("ffmpeg_spawn_ms"),
+                    timing.get("button_to_ffmpeg_spawn_ms"),
                 )
+                self._watch_task = self.hass.async_create_task(self._watch(process))
             except Exception:
                 if self._ffmpeg is None:
+                    self._active_timing_start = None
+                    self._active_timing = None
                     await self._remote_stop()
                     await self._finish_priority()
                 raise
@@ -195,7 +213,7 @@ class AqaraM1SSoundPlayer:
         """Play URL with the same focus policy; does not alter normal WAV transport."""
         async with self._lock:
             await self._stop_locked(restore_previous=False)
-            await self._begin_priority_locked(remote_cleanup_single=True)
+            await self._begin_priority_locked()
         quoted = shlex.quote(url)
         command = (
             f"wget -q {quoted} -O /tmp/ha_audio.wav "
@@ -224,41 +242,104 @@ class AqaraM1SSoundPlayer:
             )
             return False
 
+    @staticmethod
+    def _elapsed_ms(started: float) -> int:
+        return round((time.perf_counter() - started) * 1000)
+
     async def _watch(self, process: asyncio.subprocess.Process) -> None:
-        stderr = b""
+        stderr_tail: list[str] = []
+        first_pcm_logged = False
         try:
-            _, stderr = await process.communicate()
+            if process.stderr is not None:
+                while True:
+                    line = await process.stderr.readline()
+                    if not line:
+                        break
+                    text = line.decode(errors="ignore").strip()
+                    if text:
+                        stderr_tail.append(text)
+                        stderr_tail = stderr_tail[-40:]
+                    if not first_pcm_logged and self._ffmpeg is process:
+                        first_pcm_logged = self._maybe_log_first_pcm_write(text)
+            await process.wait()
         except asyncio.CancelledError:
             return
 
         if self._ffmpeg is not process:
             return
 
+        timing_start = self._active_timing_start
+        timing = self._active_timing
         self._ffmpeg = None
         self._watch_task = None
+        self._active_timing_start = None
+        self._active_timing = None
         if process.returncode not in (0, -15):
             _LOGGER.warning(
                 "Aqara M1S priority sound FFmpeg exited with code %s: %s",
                 process.returncode,
-                stderr.decode(errors="ignore")[-1000:],
+                "\n".join(stderr_tail)[-1000:],
             )
         elif process.returncode == 0:
             await asyncio.sleep(0.2)
+        if timing_start is not None and timing is not None:
+            _LOGGER.info(
+                "Aqara M1S sound timing complete entity=%s host=%s "
+                "button_to_lock_ms=%s existing_sound_stop_ms=%s arbitration_ms=%s "
+                "remote_sound_start_ms=%s settle_ms=%s ffmpeg_spawn_ms=%s "
+                "first_pcm_write_ms=%s total_ms=%s returncode=%s",
+                self.entry_id,
+                self.client.host,
+                timing.get("button_to_lock_ms"),
+                timing.get("existing_sound_stop_ms"),
+                timing.get("arbitration_ms"),
+                timing.get("remote_sound_start_ms"),
+                timing.get("settle_ms"),
+                timing.get("ffmpeg_spawn_ms"),
+                timing.get("first_pcm_write_ms"),
+                self._elapsed_ms(timing_start),
+                process.returncode,
+            )
         await self._remote_stop()
         async with self._lock:
             await self._finish_priority()
+
+    def _maybe_log_first_pcm_write(self, text: str) -> bool:
+        if not text.startswith("out_time_ms="):
+            return False
+        try:
+            out_time_ms = int(text.split("=", 1)[1])
+        except ValueError:
+            return False
+        if out_time_ms <= 0 or self._active_timing_start is None:
+            return False
+        timing = self._active_timing
+        first_pcm_write_ms = self._elapsed_ms(self._active_timing_start)
+        if timing is not None:
+            timing["first_pcm_write_ms"] = first_pcm_write_ms
+        _LOGGER.info(
+            "Aqara M1S sound timing first PCM write entity=%s host=%s "
+            "first_pcm_write_ms=%s ffmpeg_out_time_ms=%s",
+            self.entry_id,
+            self.client.host,
+            first_pcm_write_ms,
+            out_time_ms,
+        )
+        return True
 
     async def async_stop(self) -> None:
         async with self._lock:
             await self._stop_locked(restore_previous=True)
 
     async def _stop_locked(
-        self, *, restore_previous: bool, defer_remote_cleanup: bool = False
+        self, *, restore_previous: bool, remote_stop: bool = True
     ) -> None:
         process = self._ffmpeg
         self._ffmpeg = None
         watch_task = self._watch_task
         self._watch_task = None
+        self._active_timing_start = None
+        self._active_timing = None
         if watch_task and watch_task is not asyncio.current_task():
             watch_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -270,13 +351,8 @@ class AqaraM1SSoundPlayer:
             if process.returncode is None:
                 process.kill()
                 await process.wait()
-        if not defer_remote_cleanup:
+        if remote_stop:
             await self._remote_stop()
-        else:
-            _LOGGER.debug(
-                "Aqara M1S sound remote cleanup deferred into fast start host=%s",
-                self.client.host,
-            )
         if restore_previous:
             await self._finish_priority()
 
