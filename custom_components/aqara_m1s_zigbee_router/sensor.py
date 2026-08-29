@@ -8,7 +8,6 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, Sen
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import LIGHT_LUX, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -102,7 +101,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         AqaraM1SRouterSensor(hass, entry, client, coordinator, definition)
         for definition in SENSORS
     ]
-    entities.append(AqaraM1SHubStatusSensor(entry, client, coordinator))
     entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
     async_add_entities(entities, coordinator.last_update_success)
 
@@ -189,30 +187,3 @@ class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
     def _handle_coordinator_update(self) -> None:
         self._apply_coordinator_data()
         self.async_write_ha_state()
-
-
-class AqaraM1SHubStatusSensor(CoordinatorEntity, SensorEntity):
-    """Readable text label for the current hub availability state."""
-
-    _attr_name = "Hub Status"
-    _attr_icon = "mdi:lan-connect"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_should_poll = False
-
-    def __init__(self, entry: ConfigEntry, client, coordinator) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{entry.entry_id}_hub_status"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, client.host)},
-            "name": entry.data.get("name", f"Aqara M1S Router {client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
-
-    @property
-    def available(self) -> bool:
-        return True
-
-    @property
-    def native_value(self) -> str:
-        return "Online" if self.coordinator.last_update_success else "Indisponibil"

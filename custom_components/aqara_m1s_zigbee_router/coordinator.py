@@ -4,12 +4,16 @@ import asyncio
 import logging
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
+from .const import DOMAIN
 
 
 _LOGGER = logging.getLogger(__name__)
 WATCHDOG_INTERVAL_SECONDS = 5.0
 LUX_INTERVAL_SECONDS = 15.0
+OFFLINE_NAME_SUFFIX = " (Indisponibil)"
 
 
 class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
@@ -29,6 +33,7 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         self._watchdog_task: asyncio.Task | None = None
         self._lux_task: asyncio.Task | None = None
         self._last_lux_started = 0.0
+        self._visual_availability_online: bool | None = None
         super().__init__(
             hass,
             logger=_LOGGER,
@@ -79,9 +84,11 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
                     self.client.host,
                     WATCHDOG_INTERVAL_SECONDS,
                 )
+            self._set_visual_availability(False)
             self._was_online = False
             raise UpdateFailed("Hub is offline")
 
+        self._set_visual_availability(True)
         if not self._was_online:
             _LOGGER.info(
                 "Aqara M1S hub %s is reachable again",
@@ -175,3 +182,32 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
                     pass
 
         await super().async_shutdown()
+
+    @callback
+    def _set_visual_availability(self, online: bool) -> None:
+        if self.config_entry is None or self._visual_availability_online is online:
+            return
+        self._visual_availability_online = online
+
+        title = self._availability_name(self.config_entry.title, online)
+        if title != self.config_entry.title:
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                title=title,
+            )
+
+        device_registry = dr.async_get(self.hass)
+        device = device_registry.async_get_device(
+            identifiers={(DOMAIN, self.client.host)}
+        )
+        if device is None or device.name is None:
+            return
+
+        device_name = self._availability_name(device.name, online)
+        if device_name != device.name:
+            device_registry.async_update_device(device.id, name=device_name)
+
+    @staticmethod
+    def _availability_name(name: str, online: bool) -> str:
+        base = str(name).removesuffix(OFFLINE_NAME_SUFFIX)
+        return base if online else f"{base}{OFFLINE_NAME_SUFFIX}"

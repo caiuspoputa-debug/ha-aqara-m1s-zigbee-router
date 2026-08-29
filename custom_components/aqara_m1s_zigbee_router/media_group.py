@@ -2491,6 +2491,46 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
     def _handle_group_update(self) -> None:
         self.schedule_update_ha_state()
 
+    async def _async_resolve_media_title(
+        self,
+        media_id: str,
+        resolved: Any | None,
+    ) -> str | None:
+        for candidate in (
+            getattr(resolved, "title", None),
+            getattr(resolved, "name", None),
+        ):
+            title = self._clean_media_title(candidate)
+            if title:
+                return title
+
+        if not media_source.is_media_source_id(media_id):
+            return None
+
+        try:
+            browse = await media_source.async_browse_media(
+                self.hass,
+                media_id,
+                content_filter=lambda item: str(
+                    getattr(item, "media_content_type", "")
+                ).startswith("audio/"),
+            )
+        except Exception:
+            return None
+
+        return self._clean_media_title(getattr(browse, "title", None))
+
+    @staticmethod
+    def _clean_media_title(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        title = value.strip()
+        return title or None
+
+    @staticmethod
+    def _group_media_title(title: str | None) -> str:
+        return AqaraM1SMediaGroup._clean_media_title(title) or "M1S group stream"
+
     async def _restore_after_startup(self) -> None:
         try:
             await asyncio.sleep(15.0)
@@ -2532,6 +2572,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
     async def async_play_media(self, media_type: str, media_id: str, **kwargs: Any) -> None:
         original = media_id
         resolved_id = media_id
+        resolved = None
         if media_source.is_media_source_id(media_id):
             resolved = await media_source.async_resolve_media(
                 self.hass, media_id, self.entity_id
@@ -2542,8 +2583,13 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
         )
         extra = kwargs.get("extra") or {}
         title = extra.get("title") if isinstance(extra, dict) else None
+        if not self._clean_media_title(title):
+            title = await self._async_resolve_media_title(original, resolved)
         await self.manager.async_start(
-            url, original, media_type or MediaType.MUSIC, title or "M1S group stream"
+            url,
+            original,
+            media_type or MediaType.MUSIC,
+            self._group_media_title(title),
         )
         self.async_write_ha_state()
 

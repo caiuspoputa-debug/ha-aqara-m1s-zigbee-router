@@ -1,7 +1,9 @@
-## v0.10.23 - Hub status diagnostic label
+## v0.10.24 - Group radio title and offline label
 
 - Keep the v0.10.22 availability watchdog behavior unchanged.
-- Add a diagnostic Hub Status sensor that stays visible and shows `Online` or `Indisponibil` for each hub device.
+- Resolve the media-source title for group playback when Home Assistant does not pass `extra.title`, so the group media player reports the radio station name instead of the generic `M1S group stream` when the Radio Browser source exposes a title.
+- Keep `M1S group stream` only as the final fallback when no station title is available.
+- Mark the config entry and device name with `(Indisponibil)` while the hub is offline, and remove the suffix automatically when it recovers.
 
 ## v0.10.22 - Availability watchdog fix
 
