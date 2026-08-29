@@ -8,6 +8,7 @@ from homeassistant.const import (
     CONF_USERNAME,
 )
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -72,7 +73,7 @@ async def async_setup_entry(
         username=username,
         password=password,
     )
-    coordinator = AqaraM1SRouterCoordinator(hass, client)
+    coordinator = AqaraM1SRouterCoordinator(hass, entry, client)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].setdefault(DATA_CLIENTS, {})
@@ -92,6 +93,9 @@ async def async_setup_entry(
         DATA_SOUND_PLAYERS,
         {},
     )
+    old_coordinator = hass.data[DOMAIN][DATA_COORDINATORS].get(entry.entry_id)
+    if old_coordinator is not None:
+        await old_coordinator.async_shutdown()
     if DATA_MEDIA_GROUP not in hass.data[DOMAIN]:
         hass.data[DOMAIN][DATA_MEDIA_GROUP] = AqaraM1SMediaGroupManager(hass)
 
@@ -155,7 +159,11 @@ async def async_setup_entry(
         if obsolete_number_id is not None:
             entity_registry.async_remove(obsolete_number_id)
 
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryNotReady:
+        coordinator.schedule_reload_until_online(initial_delay=30)
+        raise
     await hass.config_entries.async_forward_entry_setups(
         entry,
         PLATFORMS,
@@ -279,6 +287,10 @@ async def async_unload_entry(
     )
     if not unloaded:
         return False
+
+    coordinator = hass.data[DOMAIN][DATA_COORDINATORS].get(entry.entry_id)
+    if coordinator is not None:
+        await coordinator.async_shutdown()
 
     group_manager = hass.data[DOMAIN].get(DATA_MEDIA_GROUP)
     if group_manager is not None:

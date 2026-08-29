@@ -1,3 +1,9 @@
+## v0.10.21 - Automatic hub offline/online recovery
+
+- Detect a runtime online -> offline hub transition through the shared health coordinator and automatically reload the config entry so Home Assistant shows the hub as offline / retrying instead of leaving it under normal integration entries.
+- Retry config-entry reload every 30 seconds while the hub remains offline, so plugging the hub back in brings it online automatically without pressing Reload manually.
+- Keep the boot RGB cleanup out of the availability path so the hub can be marked online as soon as the health check succeeds.
+
 ## v0.10.17 - Stable buffered group playout and aligned late join
 
 - Reworks only the shared M1S group transport; the individual media-player transport and the v0.10.16 individual/group handoff remain unchanged.
