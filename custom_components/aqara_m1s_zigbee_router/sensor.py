@@ -7,7 +7,7 @@ from typing import Callable
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import LIGHT_LUX, UnitOfTemperature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -102,7 +102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         for definition in SENSORS
     ]
     entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
-    async_add_entities(entities, True)
+    async_add_entities(entities, coordinator.last_update_success)
 
 
 class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
@@ -112,6 +112,7 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
         self.entry = entry
         self.client = client
         self.definition = definition
+        self._was_online = coordinator.last_update_success
         self._attr_name = definition.name
         self._attr_unique_id = f"{entry.entry_id}_{definition.key}"
         self._attr_native_unit_of_measurement = definition.unit
@@ -131,6 +132,19 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
             self._attr_native_value = self.definition.parser(output)
         except Exception:
             self._attr_native_value = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        online = self.coordinator.last_update_success
+        if online and not self._was_online:
+            self.hass.async_create_task(self._async_refresh_after_reconnect())
+        self._was_online = online
+        super()._handle_coordinator_update()
+
+    async def _async_refresh_after_reconnect(self) -> None:
+        await self.async_update()
+        if self.entity_id is not None:
+            self.async_write_ha_state()
 
 
 class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):

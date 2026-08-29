@@ -6,9 +6,10 @@ import re
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect,
     async_dispatcher_send,
@@ -16,6 +17,7 @@ from homeassistant.helpers.dispatcher import (
 
 from .const import (
     DATA_CLIENTS,
+    DATA_COORDINATORS,
     DATA_PLAYBACK_VOLUME,
     DATA_SOUND_PLAYERS,
     DOMAIN,
@@ -93,14 +95,20 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_PLAYBACK_VOLUME].setdefault(entry.entry_id, 50)
 
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
+    coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
     listed_sounds: list[str] | None
-    try:
-        listed_sounds = await hass.async_add_executor_job(client.list_sounds)
-    except (OSError, RuntimeError, TimeoutError):
+    if coordinator.last_update_success:
+        try:
+            listed_sounds = await hass.async_add_executor_job(client.list_sounds)
+        except (OSError, RuntimeError, TimeoutError):
+            listed_sounds = None
+            sounds = FALLBACK_SOUNDS
+        else:
+            sounds = listed_sounds or FALLBACK_SOUNDS
+    else:
+        # Do not block platform setup with Telnet retries while the hub is off.
         listed_sounds = None
         sounds = FALLBACK_SOUNDS
-    else:
-        sounds = listed_sounds or FALLBACK_SOUNDS
 
     remove_stale_sound_button_registry_entries(
         hass,
@@ -110,7 +118,7 @@ async def async_setup_entry(
     )
 
     sound_buttons = {
-        path: AqaraM1SSoundButton(hass, entry, client, path)
+        path: AqaraM1SSoundButton(hass, entry, client, coordinator, path)
         for path in sounds
     }
     entities = [
@@ -118,6 +126,7 @@ async def async_setup_entry(
             hass,
             entry,
             client,
+            coordinator,
             async_add_entities,
             sound_buttons,
         ),
@@ -126,8 +135,11 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class AqaraM1SSoundButton(ButtonEntity):
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, client, path: str) -> None:
+class AqaraM1SSoundButton(CoordinatorEntity, ButtonEntity):
+    def __init__(
+        self, hass: HomeAssistant, entry: ConfigEntry, client, coordinator, path: str
+    ) -> None:
+        super().__init__(coordinator)
         self.hass = hass
         self.entry = entry
         self.client = client
@@ -155,7 +167,7 @@ class AqaraM1SSoundButton(ButtonEntity):
         await player.async_play(self.path, volume)
 
 
-class AqaraM1SRefreshSoundsButton(ButtonEntity):
+class AqaraM1SRefreshSoundsButton(CoordinatorEntity, ButtonEntity):
     _attr_name = "Refresh Sound List"
     _attr_icon = "mdi:refresh"
 
@@ -164,15 +176,18 @@ class AqaraM1SRefreshSoundsButton(ButtonEntity):
         hass: HomeAssistant,
         entry: ConfigEntry,
         client,
+        coordinator,
         async_add_entities: AddEntitiesCallback,
         sound_buttons: dict[str, AqaraM1SSoundButton],
     ) -> None:
+        super().__init__(coordinator)
         self.hass = hass
         self.entry = entry
         self.client = client
         self._async_add_entities = async_add_entities
         self._sound_buttons = sound_buttons
         self._refresh_lock = asyncio.Lock()
+        self._was_online = coordinator.last_update_success
         self._attr_unique_id = f"{entry.entry_id}_refresh_sounds"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, client.host)},
@@ -182,6 +197,7 @@ class AqaraM1SRefreshSoundsButton(ButtonEntity):
         }
 
     async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,
@@ -189,6 +205,14 @@ class AqaraM1SRefreshSoundsButton(ButtonEntity):
                 self._schedule_sound_refresh,
             )
         )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        online = self.coordinator.last_update_success
+        if online and not self._was_online:
+            self._schedule_sound_refresh()
+        self._was_online = online
+        super()._handle_coordinator_update()
 
     def _schedule_sound_refresh(self) -> None:
         self.hass.async_create_task(self._async_refresh_sound_buttons())
@@ -224,6 +248,7 @@ class AqaraM1SRefreshSoundsButton(ButtonEntity):
                     self.hass,
                     self.entry,
                     self.client,
+                    self.coordinator,
                     path,
                 )
                 self._sound_buttons[path] = entity

@@ -8,7 +8,6 @@ from homeassistant.const import (
     CONF_USERNAME,
 )
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -41,6 +40,7 @@ from .sound_player import AqaraM1SSoundPlayer
 from .sound_upload import destination_for_filename, read_uploaded_sound
 
 PLATFORMS = [
+    "binary_sensor",
     "button",
     "event",
     "light",
@@ -73,7 +73,7 @@ async def async_setup_entry(
         username=username,
         password=password,
     )
-    coordinator = AqaraM1SRouterCoordinator(hass, entry, client)
+    coordinator = AqaraM1SRouterCoordinator(hass, client, entry)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].setdefault(DATA_CLIENTS, {})
@@ -93,9 +93,6 @@ async def async_setup_entry(
         DATA_SOUND_PLAYERS,
         {},
     )
-    old_coordinator = hass.data[DOMAIN][DATA_COORDINATORS].get(entry.entry_id)
-    if old_coordinator is not None:
-        await old_coordinator.async_shutdown()
     if DATA_MEDIA_GROUP not in hass.data[DOMAIN]:
         hass.data[DOMAIN][DATA_MEDIA_GROUP] = AqaraM1SMediaGroupManager(hass)
 
@@ -159,15 +156,22 @@ async def async_setup_entry(
         if obsolete_number_id is not None:
             entity_registry.async_remove(obsolete_number_id)
 
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except ConfigEntryNotReady:
-        coordinator.schedule_reload_until_online(initial_delay=30)
-        raise
+    # This integration is intentionally allowed to load while the physical hub
+    # is offline.  async_config_entry_first_refresh() would raise
+    # ConfigEntryNotReady and move reconnect handling into Home Assistant's
+    # setup retry/backoff, which makes a hub powered on later appear only after
+    # a long delay or a manual Reload.  A normal refresh records the initial
+    # availability state without aborting the config entry setup.
+    await coordinator.async_refresh()
     await hass.config_entries.async_forward_entry_setups(
         entry,
         PLATFORMS,
     )
+
+    # Run an explicit connectivity watchdog that is independent of coordinator
+    # listeners.  This guarantees power-off detection and automatic recovery
+    # after a cold boot without requiring an integration Reload.
+    coordinator.async_start_watchdog()
 
     async def _get_target(
         call: ServiceCall,
@@ -288,10 +292,6 @@ async def async_unload_entry(
     if not unloaded:
         return False
 
-    coordinator = hass.data[DOMAIN][DATA_COORDINATORS].get(entry.entry_id)
-    if coordinator is not None:
-        await coordinator.async_shutdown()
-
     group_manager = hass.data[DOMAIN].get(DATA_MEDIA_GROUP)
     if group_manager is not None:
         await group_manager.unregister_member(entry.entry_id)
@@ -299,7 +299,12 @@ async def async_unload_entry(
             await group_manager.async_shutdown()
             hass.data[DOMAIN].pop(DATA_MEDIA_GROUP, None)
 
-    hass.data[DOMAIN][DATA_COORDINATORS].pop(entry.entry_id, None)
+    coordinator = hass.data[DOMAIN][DATA_COORDINATORS].pop(
+        entry.entry_id, None
+    )
+    if coordinator is not None:
+        await coordinator.async_shutdown()
+
     hass.data[DOMAIN][DATA_RADIO_PLAYERS].pop(entry.entry_id, None)
 
     sound_player = hass.data[DOMAIN][DATA_SOUND_PLAYERS].pop(

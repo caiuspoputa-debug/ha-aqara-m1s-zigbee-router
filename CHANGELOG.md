@@ -1,8 +1,24 @@
-## v0.10.21 - Automatic hub offline/online recovery
+## v0.10.22 - Availability watchdog fix
 
-- Detect a runtime online -> offline hub transition through the shared health coordinator and automatically reload the config entry so Home Assistant shows the hub as offline / retrying instead of leaving it under normal integration entries.
-- Retry config-entry reload every 30 seconds while the hub remains offline, so plugging the hub back in brings it online automatically without pressing Reload manually.
-- Keep the boot RGB cleanup out of the availability path so the hub can be marked online as soon as the health check succeeds.
+- Replaced listener-dependent coordinator polling with a permanent 5-second availability watchdog.
+- A hub powered on after Home Assistant is already running is rediscovered automatically; no integration Reload is required.
+- A hub powered off is marked unavailable automatically on the next watchdog probe.
+- Hub availability now follows the Telnet/Linux shell, not JN5189 GPIO33 state, so cold-boot UART settling cannot keep the whole device falsely offline.
+- The watchdog survives failed refreshes and continues retrying indefinitely.
+- The watchdog is explicitly cancelled on config-entry unload/reload.
+- Added one transition log when a hub goes offline and one when it recovers; no per-poll log spam.
+- Audio/PCM/group timing logic is unchanged.
+
+## v0.10.21 - Hub availability and reconnect recovery
+
+- Allow the config entry and its entities to load while a hub is powered off; the integration no longer depends on Home Assistant setup-retry backoff to discover a hub powered on later.
+- Retry coordinator health checks every 5 seconds while offline, then return automatically to the normal 15-second interval after recovery.
+- Make the health check use short command/connect timeouts so a removed hub is declared offline promptly instead of waiting on the normal Telnet command timeout.
+- Report reconnect immediately; the 10-second boot-ring cleanup now runs separately and no longer delays entity availability.
+- Tie sound buttons, the physical-button event and the media-group membership switch to coordinator availability.
+- Add a Hub Connectivity binary sensor that remains readable and explicitly shows Connected/Disconnected.
+- Avoid blocking offline platform setup on sound-list and diagnostic-sensor Telnet calls; refresh those diagnostics after the hub reconnects.
+- Audio transport, PCM timing, volume, group playout and sound-priority behavior are unchanged.
 
 ## v0.10.17 - Stable buffered group playout and aligned late join
 

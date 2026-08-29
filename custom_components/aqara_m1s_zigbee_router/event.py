@@ -5,8 +5,15 @@ from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import BUTTON_ACTIONS, DATA_CLIENTS, DOMAIN, button_topic_for_host
+from .const import (
+    BUTTON_ACTIONS,
+    DATA_CLIENTS,
+    DATA_COORDINATORS,
+    DOMAIN,
+    button_topic_for_host,
+)
 
 
 async def async_setup_entry(
@@ -15,10 +22,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
-    async_add_entities([AqaraM1SPhysicalButtonEvent(entry, client)])
+    coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
+    async_add_entities([AqaraM1SPhysicalButtonEvent(entry, client, coordinator)])
 
 
-class AqaraM1SPhysicalButtonEvent(EventEntity):
+class AqaraM1SPhysicalButtonEvent(CoordinatorEntity, EventEntity):
     """Expose the physical M1S button actions published by the hub bridge."""
 
     _attr_name = "Physical Button"
@@ -27,7 +35,8 @@ class AqaraM1SPhysicalButtonEvent(EventEntity):
     _attr_event_types = list(BUTTON_ACTIONS)
     _attr_should_poll = False
 
-    def __init__(self, entry: ConfigEntry, client) -> None:
+    def __init__(self, entry: ConfigEntry, client, coordinator) -> None:
+        super().__init__(coordinator)
         self.entry = entry
         self.client = client
         self._topic = button_topic_for_host(client.host)

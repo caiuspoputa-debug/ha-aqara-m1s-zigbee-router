@@ -199,11 +199,14 @@ class AqaraM1SClient:
         assert last_error is not None
         raise last_error
 
-    def _connect_locked(self) -> socket.socket:
+    def _connect_locked(self, *, connect_timeout: float | None = None) -> socket.socket:
         if self._sock is not None:
             return self._sock
 
-        sock = socket.create_connection((self.host, int(self.port)), timeout=self.timeout)
+        sock = socket.create_connection(
+            (self.host, int(self.port)),
+            timeout=self.timeout if connect_timeout is None else float(connect_timeout),
+        )
         sock.settimeout(0.35)
 
         try:
@@ -226,10 +229,11 @@ class AqaraM1SClient:
             raise
 
     def _run_command_locked(
-        self, command: str, *, timeout: float | None = None
+        self, command: str, *, timeout: float | None = None,
+        connect_timeout: float | None = None,
     ) -> str:
         command_timeout = self.timeout if timeout is None else float(timeout)
-        sock = self._connect_locked()
+        sock = self._connect_locked(connect_timeout=connect_timeout)
 
         # Discard any delayed prompt/output left from the previous command.
         try:
@@ -262,12 +266,17 @@ class AqaraM1SClient:
         payload = response.rsplit(begin, 1)[1].split(end, 1)[0]
         return payload.strip("\r\n")
 
-    def run_command(self, command: str, *, timeout: float | None = None) -> str:
+    def run_command(
+        self, command: str, *, timeout: float | None = None,
+        connect_timeout: float | None = None,
+    ) -> str:
         with self._lock:
             last_error: Exception | None = None
             for attempt in range(2):
                 try:
-                    return self._run_command_locked(command, timeout=timeout)
+                    return self._run_command_locked(
+                        command, timeout=timeout, connect_timeout=connect_timeout
+                    )
                 except (OSError, ConnectionError, TimeoutError) as err:
                     last_error = err
                     self._close_locked()
@@ -341,16 +350,27 @@ class AqaraM1SClient:
         return sorted(set(sounds))
 
     def check_online(self) -> bool:
-        """Verify that the Linux side and the JN5189 UART are reachable."""
+        """Return True when the hub's Telnet TCP endpoint is reachable.
+
+        This probe intentionally uses a fresh, short-lived socket and does not
+        take the client's Telnet/UART lock.  Availability therefore continues
+        to be checked even while another integration operation is busy or a
+        stale persistent Telnet session is being recovered.
+        """
         try:
-            out = self.run_command(
-                "if test -c /dev/ttyS1 && "
-                "test \"$(cat /sys/class/gpio/gpio33/value 2>/dev/null)\" = 1; "
-                "then echo __M1S_ONLINE__; else echo __M1S_OFFLINE__; fi"
+            sock = socket.create_connection(
+                (self.host, int(self.port)),
+                timeout=0.75,
             )
-            return "__M1S_ONLINE__" in out
-        except Exception:
+        except OSError:
             return False
+        try:
+            return True
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
 
     @staticmethod
     def _safe_sound_path(path: str) -> str:
