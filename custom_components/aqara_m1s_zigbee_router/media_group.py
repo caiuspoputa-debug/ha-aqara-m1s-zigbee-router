@@ -11,7 +11,7 @@ import shutil
 import sys
 import time
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
@@ -23,6 +23,7 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.components.media_player.browse_media import async_process_play_media_url
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -95,6 +96,8 @@ SOCKET_SNDBUF_BYTES = CHUNK_BYTES * 16
 GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS = 5.0
 GROUP_RECEIVER_STALE_DELAY_FRAMES = int(PCM_RATE * 0.20)
 GROUP_RECEIVER_STALE_AVAIL_MULTIPLIER = 2
+RADIO_BROWSER_API_BASE = "http://de1.api.radio-browser.info/json/stations"
+RADIO_BROWSER_MEDIA_PREFIX = "media-source://radio_browser/"
 WATCHDOG_RESTART_DELAY = 3.0
 WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_SLOW_RETRY_DELAY = 30.0
@@ -2504,6 +2507,10 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
             if title:
                 return title
 
+        title = await self._async_radio_browser_title(media_id, resolved)
+        if title:
+            return title
+
         if not media_source.is_media_source_id(media_id):
             return None
 
@@ -2519,6 +2526,53 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
             return None
 
         return self._clean_media_title(getattr(browse, "title", None))
+
+    async def _async_radio_browser_title(
+        self,
+        media_id: str,
+        resolved: Any | None,
+    ) -> str | None:
+        station_uuid = self._radio_browser_uuid(media_id)
+        if station_uuid:
+            title = await self._async_radio_browser_lookup(
+                f"{RADIO_BROWSER_API_BASE}/byuuid/{quote(station_uuid, safe='')}"
+            )
+            if title:
+                return title
+
+        resolved_url = self._clean_media_title(getattr(resolved, "url", None))
+        if not resolved_url:
+            return None
+
+        return await self._async_radio_browser_lookup(
+            f"{RADIO_BROWSER_API_BASE}/byurl?url={quote(resolved_url, safe='')}"
+        )
+
+    async def _async_radio_browser_lookup(self, url: str) -> str | None:
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(url, timeout=5) as response:
+                if response.status != 200:
+                    return None
+                payload = await response.json(content_type=None)
+        except Exception:
+            return None
+
+        if not isinstance(payload, list) or not payload:
+            return None
+        first = payload[0]
+        if not isinstance(first, dict):
+            return None
+        return self._clean_media_title(first.get("name"))
+
+    @staticmethod
+    def _radio_browser_uuid(media_id: str) -> str | None:
+        if not isinstance(media_id, str):
+            return None
+        if not media_id.startswith(RADIO_BROWSER_MEDIA_PREFIX):
+            return None
+        station_uuid = media_id.removeprefix(RADIO_BROWSER_MEDIA_PREFIX).split("/", 1)[0]
+        return station_uuid or None
 
     @staticmethod
     def _clean_media_title(value: Any) -> str | None:

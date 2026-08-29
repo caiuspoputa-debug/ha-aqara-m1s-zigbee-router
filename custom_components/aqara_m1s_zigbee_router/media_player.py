@@ -8,7 +8,7 @@ import shutil
 import socket
 import sys
 import time
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 from contextlib import suppress
 from typing import Any
 
@@ -25,6 +25,7 @@ from homeassistant.components.media_player.browse_media import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -55,6 +56,8 @@ WATCHDOG_FAST_RESTART_DELAY = 0.25
 WATCHDOG_MAX_RESTARTS = 3
 WATCHDOG_STABLE_SECONDS = 30.0
 WATCHDOG_SLOW_RETRY_DELAY = 60.0
+RADIO_BROWSER_API_BASE = "http://de1.api.radio-browser.info/json/stations"
+RADIO_BROWSER_MEDIA_PREFIX = "media-source://radio_browser/"
 
 PCM_RATE = 32000
 PCM_CHANNELS = 1
@@ -1015,6 +1018,75 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             content_filter=lambda item: item.media_content_type.startswith("audio/"),
         )
 
+    async def _async_resolve_media_title(
+        self,
+        media_id: str,
+        resolved: Any | None,
+    ) -> str | None:
+        for candidate in (
+            getattr(resolved, "title", None),
+            getattr(resolved, "name", None),
+        ):
+            title = self._clean_media_title(candidate)
+            if title:
+                return title
+
+        return await self._async_radio_browser_title(media_id, resolved)
+
+    async def _async_radio_browser_title(
+        self,
+        media_id: str,
+        resolved: Any | None,
+    ) -> str | None:
+        station_uuid = self._radio_browser_uuid(media_id)
+        if station_uuid:
+            title = await self._async_radio_browser_lookup(
+                f"{RADIO_BROWSER_API_BASE}/byuuid/{quote(station_uuid, safe='')}"
+            )
+            if title:
+                return title
+
+        resolved_url = self._clean_media_title(getattr(resolved, "url", None))
+        if not resolved_url:
+            return None
+
+        return await self._async_radio_browser_lookup(
+            f"{RADIO_BROWSER_API_BASE}/byurl?url={quote(resolved_url, safe='')}"
+        )
+
+    async def _async_radio_browser_lookup(self, url: str) -> str | None:
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(url, timeout=5) as response:
+                if response.status != 200:
+                    return None
+                payload = await response.json(content_type=None)
+        except Exception:
+            return None
+
+        if not isinstance(payload, list) or not payload:
+            return None
+        first = payload[0]
+        if not isinstance(first, dict):
+            return None
+        return self._clean_media_title(first.get("name"))
+
+    @staticmethod
+    def _radio_browser_uuid(media_id: str) -> str | None:
+        if not isinstance(media_id, str):
+            return None
+        if not media_id.startswith(RADIO_BROWSER_MEDIA_PREFIX):
+            return None
+        station_uuid = media_id.removeprefix(RADIO_BROWSER_MEDIA_PREFIX).split("/", 1)[0]
+        return station_uuid or None
+
+    @staticmethod
+    def _clean_media_title(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        title = value.strip()
+        return title or None
+
     async def async_play_media(
         self,
         media_type: str,
@@ -1026,6 +1098,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._cancel_recovery_tasks_now()
         original_media_id = media_id
         resolved_media_id = media_id
+        resolved = None
 
         if media_source.is_media_source_id(media_id):
             resolved = await media_source.async_resolve_media(
@@ -1048,6 +1121,15 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         extra = kwargs.get("extra") or {}
         if isinstance(extra, dict):
             title = extra.get("title")
+        if not self._clean_media_title(title):
+            title = await self._async_resolve_media_title(original_media_id, resolved)
+            if not self._generation_is_current(generation):
+                _LOGGER.warning(
+                    "Aqara media request superseded before title resolve finished "
+                    "entity=%s host=%s generation=%s current_generation=%s",
+                    self.entity_id, self.client.host, generation, self._play_generation
+                )
+                return
 
         async with self._lock:
             if not self._generation_is_current(generation):
@@ -1063,7 +1145,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._media_url = media_url
             self._attr_media_content_id = original_media_id
             self._attr_media_content_type = self._resume_media_type
-            self._attr_media_title = title or self._attr_media_title or "Radio stream"
+            self._attr_media_title = (
+                self._clean_media_title(title)
+                or self._attr_media_title
+                or "Radio stream"
+            )
             self._resume_after_reconnect = True
             await self._start_locked(generation)
 

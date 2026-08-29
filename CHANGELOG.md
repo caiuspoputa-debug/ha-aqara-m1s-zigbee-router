@@ -2,7 +2,8 @@
 
 - Keep the v0.10.22 availability watchdog behavior unchanged.
 - Resolve the media-source title for group playback when Home Assistant does not pass `extra.title`, so the group media player reports the radio station name instead of the generic `M1S group stream` when the Radio Browser source exposes a title.
-- Keep `M1S group stream` only as the final fallback when no station title is available.
+- Resolve the same Radio Browser UUID title for individual M1S media players when Home Assistant does not pass `extra.title`.
+- Keep `M1S group stream` for the group player and `Radio stream` for individual players only as final fallbacks when no station title is available.
 - Mark the config entry and device name with `(Indisponibil)` while the hub is offline, and remove the suffix automatically when it recovers.
 
 ## v0.10.22 - Availability watchdog fix
