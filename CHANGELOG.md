@@ -1,3 +1,8 @@
+## v0.10.23 - Hub status diagnostic label
+
+- Keep the v0.10.22 availability watchdog behavior unchanged.
+- Add a diagnostic Hub Status sensor that stays visible and shows `Online` or `Indisponibil` for each hub device.
+
 ## v0.10.22 - Availability watchdog fix
 
 - Replaced listener-dependent coordinator polling with a permanent 5-second availability watchdog.
