@@ -13,7 +13,8 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 WATCHDOG_INTERVAL_SECONDS = 5.0
 LUX_INTERVAL_SECONDS = 15.0
-OFFLINE_NAME_SUFFIX = " (Indisponibil)"
+OFFLINE_NAME_SUFFIX = " (🔴 Indisponibil)"
+LEGACY_OFFLINE_NAME_SUFFIX = " (Indisponibil)"
 
 
 class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
@@ -209,5 +210,7 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
 
     @staticmethod
     def _availability_name(name: str, online: bool) -> str:
-        base = str(name).removesuffix(OFFLINE_NAME_SUFFIX)
+        base = str(name).removesuffix(OFFLINE_NAME_SUFFIX).removesuffix(
+            LEGACY_OFFLINE_NAME_SUFFIX
+        )
         return base if online else f"{base}{OFFLINE_NAME_SUFFIX}"

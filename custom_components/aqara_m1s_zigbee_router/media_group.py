@@ -2579,6 +2579,8 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
         if not isinstance(value, str):
             return None
         title = value.strip()
+        if title.casefold() == "radio browser":
+            return None
         return title or None
 
     @staticmethod

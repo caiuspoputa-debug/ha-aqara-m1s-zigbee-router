@@ -1,8 +1,15 @@
+## v0.10.25 - Offline visual marker
+
+- Keep the v0.10.24 Radio Browser title fixes unchanged.
+- Change the offline visual label from `(Indisponibil)` to `(🔴 Indisponibil)` for the config entry and device name.
+- Remove either the new or old offline suffix automatically when the hub comes back online.
+
 ## v0.10.24 - Group radio title and offline label
 
 - Keep the v0.10.22 availability watchdog behavior unchanged.
 - Resolve the media-source title for group playback when Home Assistant does not pass `extra.title`, so the group media player reports the radio station name instead of the generic `M1S group stream` when the Radio Browser source exposes a title.
 - Resolve the same Radio Browser UUID title for individual M1S media players when Home Assistant does not pass `extra.title`.
+- Treat Home Assistant's generic `Radio Browser` source label as a non-title, then continue resolving the real station name by UUID.
 - Keep `M1S group stream` for the group player and `Radio stream` for individual players only as final fallbacks when no station title is available.
 - Mark the config entry and device name with `(Indisponibil)` while the hub is offline, and remove the suffix automatically when it recovers.
 

@@ -1085,6 +1085,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if not isinstance(value, str):
             return None
         title = value.strip()
+        if title.casefold() == "radio browser":
+            return None
         return title or None
 
     async def async_play_media(
