@@ -1,3 +1,10 @@
+## v0.10.26 - Per-hub group mute
+
+- Keep the v0.10.25 Radio Browser title and offline red marker fixes unchanged.
+- Let each individual media player's existing mute control silence that same hub while it is playing as a group member.
+- Keep the group media player's mute as a global group mute for all hubs.
+- Expose `muted_hubs` on the group media player attributes for diagnostics.
+
 ## v0.10.25 - Offline visual marker
 
 - Keep the v0.10.24 Radio Browser title fixes unchanged.

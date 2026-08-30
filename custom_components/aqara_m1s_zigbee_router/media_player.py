@@ -492,6 +492,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._attr_is_volume_muted = bool(
                 attrs.get("is_volume_muted", False)
             )
+            manager = self.hass.data.get(DOMAIN, {}).get(DATA_MEDIA_GROUP)
+            if manager is not None:
+                manager.set_member_muted(
+                    self.entry.entry_id, self._attr_is_volume_muted
+                )
             self._resume_media_id = (
                 attrs.get("last_media_id") or attrs.get("media_content_id")
             )
@@ -1246,6 +1251,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     async def async_mute_volume(self, mute: bool) -> None:
         """Apply mute live through the same PCM gain path."""
         self._attr_is_volume_muted = bool(mute)
+        manager = self.hass.data.get(DOMAIN, {}).get(DATA_MEDIA_GROUP)
+        if manager is not None:
+            manager.set_member_muted(self.entry.entry_id, self._attr_is_volume_muted)
         self.async_write_ha_state()
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)

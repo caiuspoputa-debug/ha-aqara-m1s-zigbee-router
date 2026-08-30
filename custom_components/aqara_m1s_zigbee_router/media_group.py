@@ -188,6 +188,7 @@ class GroupMember:
     detaching: bool = False
     individual_suspended: bool = False
     resume_individual: bool = False
+    muted_in_group: bool = False
 
 
 class AqaraM1SMediaGroupManager:
@@ -253,6 +254,7 @@ class AqaraM1SMediaGroupManager:
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
         existing = self.members.get(entry_id)
         selected = existing.selected if existing else True
+        muted_in_group = existing.muted_in_group if existing else False
         online = bool(coordinator.last_update_success)
         self.members[entry_id] = GroupMember(
             entry_id=entry_id,
@@ -260,6 +262,7 @@ class AqaraM1SMediaGroupManager:
             client=client,
             coordinator=coordinator,
             selected=selected,
+            muted_in_group=muted_in_group,
             state="waiting" if selected else "excluded",
             was_online=online,
             online_since_monotonic=time.monotonic() if online else None,
@@ -553,6 +556,9 @@ class AqaraM1SMediaGroupManager:
                 for member in self.active_members
                 if member.lag_since_monotonic is not None
             },
+            "muted_hubs": sorted(
+                member.name for member in self.members.values() if member.muted_in_group
+            ),
             "sync_policy": "clocked_timeline_isolate_member_late_rejoin_source_failure_only_global_restart",
             "queue_overflow_policy": "detach_only_slow_member",
             "receiver_health_interval_seconds": GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS,
@@ -798,6 +804,17 @@ class AqaraM1SMediaGroupManager:
         normalized = bool(muted)
         self.muted = normalized
         self._applied_muted = normalized
+        self._signal_update()
+
+    def set_member_muted(self, entry_id: str, muted: bool) -> None:
+        """Mute one hub's group receiver without muting the whole group."""
+        member = self.members.get(entry_id)
+        if member is None:
+            return
+        normalized = bool(muted)
+        if member.muted_in_group == normalized:
+            return
+        member.muted_in_group = normalized
         self._signal_update()
 
     @staticmethod
@@ -1342,7 +1359,7 @@ class AqaraM1SMediaGroupManager:
         writer = member.writer
         if writer is None or not payload:
             return
-        writer.write(payload)
+        writer.write(self._member_payload(member, payload))
         try:
             await asyncio.wait_for(writer.drain(), timeout=WRITER_DRAIN_TIMEOUT)
             member.consecutive_drain_timeouts = 0
@@ -1456,7 +1473,7 @@ class AqaraM1SMediaGroupManager:
                 try:
                     if chunk is None:
                         return
-                    writer.write(chunk)
+                    writer.write(self._member_chunk(member, chunk))
                     try:
                         await asyncio.wait_for(
                             writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
@@ -1651,6 +1668,14 @@ class AqaraM1SMediaGroupManager:
                             "member isolated"
                         ),
                     )
+
+    @staticmethod
+    def _member_payload(member: GroupMember, payload: bytes) -> bytes:
+        return b"\x00" * len(payload) if member.muted_in_group else payload
+
+    @staticmethod
+    def _member_chunk(member: GroupMember, chunk: bytes) -> bytes:
+        return SILENCE_CHUNK if member.muted_in_group else chunk
 
     async def _broadcast_loop(
         self, process: asyncio.subprocess.Process, generation: int
