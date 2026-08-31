@@ -623,6 +623,34 @@ class AqaraM1SMediaGroupManager:
 
         async def _normal_stop() -> None:
             async with self._lock:
+                # Explicit STOP must silence hub-side aplay before waiting for
+                # FFmpeg/tasks/TCP teardown. Otherwise ALSA can drain already
+                # buffered PCM and repeat the last audible fragment. Invalidate
+                # active member writer generations first so the intentional
+                # remote close cannot schedule a recovery detach race.
+                active_members = [
+                    member
+                    for member in self.members.values()
+                    if member.writer is not None and self._member_online(member)
+                ]
+                for member in active_members:
+                    member.generation += 1
+                results = await asyncio.gather(
+                    *(
+                        self.hass.async_add_executor_job(
+                            member.client.run_command, GROUP_STOP_COMMAND
+                        )
+                        for member in active_members
+                    ),
+                    return_exceptions=True,
+                )
+                for member, result in zip(active_members, results, strict=False):
+                    if isinstance(result, Exception):
+                        _LOGGER.debug(
+                            "M1S group pre-stop remote cleanup failed %s: %s",
+                            member.name,
+                            result,
+                        )
                 await self._stop_stream_locked(stop_members=True, reason="user_stop")
 
         try:

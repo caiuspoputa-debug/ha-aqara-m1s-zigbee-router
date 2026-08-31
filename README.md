@@ -1,10 +1,19 @@
-**Current package: v0.9.3 SINGLE STOP/PLAY RECOVERY**
+**Current package: v0.10.27 CLEAN STOP**
 
 # Aqara M1S Zigbee Router — Complete conversion and Home Assistant integration
 
 [Română](README_RO.md) | **English**
 
-Release status: **v0.5.13 TEST — periodic receiver resynchronization + WAV/ZIP batch management**
+## Companion YouTube / YouTube Music Cast add-on
+
+This integration can be used together with the optional **M1S YouTube Cast Receiver** Home Assistant App:
+
+- Repository: https://github.com/caiuspoputa-debug/m1s-youtube-cast-receiver
+- The add-on receives YouTube / YouTube Music control through DIAL/Lounge and forwards playback to a Home Assistant `media_player`.
+- It can target the shared `media_player.m1s_media_group` or an individual Aqara M1S media player entity.
+- The add-on is optional and separate; this Aqara integration remains responsible for the actual PCM/TCP audio transport to the hubs.
+
+Release status: **v0.10.27 — clean explicit STOP for individual and group media players**
 
 This guide covers the complete path from a stock Aqara M1S Gen 1 (`lumi.gateway.aeu01`) to the project configuration: stock Linux/Wi-Fi/HomeKit/audio retained, persistent LAN-only Telnet, JN5189 BDB Zigbee Router firmware, RGB/lux UART control, local audio, physical-button bridge, safe Wi-Fi recovery and the Home Assistant integration.
 
@@ -87,7 +96,7 @@ Home Assistant custom integration for an Aqara M1S Gen 1 hub converted to an
 NXP JN5189 BDB Zigbee Router, with local RGB ring, illuminance, audio and hub
 diagnostics.
 
-Current version: **0.5.13 (TEST)**
+Current version: **0.10.27**
 
 > This project is for the Aqara M1S Gen 1 model `lumi.gateway.aeu01`. Flashing
 > the JN5189 is an advanced operation. Keep a verified backup and never write

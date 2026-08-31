@@ -1,3 +1,11 @@
+## v0.10.27 - Clean media stop
+
+- Change only explicit media STOP behavior.
+- Stop the exact hub-side M1S `aplay`/`nc` receiver before local FFmpeg/TCP teardown, preventing already-buffered PCM from repeating after Stop or seek.
+- Apply the same clean-stop ordering to individual playback (port 12346) and group playback (port 12347).
+- No changes to PCM format, buffering, synchronization, volume, mute, playback start, recovery, Zigbee, or any other integration behavior.
+- README / README_RO now link the optional M1S YouTube Cast Receiver add-on repository.
+
 ## v0.10.26 - Per-hub group mute
 
 - Keep the v0.10.25 Radio Browser title and offline red marker fixes unchanged.

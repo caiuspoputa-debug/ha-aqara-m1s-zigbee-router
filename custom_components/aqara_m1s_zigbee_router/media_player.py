@@ -1204,16 +1204,28 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             generation,
         )
         async with self._lock:
-            # Do not run a potentially slow Telnet cleanup while holding the
-            # transport lock. Closing/aborting the TCP stream makes hub-side nc
-            # reach EOF; the next REMOTE_START_COMMAND always begins with the
-            # exact PID/port-scoped cleanup before creating a fresh receiver.
+            # Explicit STOP must silence the hub before HA tears down FFmpeg/TCP.
+            # aplay has its own hardware buffer, so merely closing the TCP writer
+            # lets already-buffered PCM continue playing for a short time. Kill
+            # only this integration's exact 12346 receiver/aplay first; no other
+            # hub process or playback path is touched.
+            try:
+                await self.hass.async_add_executor_job(
+                    self.client.run_command,
+                    REMOTE_STOP_COMMAND,
+                )
+            except Exception as err:
+                _LOGGER.debug(
+                    "Could not pre-stop Aqara radio receiver entity=%s host=%s: %s",
+                    self.entity_id,
+                    self.client.host,
+                    err,
+                )
             await self._stop_locked(
                 update_state=True, reason="user_stop", remote_cleanup=False
             )
         _LOGGER.info(
-            "Aqara media STOP local teardown complete entity=%s host=%s "
-            "generation=%s; remote receiver cleanup deferred to next Play",
+            "Aqara media STOP complete entity=%s host=%s generation=%s",
             self.entity_id,
             self.client.host,
             generation,
