@@ -1,3 +1,9 @@
+## 0.10.28 - 2026-09-01
+
+- Adauga trigger-ele de buton 6x, 7x, 8x, 9x si 10x.
+- Adauga evenimentele de apasare lunga hold_start, hold_repeat si hold_release.
+- Pastreaza compatibilitatea cu payloadul vechi hold.
+
 ## v0.10.27 - Clean media stop
 
 - Change only explicit media STOP behavior.

@@ -47,7 +47,15 @@ BUTTON_ACTIONS = (
     "triple_click",
     "quadruple_click",
     "five_click",
+    "six_click",
+    "seven_click",
+    "eight_click",
+    "nine_click",
+    "ten_click",
     "hold",
+    "hold_start",
+    "hold_repeat",
+    "hold_release",
 )
 
 

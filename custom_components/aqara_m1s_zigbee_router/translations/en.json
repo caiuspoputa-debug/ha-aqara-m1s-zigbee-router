@@ -77,12 +77,20 @@
       "button_action": "Physical button: {subtype}"
     },
     "trigger_subtype": {
-      "click": "Click",
-      "double_click": "Double click",
-      "triple_click": "Triple click",
-      "quadruple_click": "Quadruple click",
-      "five_click": "Five clicks",
-      "hold": "Hold"
+      "click": "1x click",
+      "double_click": "2x click",
+      "triple_click": "3x click",
+      "quadruple_click": "4x click",
+      "five_click": "5x click",
+      "six_click": "6x click",
+      "seven_click": "7x click",
+      "eight_click": "8x click",
+      "nine_click": "9x click",
+      "ten_click": "10x click",
+      "hold": "Hold",
+      "hold_start": "Hold started",
+      "hold_repeat": "Hold repeat",
+      "hold_release": "Hold released"
     }
   }
 }
