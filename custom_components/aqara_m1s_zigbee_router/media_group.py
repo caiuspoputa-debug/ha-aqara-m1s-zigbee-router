@@ -675,6 +675,11 @@ class AqaraM1SMediaGroupManager:
         media_type: str,
         title: str | None,
     ) -> None:
+        # An explicit Play is a new user-owned transport generation.  Cancel every
+        # old recovery/reconcile path first so nothing from the previous session
+        # can prepare/rejoin a receiver while the clean startup cohort is built.
+        # This intentionally mirrors the reliable manual STOP -> PLAY sequence.
+        await self._cancel_background_recovery()
         async with self._lock:
             self.media_url = media_url
             self.media_id = media_id
@@ -690,10 +695,15 @@ class AqaraM1SMediaGroupManager:
     async def async_resume(self) -> None:
         if not self.media_url:
             return
+        # The HA Play button must also behave like a clean STOP -> PLAY.  The old
+        # implementation skipped the restart when FFmpeg still looked alive, which
+        # allowed stale receiver/buffer state to survive and could start the group
+        # with an immediate echo.
+        await self._cancel_background_recovery()
         self.desired_playing = True
         async with self._lock:
-            if not self.ffmpeg_running:
-                await self._restart_stream_locked(reason="resume")
+            self._watchdog_attempts = 0
+            await self._restart_stream_locked(reason="user_resume")
         self._ensure_reconcile_task()
         self._ensure_periodic_receiver_resync_task()
         self._signal_update()
@@ -1022,36 +1032,30 @@ class AqaraM1SMediaGroupManager:
         second remote STOP.
         """
         member_remote_cleanup = True
-        if reason == "user_play":
-            active_members = [
+        if reason in ("user_play", "user_resume"):
+            # Make every explicit user start equivalent to a clean manual
+            # STOP -> PLAY, including the case where HA no longer owns a local
+            # writer but an old hub-side 12347 nc/aplay/FIFO still exists.  Clean
+            # every reachable hub in parallel *before* local teardown, invalidate
+            # all old writer generations, then rebuild one synchronized cohort.
+            # GROUP_STOP_COMMAND is scoped to the group receiver only, so this does
+            # not disturb a hub's individual 12346 playback path.
+            cleanup_members = [
                 member
                 for member in self.members.values()
-                if member.writer is not None and self._member_online(member)
+                if self._member_online(member)
             ]
-            if active_members:
-                # Invalidate the current writer generations before the intentional
-                # remote receiver close, otherwise a writer-finally path may race
-                # the controlled source switch and schedule a recovery detach.
-                for member in active_members:
+            if cleanup_members:
+                for member in cleanup_members:
                     member.generation += 1
-                results = await asyncio.gather(
-                    *(
-                        self.hass.async_add_executor_job(
-                            member.client.run_command, GROUP_STOP_COMMAND
-                        )
-                        for member in active_members
-                    ),
+                # Bound each remote cleanup independently so one stale/offline hub
+                # cannot delay the clean start of every healthy member.
+                await asyncio.gather(
+                    *(self._remote_group_stop(member) for member in cleanup_members),
                     return_exceptions=True,
                 )
-                for member, result in zip(active_members, results, strict=False):
-                    if isinstance(result, Exception):
-                        _LOGGER.debug(
-                            "M1S group source-switch pre-stop failed %s: %s",
-                            member.name,
-                            result,
-                        )
-                # The active receivers were already stopped above; do not send a
-                # second GROUP_STOP_COMMAND while detaching the old transport.
+                # All reachable group receivers were already stopped above. Avoid
+                # a second asynchronous remote STOP while detaching local state.
                 member_remote_cleanup = False
 
         await self._stop_stream_locked(

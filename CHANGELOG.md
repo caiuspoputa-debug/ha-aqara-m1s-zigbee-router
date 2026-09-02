@@ -1,3 +1,12 @@
+## 0.10.35 - Clean Play preflight
+
+- Makes every explicit group Play/Resume use the same clean transport boundary that made manual STOP -> PLAY start synchronized.
+- Cancels stale reconcile/watchdog/retry/resync tasks before a new user-owned start.
+- Stops the scoped group receiver (12347/FIFO/aplay) on every reachable hub in parallel before local teardown, including hubs that no longer have an HA writer reference.
+- Invalidates old member writer generations before the remote close so stale writer-finally/recovery paths cannot race the new startup cohort.
+- The HA Play button now always rebuilds a clean synchronized transport instead of reusing an FFmpeg session that merely still looked alive.
+- Keeps the 0.10.34 drift-only adaptive controller, shared-buffer-dominant settings, all-source startup barrier and clean source-switch behavior unchanged.
+
 ## 0.10.34 - Drift-only adaptive sync and shared-buffer-dominant output
 
 - Prevents adaptive correction from reacting to per-hub ALSA buffer-fill differences immediately after Play/Next/source changes.
