@@ -1,42 +1,9 @@
-## 0.10.35 - Clean Play preflight
+## v0.10.36 - Clean source switch + finite media EOF
 
-- Makes every explicit group Play/Resume use the same clean transport boundary that made manual STOP -> PLAY start synchronized.
-- Cancels stale reconcile/watchdog/retry/resync tasks before a new user-owned start.
-- Stops the scoped group receiver (12347/FIFO/aplay) on every reachable hub in parallel before local teardown, including hubs that no longer have an HA writer reference.
-- Invalidates old member writer generations before the remote close so stale writer-finally/recovery paths cannot race the new startup cohort.
-- The HA Play button now always rebuilds a clean synchronized transport instead of reusing an FFmpeg session that merely still looked alive.
-- Keeps the 0.10.34 drift-only adaptive controller, shared-buffer-dominant settings, all-source startup barrier and clean source-switch behavior unchanged.
-
-## 0.10.34 - Drift-only adaptive sync and shared-buffer-dominant output
-
-- Prevents adaptive correction from reacting to per-hub ALSA buffer-fill differences immediately after Play/Next/source changes.
-- Every new source runs at exactly 1.0x during a 10 s startup grace and learns a fresh per-member stable delay baseline.
-- Adaptive micro-resampling now corrects only drift accumulated relative to each member's own baseline, compared against the group median.
-- Reduces independent hub-side buffering (ALSA 750 ms, remote prefill 350 ms, TCP write buffers ~280 ms) so the common HA jitter buffer is the dominant buffer and per-hub latency cannot diverge as easily.
-- Keeps the unified all-source startup barrier, clean source-switch STOP ordering, member isolation/rejoin and all non-audio integration behaviour unchanged.
-
-## 0.10.33 - Unified synchronized start for every group source
-
-- Replaces the old first-receiver + 300 ms startup grace with a bounded all-ready startup barrier.
-- Prepares every currently eligible M1S receiver concurrently before the shared FFmpeg timeline starts.
-- Healthy hubs now enter the same initial PCM prefill for radio, YT/YTM, direct URLs, notification media, resume and global recovery.
-- A failed/stuck hub cannot block playback forever; after the bounded barrier it keeps the existing late-join recovery path.
-- Keeps the clean source-switch STOP ordering from 0.10.32 and adaptive continuous sync from 0.10.31 unchanged.
-
-## 0.10.32 - Clean group source switching
-
-- Group source changes now issue the remote group STOP before FFmpeg/TCP teardown, matching the clean explicit-STOP ordering.
-- Prevents buffered fragments from the previous source from draining/repeating during transitions such as YT/YTM -> radio.
-- Avoids a duplicate remote STOP during the same controlled source switch.
-- Adaptive continuous sync logic is unchanged from 0.10.31.
-
-## 0.10.31 - Adaptive continuous group sync
-
-- Replaces disruptive periodic receiver resync with continuous per-hub micro-resampling.
-- Uses live ALSA delay feedback to accelerate a lagging hub or slow an early hub without STOP/reconnect.
-- PI-style controller keeps small long-term clock differences compensated after alignment.
-- Maximum correction is limited to +/-0.8%; corrections are slewed to avoid audible jumps.
-- Preserves the clean group STOP behaviour from 0.10.30.
+- Base: v0.10.30 only.
+- Source change on the group now uses the same clean ordering as explicit group STOP: remote `GROUP_STOP` first, then local FFmpeg/TCP teardown, with no duplicate remote stop during detach.
+- Media explicitly marked by the companion YT/YTM Cast add-on is treated as finite: normal FFmpeg EOF does not trigger watchdog/reconcile restart of the same track; live radio/HTTP streams keep the existing recovery behaviour.
+- No adaptive sync, buffer, PCM, startup, Zigbee, volume, mute, or other behaviour changes.
 
 ## 0.10.28 - 2026-09-01
 
