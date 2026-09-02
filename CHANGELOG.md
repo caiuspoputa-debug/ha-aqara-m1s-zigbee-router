@@ -1,3 +1,10 @@
+## 0.10.32 - Clean group source switching
+
+- Group source changes now issue the remote group STOP before FFmpeg/TCP teardown, matching the clean explicit-STOP ordering.
+- Prevents buffered fragments from the previous source from draining/repeating during transitions such as YT/YTM -> radio.
+- Avoids a duplicate remote STOP during the same controlled source switch.
+- Adaptive continuous sync logic is unchanged from 0.10.31.
+
 ## 0.10.31 - Adaptive continuous group sync
 
 - Replaces disruptive periodic receiver resync with continuous per-hub micro-resampling.

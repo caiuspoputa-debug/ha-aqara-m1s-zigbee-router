@@ -986,8 +986,52 @@ class AqaraM1SMediaGroupManager:
 
         Member failures are handled by isolation + late rejoin.  A global restart
         is reserved for user Play/source/FFmpeg health failures.
+
+        For an explicit user Play while another group source is already active,
+        silence the hub-side GROUP receivers *before* tearing down FFmpeg/TCP.
+        This mirrors the clean explicit-STOP path and prevents buffered audio from
+        the previous source being drained/repeated during a YT/YTM -> radio (or
+        any source -> source) transition.  The later detach therefore skips a
+        second remote STOP.
         """
-        await self._stop_stream_locked(stop_members=True, reason=reason)
+        member_remote_cleanup = True
+        if reason == "user_play":
+            active_members = [
+                member
+                for member in self.members.values()
+                if member.writer is not None and self._member_online(member)
+            ]
+            if active_members:
+                # Invalidate the current writer generations before the intentional
+                # remote receiver close, otherwise a writer-finally path may race
+                # the controlled source switch and schedule a recovery detach.
+                for member in active_members:
+                    member.generation += 1
+                results = await asyncio.gather(
+                    *(
+                        self.hass.async_add_executor_job(
+                            member.client.run_command, GROUP_STOP_COMMAND
+                        )
+                        for member in active_members
+                    ),
+                    return_exceptions=True,
+                )
+                for member, result in zip(active_members, results, strict=False):
+                    if isinstance(result, Exception):
+                        _LOGGER.debug(
+                            "M1S group source-switch pre-stop failed %s: %s",
+                            member.name,
+                            result,
+                        )
+                # The active receivers were already stopped above; do not send a
+                # second GROUP_STOP_COMMAND while detaching the old transport.
+                member_remote_cleanup = False
+
+        await self._stop_stream_locked(
+            stop_members=True,
+            reason=reason,
+            member_remote_cleanup=member_remote_cleanup,
+        )
         if not self.desired_playing or not self.media_url:
             return
 
