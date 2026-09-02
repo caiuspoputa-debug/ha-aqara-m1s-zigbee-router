@@ -95,6 +95,9 @@ SINGLE_CATCHUP_LOG_THRESHOLD_SECONDS = 0.50
 SINGLE_CATCHUP_LOG_INTERVAL_SECONDS = 30.0
 SINGLE_LOW_QUEUE_LOG_INTERVAL = 30.0
 SINGLE_SOURCE_STALL_TIMEOUT = 5.0
+# YT/YTM only: delay HA IDLE after normal FFmpeg EOF so the hub-side audio
+# pipeline can drain before the Cast add-on advances the queue.
+SINGLE_YOUTUBE_EOF_GRACE_SECONDS = 7.0
 SINGLE_TCP_RECOVERY_WINDOW_SECONDS = 30.0
 SINGLE_TCP_RECOVERY_BURST_LIMIT = 3
 SINGLE_TCP_RECOVERY_SILENCE_SECONDS = 0.14
@@ -216,6 +219,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._attr_media_content_type = MediaType.MUSIC
         self._attr_media_title = None
         self._media_url: str | None = None
+        # Set only when play_media comes from the companion YT/YTM Cast add-on.
+        self._media_is_finite = False
         self._resume_media_id: str | None = None
         self._resume_media_type: str = MediaType.MUSIC
         self._resume_after_reconnect = False
@@ -1126,6 +1131,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
         title = None
         extra = kwargs.get("extra") or {}
+        finite_media = bool(
+            isinstance(extra, dict)
+            and extra.get("m1s_youtube_cast_receiver") is True
+        )
         if isinstance(extra, dict):
             title = extra.get("title")
         if not self._clean_media_title(title):
@@ -1150,6 +1159,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._resume_media_id = original_media_id
             self._resume_media_type = media_type or MediaType.MUSIC
             self._media_url = media_url
+            self._media_is_finite = finite_media
             self._attr_media_content_id = original_media_id
             self._attr_media_content_type = self._resume_media_type
             self._attr_media_title = (
@@ -2134,6 +2144,49 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
             if self._ffmpeg is not process or self._shutting_down:
                 return
+
+            if (
+                self._media_is_finite
+                and producer_error is None
+                and pump_error is None
+                and process.returncode == 0
+            ):
+                # The add-on marks only YT/YTM media as finite. FFmpeg has
+                # finished and the HA PCM queue is already empty here, but the
+                # hub-side nc/aplay/ALSA path can still contain audible tail.
+                # Hold PLAYING for 7 s before exposing IDLE. STOP/seek/new Play
+                # supersedes the generation and aborts this wait immediately.
+                _LOGGER.info(
+                    "Aqara media YT/YTM FFmpeg EOF entity=%s session=%s; "
+                    "holding PLAYING for %.1fs before IDLE",
+                    self.entity_id,
+                    session,
+                    SINGLE_YOUTUBE_EOF_GRACE_SECONDS,
+                )
+                deadline = time.monotonic() + SINGLE_YOUTUBE_EOF_GRACE_SECONDS
+                while (
+                    self._generation_is_current(generation)
+                    and self._ffmpeg is process
+                    and self._resume_after_reconnect
+                    and not self._shutting_down
+                    and time.monotonic() < deadline
+                ):
+                    await asyncio.sleep(
+                        min(0.10, max(0.0, deadline - time.monotonic()))
+                    )
+                if (
+                    not self._generation_is_current(generation)
+                    or self._ffmpeg is not process
+                    or self._shutting_down
+                ):
+                    _LOGGER.debug(
+                        "Aqara media YT/YTM EOF grace superseded "
+                        "entity=%s session=%s generation=%s",
+                        self.entity_id,
+                        session,
+                        generation,
+                    )
+                    return
         except asyncio.CancelledError:
             if not producer_task.done():
                 producer_task.cancel()

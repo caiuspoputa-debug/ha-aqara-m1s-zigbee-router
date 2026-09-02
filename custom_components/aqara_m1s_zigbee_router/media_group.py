@@ -63,6 +63,9 @@ GROUP_PREBUFFER_CHUNKS = max(1, round(GROUP_PREBUFFER_SECONDS / CHUNK_SECONDS))
 GROUP_REBUFFER_RESUME_CHUNKS = max(1, round(GROUP_REBUFFER_RESUME_SECONDS / CHUNK_SECONDS))
 GROUP_REMOTE_PREFILL_CHUNKS = max(1, round(GROUP_REMOTE_PREFILL_SECONDS / CHUNK_SECONDS))
 GROUP_SOURCE_STALL_TIMEOUT = 5.0
+# YT/YTM only: keep HA in PLAYING for a short tail after FFmpeg reaches EOF
+# so PCM already handed to the hub can finish before the add-on sees IDLE.
+GROUP_YOUTUBE_EOF_GRACE_SECONDS = 7.0
 
 # Keep enough per-member queue for the complete jitter window.  Late joiners
 # are primed with the recent shared PCM history and catch up over TCP before
@@ -2079,16 +2082,38 @@ class AqaraM1SMediaGroupManager:
                 await producer_task
             if generation == self._generation and self.desired_playing:
                 if self.media_is_finite and producer_error is None:
-                    # A finite track reaching EOF is a normal completion, not a
-                    # failed live stream. Do not restart FFmpeg or let reconcile
-                    # reopen the same URL. The already-sent PCM is left to drain
-                    # naturally from the hub-side buffers.
-                    self.desired_playing = False
-                    self._last_failure = None
+                    # The companion YT/YTM add-on explicitly marks finite media.
+                    # FFmpeg EOF means no more PCM will be produced, but PCM already
+                    # downstream may still be draining through member TCP/aplay/ALSA.
+                    # Keep HA PLAYING for a bounded 7 s tail so the add-on cannot
+                    # advance to the next item too early. A STOP/seek/new Play changes
+                    # generation or desired_playing and aborts this grace immediately.
                     _LOGGER.info(
-                        "M1S group finite media reached normal EOF; "
-                        "watchdog restart suppressed"
+                        "M1S group YT/YTM FFmpeg EOF; holding PLAYING for %.1fs "
+                        "before finite completion",
+                        GROUP_YOUTUBE_EOF_GRACE_SECONDS,
                     )
+                    deadline = time.monotonic() + GROUP_YOUTUBE_EOF_GRACE_SECONDS
+                    while (
+                        generation == self._generation
+                        and self.desired_playing
+                        and not self._shutting_down
+                        and time.monotonic() < deadline
+                    ):
+                        await asyncio.sleep(
+                            min(0.10, max(0.0, deadline - time.monotonic()))
+                        )
+                    if (
+                        generation == self._generation
+                        and self.desired_playing
+                        and not self._shutting_down
+                    ):
+                        self.desired_playing = False
+                        self._last_failure = None
+                        _LOGGER.info(
+                            "M1S group YT/YTM EOF grace completed; "
+                            "watchdog restart suppressed"
+                        )
                 else:
                     self._last_failure = self._last_failure or "ffmpeg_stream_ended"
                     self._schedule_watchdog_restart()
