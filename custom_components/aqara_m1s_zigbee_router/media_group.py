@@ -256,6 +256,11 @@ class AqaraM1SMediaGroupManager:
         self._gain_ramp_start = self._gain_current
         self._gain_ramp_remaining = 0
         self._ffmpeg_nice_applied = False
+        # True while a fresh source is filling the HA-side PCM buffer.  During
+        # this window no group receiver may be prepared independently: all
+        # receivers must cross the same clean STOP -> PLAY boundary only after
+        # the new buffer is ready.
+        self._startup_boundary_pending = False
         self._shutting_down = False
 
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
@@ -936,48 +941,59 @@ class AqaraM1SMediaGroupManager:
             samples.byteswap()
         return samples.tobytes()
 
-    async def _restart_stream_locked(self, reason: str) -> None:
-        """Restart the shared SOURCE timeline, never because one member is slow.
+    async def _clean_stop_all_group_receivers(self, *, reason: str) -> None:
+        """Stop every reachable GROUP receiver at one shared audio boundary.
 
-        Member failures are handled by isolation + late rejoin.  A global restart
-        is reserved for user Play/source/FFmpeg health failures.
+        GROUP_STOP_COMMAND only targets the group transport (12347/FIFO), so
+        the individual 12346 player is never touched here.  The writer
+        generations are invalidated first so the intentional remote close is
+        not misclassified as a receiver failure.
         """
-        # Explicit source changes must use the same clean ordering as the
-        # group's explicit STOP: silence the hub-side nc/aplay receivers first,
-        # then tear down FFmpeg/TCP locally. This prevents buffered fragments of
-        # the previous source from stuttering into the new one. Recovery restarts
-        # keep the existing legacy behaviour.
-        if reason == "user_play":
-            active_members = [
-                member
-                for member in self.members.values()
-                if member.writer is not None and self._member_online(member)
-            ]
-            for member in active_members:
-                member.generation += 1
-            results = await asyncio.gather(
-                *(
-                    self.hass.async_add_executor_job(
-                        member.client.run_command, GROUP_STOP_COMMAND
-                    )
-                    for member in active_members
-                ),
-                return_exceptions=True,
-            )
-            for member, result in zip(active_members, results, strict=False):
-                if isinstance(result, Exception):
-                    _LOGGER.debug(
-                        "M1S group source-switch pre-stop failed %s: %s",
-                        member.name,
-                        result,
-                    )
-            await self._stop_stream_locked(
-                stop_members=True,
-                reason=reason,
-                member_remote_cleanup=False,
-            )
-        else:
-            await self._stop_stream_locked(stop_members=True, reason=reason)
+        targets = [
+            member
+            for member in self.members.values()
+            if member.selected and self._member_online(member)
+        ]
+        if not targets:
+            return
+
+        for member in targets:
+            member.generation += 1
+
+        results = await asyncio.gather(
+            *(
+                self.hass.async_add_executor_job(
+                    member.client.run_command, GROUP_STOP_COMMAND
+                )
+                for member in targets
+            ),
+            return_exceptions=True,
+        )
+        for member, result in zip(targets, results, strict=False):
+            if isinstance(result, Exception):
+                _LOGGER.debug(
+                    "M1S group clean boundary STOP failed member=%s reason=%s: %s",
+                    member.name,
+                    reason,
+                    result,
+                )
+
+    async def _restart_stream_locked(self, reason: str) -> None:
+        """Start a fresh source and defer GROUP STOP/PLAY until buffer-ready.
+
+        Source replacement first tears down the old HA-side FFmpeg/TCP path but
+        deliberately leaves the remote group transport alone while the new
+        source fills its HA jitter buffer.  The broadcaster then performs one
+        common remote STOP -> PLAY after that buffer is ready.  Therefore
+        radio->radio, radio<->YT/YTM, YT/YTM->YT/YTM and seek all use exactly
+        the same synchronized boundary.
+        """
+        self._startup_boundary_pending = False
+        await self._stop_stream_locked(
+            stop_members=True,
+            reason=reason,
+            member_remote_cleanup=False,
+        )
         if not self.desired_playing or not self.media_url:
             return
 
@@ -990,42 +1006,68 @@ class AqaraM1SMediaGroupManager:
         )
 
         eligible = [m for m in self.members.values() if self._eligible(m)]
-        prepare_tasks: list[asyncio.Task] = []
-        for member in eligible:
-            task = self._schedule_member_prepare(member, initial=True)
-            if task is not None:
-                prepare_tasks.append(task)
-
-        # Google-Home-like startup policy: establish a small initial cohort, not
-        # a hard all-members barrier.  Start as soon as one hub is ready, allow a
-        # short grace window for other healthy hubs, and let the rest join later.
-        pending = set(prepare_tasks)
-        deadline = time.monotonic() + START_FIRST_MEMBER_TIMEOUT
-        while pending and not self.active_members:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            done, pending = await asyncio.wait(
-                pending,
-                timeout=remaining,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if not done:
-                break
-
-        if self.active_members and pending:
-            # Preparation continues independently during this tiny cohort window.
-            await asyncio.sleep(START_COHORT_GRACE_SECONDS)
-
-        if not self.active_members:
+        if not eligible:
             self._last_failure = "no_group_member_ready"
             _LOGGER.warning(
-                "M1S group Play has no ready receiver yet; keeping intent and "
-                "retrying members in background"
+                "M1S group Play has no eligible receiver yet; keeping intent "
+                "and retrying in background"
             )
             return
 
+        # No remote GROUP_START is issued yet.  First let FFmpeg fill the shared
+        # source buffer; _broadcast_loop performs the single clean STOP -> PLAY
+        # boundary for the complete initial cohort once that buffer is ready.
+        self._startup_boundary_pending = True
         await self._start_ffmpeg_locked()
+
+    async def _prepare_buffered_initial_cohort(self, generation: int) -> None:
+        """After source prebuffer: STOP all group transports, then PLAY together."""
+        if generation != self._generation or not self.desired_playing:
+            return
+
+        await self._clean_stop_all_group_receivers(reason="buffer_ready")
+        if generation != self._generation or not self.desired_playing:
+            return
+
+        # Defensive local cleanup.  The startup-pending gate prevents reconcile
+        # from preparing receivers early, but this also removes any stale writer
+        # that survived from an older generation without sending a second STOP.
+        active = list(self.active_members)
+        if active:
+            await asyncio.gather(
+                *(
+                    self._detach_member(
+                        member.entry_id,
+                        stop_remote=False,
+                        new_state="waiting_for_sync",
+                    )
+                    for member in active
+                ),
+                return_exceptions=True,
+            )
+
+        if generation != self._generation or not self.desired_playing:
+            return
+
+        eligible = [m for m in self.members.values() if self._eligible(m)]
+        if not eligible:
+            raise RuntimeError("buffer ready but no eligible group receiver")
+
+        results = await asyncio.gather(
+            *(self._prepare_member(member, initial=True) for member in eligible),
+            return_exceptions=True,
+        )
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if errors and not self.active_members:
+            raise RuntimeError(f"buffered group PLAY failed: {errors[0]}")
+        if not self.active_members:
+            raise RuntimeError("buffered group PLAY has no ready receiver")
+
+        self._startup_boundary_pending = False
+        _LOGGER.info(
+            "M1S group buffered clean STOP/PLAY receivers ready members=%s",
+            [member.name for member in self.active_members],
+        )
 
     async def _start_ffmpeg_locked(self) -> None:
         if not self.media_url or not self.desired_playing:
@@ -1154,6 +1196,7 @@ class AqaraM1SMediaGroupManager:
         self._broadcast_pause_requested.clear()
         self._broadcast_paused.clear()
         self._playout_epoch_monotonic = None
+        self._startup_boundary_pending = False
         self._generation += 1
         current = asyncio.current_task()
         broadcast_task = self.broadcast_task
@@ -1391,7 +1434,7 @@ class AqaraM1SMediaGroupManager:
             # after the shared 2.5 s source buffer exists. A receiver prepared while
             # FFmpeg is already running instead receives recent shared PCM history,
             # catches up, then joins live fanout without disturbing healthy peers.
-            if self.ffmpeg_running:
+            if self.ffmpeg_running and not initial:
                 await self._prime_late_join_member(member, generation)
 
             _LOGGER.info(
@@ -1774,6 +1817,65 @@ class AqaraM1SMediaGroupManager:
     def _member_chunk(member: GroupMember, chunk: bytes) -> bytes:
         return SILENCE_CHUNK if member.muted_in_group else chunk
 
+    async def _clean_rebuffer_resume(
+        self, source_queue: asyncio.Queue[bytes], generation: int
+    ) -> None:
+        """Resume a stalled group only through one clean STOP -> PLAY.
+
+        FFmpeg stays alive.  Once the source queue has refilled, every group
+        receiver is stopped, its stale TCP/ALSA queue is discarded, and all
+        eligible receivers are prepared and primed from the same fresh buffer.
+        """
+        if generation != self._generation or not self.desired_playing:
+            return
+
+        selected_online = [
+            member
+            for member in self.members.values()
+            if member.selected and self._member_online(member)
+        ]
+        await asyncio.gather(
+            *(
+                self._detach_member(
+                    member.entry_id,
+                    stop_remote=True,
+                    new_state="waiting_for_sync",
+                )
+                for member in selected_online
+            ),
+            return_exceptions=True,
+        )
+
+        if generation != self._generation or not self.desired_playing:
+            return
+
+        self._pcm_history.clear()
+        self._sequence = 0
+        self._playout_epoch_monotonic = None
+
+        eligible = [m for m in self.members.values() if self._eligible(m)]
+        if eligible:
+            await asyncio.gather(
+                *(self._prepare_member(member, initial=True) for member in eligible),
+                return_exceptions=True,
+            )
+
+        if generation != self._generation or not self.desired_playing:
+            return
+        if not self.active_members:
+            raise RuntimeError("rebuffer clean restart has no ready group receiver")
+
+        await self._prime_initial_cohort(source_queue, generation)
+        if not self.ready_members:
+            raise RuntimeError("rebuffer clean restart could not align group receivers")
+
+        self._stream_started_monotonic = time.monotonic()
+        _LOGGER.info(
+            "M1S group rebuffer clean STOP/PLAY completed members=%s queued_ms=%s",
+            [member.name for member in self.ready_members],
+            int(source_queue.qsize() * CHUNK_SECONDS * 1000),
+        )
+
     async def _broadcast_loop(
         self, process: asyncio.subprocess.Process, generation: int
     ) -> None:
@@ -1857,6 +1959,7 @@ class AqaraM1SMediaGroupManager:
                 int((time.monotonic() - prebuffer_started) * 1000),
             )
 
+            await self._prepare_buffered_initial_cohort(generation)
             await self._prime_initial_cohort(source_queue, generation)
             if not self.ready_members:
                 raise RuntimeError("group has no aligned receiver after prefill")
@@ -1904,11 +2007,14 @@ class AqaraM1SMediaGroupManager:
                         producer_done.is_set()
                         or source_queue.qsize() >= GROUP_REBUFFER_RESUME_CHUNKS
                     ):
-                        rebuffering = False
                         _LOGGER.info(
-                            "M1S group rebuffer ended queued_ms=%s",
+                            "M1S group rebuffer source refilled queued_ms=%s; "
+                            "performing clean STOP/PLAY",
                             int(source_queue.qsize() * CHUNK_SECONDS * 1000),
                         )
+                        if not producer_done.is_set():
+                            await self._clean_rebuffer_resume(source_queue, generation)
+                        rebuffering = False
                     elif now - last_real_pcm_monotonic > GROUP_SOURCE_STALL_TIMEOUT:
                         raise RuntimeError(
                             f"group PCM source stalled for more than "
@@ -1951,6 +2057,8 @@ class AqaraM1SMediaGroupManager:
             self._last_failure = str(err)
             _LOGGER.warning("M1S group broadcaster failed: %s", err)
         finally:
+            if generation == self._generation:
+                self._startup_boundary_pending = False
             if not producer_task.done():
                 if generation != self._generation or not self.desired_playing or self._shutting_down:
                     # During STOP/source replacement, keep consuming FFmpeg stdout
@@ -1971,58 +2079,14 @@ class AqaraM1SMediaGroupManager:
                 await producer_task
             if generation == self._generation and self.desired_playing:
                 if self.media_is_finite and producer_error is None:
-                    # Match the stable single-player end-of-media contract: do
-                    # not expose IDLE merely because the shared source queue is
-                    # empty. Every per-member HA queue must first hand its final
-                    # PCM to the TCP writer. The hub-side aplay cushion is then
-                    # allowed to drain naturally and is accounted for by the
-                    # add-on's receiver-tail monitor. In the normal case join()
-                    # returns immediately; the timeout is only a safety bound for
-                    # a genuinely stuck member.
-                    eof_members = [
-                        member
-                        for member in self.active_members
-                        if member.queue is not None and member.ready_for_fanout
-                    ]
-                    member_queues = [member.queue for member in eof_members]
-                    if member_queues:
-                        try:
-                            await asyncio.wait_for(
-                                asyncio.gather(*(queue.join() for queue in member_queues)),
-                                timeout=WRITER_DRAIN_TIMEOUT,
-                            )
-                        except asyncio.TimeoutError:
-                            _LOGGER.warning(
-                                "M1S group finite EOF member queues did not drain "
-                                "within %ss; completing with bounded fallback",
-                                WRITER_DRAIN_TIMEOUT,
-                            )
-                    # The queues are now empty and every final PCM chunk has been
-                    # accepted by the TCP writers. Close those writers without a
-                    # remote GROUP_STOP so nc/aplay receives a natural EOF and can
-                    # drain its existing ALSA cushion. Leaving the TCP connections
-                    # open keeps aplay alive in underrun and repeats the last audio
-                    # fragment; force-stopping here would instead cut the tail.
-                    # Disable reconcile before detaching, otherwise the ordinary
-                    # group maintenance loop can immediately reopen a receiver
-                    # while this finite EOF is still being finalized.
+                    # A finite track reaching EOF is a normal completion, not a
+                    # failed live stream. Do not restart FFmpeg or let reconcile
+                    # reopen the same URL. The already-sent PCM is left to drain
+                    # naturally from the hub-side buffers.
                     self.desired_playing = False
-                    if eof_members:
-                        await asyncio.gather(
-                            *(
-                                self._detach_member(
-                                    member.entry_id,
-                                    stop_remote=False,
-                                    new_state="idle",
-                                )
-                                for member in eof_members
-                            ),
-                            return_exceptions=False,
-                        )
                     self._last_failure = None
                     _LOGGER.info(
-                        "M1S group finite media reached normal EOF after member "
-                        "queues drained and TCP writers closed naturally; "
+                        "M1S group finite media reached normal EOF; "
                         "watchdog restart suppressed"
                     )
                 else:
@@ -2431,7 +2495,7 @@ class AqaraM1SMediaGroupManager:
                             member, reason="member no longer eligible"
                         )
 
-                missing = [
+                missing = [] if self._startup_boundary_pending else [
                     member
                     for member in self.members.values()
                     if member.writer is None

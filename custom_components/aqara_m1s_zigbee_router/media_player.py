@@ -219,7 +219,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._resume_media_id: str | None = None
         self._resume_media_type: str = MediaType.MUSIC
         self._resume_after_reconnect = False
-        self._media_is_finite = False
         self._last_online_generation = 0
         self._resume_task: asyncio.Task | None = None
         self._ffmpeg: asyncio.subprocess.Process | None = None
@@ -514,7 +513,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._resume_after_reconnect = bool(
                 attrs.get("resume_after_reconnect", last_state.state == MediaPlayerState.PLAYING)
             )
-            self._media_is_finite = bool(attrs.get("media_is_finite", False))
 
             # Direct URLs can be prepared immediately. Media-source IDs are
             # resolved freshly only when PLAY is pressed, because their resolved
@@ -558,7 +556,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "effective_volume_percent": round(self._effective_gain() * 100.0, 2),
             "is_volume_muted": self._attr_is_volume_muted,
             "resume_after_reconnect": self._resume_after_reconnect,
-            "media_is_finite": self._media_is_finite,
             "watchdog_restart_attempts": self._watchdog_restart_attempts,
             "watchdog_fast_restart_delay_seconds": WATCHDOG_FAST_RESTART_DELAY,
             "last_failure_kind": self._last_failure_kind,
@@ -1160,10 +1157,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 or self._attr_media_title
                 or "Radio stream"
             )
-            self._media_is_finite = bool(
-                isinstance(extra, dict)
-                and extra.get("m1s_youtube_cast_receiver") is True
-            )
             self._resume_after_reconnect = True
             await self._start_locked(generation)
 
@@ -1588,26 +1581,15 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
         args = [
             ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning",
-        ]
-        if (
-            urlsplit(self._media_url).scheme.lower() in ("http", "https")
-            and not self._media_is_finite
-        ):
-            # Preserve reconnect recovery for live/radio streams. A finite YT/YTM
-            # URL must be allowed to close once; reconnecting it restarts the same
-            # seek position and turns a normal track boundary into a loop.
-            args.extend([
-                "-reconnect", "1", "-reconnect_streamed", "1",
-                "-reconnect_delay_max", "5",
-            ])
-        args.extend([
+            "-reconnect", "1", "-reconnect_streamed", "1",
+            "-reconnect_delay_max", "5",
             # Decode freely into the bounded HA-side jitter buffer. The consumer
             # below is the only real-time clock, so FFmpeg can refill the buffer
             # after a short stall without ever filling the hub several seconds ahead.
             "-i", self._media_url,
             "-vn", "-ac", str(PCM_CHANNELS), "-ar", str(PCM_RATE),
             "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1",
-        ])
+        ]
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -1710,7 +1692,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """Buffer raw PCM briefly, then pace it steadily to the hub."""
         session = self._ffmpeg_session
         started = self._ffmpeg_started_monotonic
-        media_is_finite = self._media_is_finite
         stderr_task = self.hass.async_create_background_task(
             self._read_ffmpeg_stderr(process),
             f"aqara_m1s_ffmpeg_stderr_{self.entry.entry_id}",
@@ -2241,30 +2222,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         stable_task = self._watchdog_stable_task
         self._watchdog_stable_task = None
         await self._cancel_task(stable_task)
-
-        if media_is_finite and producer_error is None and pump_error is None:
-            # Match the group player's finite-media contract. The HA PCM queue has
-            # already drained in real time, so this is a normal YT/YTM boundary,
-            # not a transport failure that should restart the same URL.
-            self._resume_after_reconnect = False
-            self._watchdog_restart_attempts = 0
-            self._last_failure_kind = None
-            self._last_failure_detail = None
-            self._recovery_pending = False
-            self._attr_state = MediaPlayerState.IDLE
-            self.async_write_ha_state()
-            _LOGGER.info(
-                "Aqara media finite source reached normal EOF entity=%s "
-                "session=%s generation=%s host=%s; watchdog restart suppressed",
-                self.entity_id,
-                session,
-                generation,
-                self.client.host,
-            )
-            await self._release_individual_audio()
-            if self._watch_task is asyncio.current_task():
-                self._watch_task = None
-            return
 
         if not self.coordinator.last_update_success:
             failure_kind = "hub_offline"
