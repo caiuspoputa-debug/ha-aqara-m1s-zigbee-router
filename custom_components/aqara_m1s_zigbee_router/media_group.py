@@ -121,6 +121,24 @@ PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS = 2
 PERIODIC_RECEIVER_RESYNC_PAUSE_TIMEOUT = 2.0
 SOFT_RESYNC_DRIFT_THRESHOLD_FRAMES = int(PCM_RATE * 0.20)
 SOFT_RESYNC_MIN_REFERENCE_MEMBERS = 3
+
+# Continuous adaptive drift correction.  Unlike the old periodic resync this
+# never tears down a receiver: each member is micro-resampled around 1.0x so
+# its ALSA playout delay converges toward the group median while audio keeps
+# flowing.  ±0.8% is intentionally small enough to be unobtrusive but still
+# able to remove a clearly audible echo over several seconds.
+ADAPTIVE_SYNC_ENABLED = True
+ADAPTIVE_SYNC_MIN_MEMBERS = 2
+ADAPTIVE_SYNC_HEALTH_MAX_AGE_SECONDS = GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS * 2.5
+ADAPTIVE_SYNC_DELAY_EMA_ALPHA = 0.65
+ADAPTIVE_SYNC_DEADBAND_FRAMES = int(PCM_RATE * 0.006)  # ~6 ms
+ADAPTIVE_SYNC_KP = 0.045
+ADAPTIVE_SYNC_KI = 0.0012
+ADAPTIVE_SYNC_INTEGRAL_LIMIT = 2.5
+ADAPTIVE_SYNC_INTEGRAL_GATE_FRAMES = int(PCM_RATE * 0.080)  # integrate only inside 80 ms
+ADAPTIVE_SYNC_MAX_RATE_OFFSET = 0.008  # ±0.8%
+ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE = 0.004  # max 0.4% change per health sample
+ADAPTIVE_SYNC_RATE_BYPASS = 0.00002
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 FFMPEG_NICE_TARGET = -5
@@ -191,6 +209,16 @@ class GroupMember:
     individual_suspended: bool = False
     resume_individual: bool = False
     muted_in_group: bool = False
+    adaptive_rate: float = 1.0
+    adaptive_target_rate: float = 1.0
+    adaptive_delay_ema: float | None = None
+    adaptive_error_frames: float | None = None
+    adaptive_last_error_frames: float | None = None
+    adaptive_integral: float = 0.0
+    adaptive_last_update_monotonic: float = 0.0
+    adaptive_health_monotonic: float = 0.0
+    adaptive_resample_residual: float = 0.0
+    adaptive_corrections: int = 0
 
 
 class AqaraM1SMediaGroupManager:
@@ -237,6 +265,7 @@ class AqaraM1SMediaGroupManager:
         self._last_receiver_resync_monotonic: float | None = None
         self._last_receiver_resync_reason: str | None = None
         self._last_soft_resync_check_monotonic: float | None = None
+        self._last_adaptive_sync_control_monotonic: float = 0.0
         self._broadcast_pause_requested = asyncio.Event()
         self._broadcast_paused = asyncio.Event()
         self._fanout_lock = asyncio.Lock()
@@ -523,11 +552,34 @@ class AqaraM1SMediaGroupManager:
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
-            "receiver_drift_guard_mode": "three_minute_soft_outlier_guard",
+            "receiver_drift_guard_mode": "continuous_adaptive_micro_resample",
             "receiver_soft_resync_threshold_ms": int(
                 SOFT_RESYNC_DRIFT_THRESHOLD_FRAMES * 1000 / PCM_RATE
             ),
             "receiver_resync_interval_seconds": PERIODIC_RECEIVER_RESYNC_SECONDS,
+            "adaptive_sync_enabled": ADAPTIVE_SYNC_ENABLED,
+            "adaptive_sync_deadband_ms": round(
+                ADAPTIVE_SYNC_DEADBAND_FRAMES * 1000 / PCM_RATE, 1
+            ),
+            "adaptive_sync_max_rate_percent": round(
+                ADAPTIVE_SYNC_MAX_RATE_OFFSET * 100, 3
+            ),
+            "adaptive_member_rate": {
+                member.name: round(member.adaptive_rate, 6)
+                for member in self.ready_members
+            },
+            "adaptive_member_error_ms": {
+                member.name: (
+                    None
+                    if member.adaptive_error_frames is None
+                    else round(member.adaptive_error_frames * 1000 / PCM_RATE, 2)
+                )
+                for member in self.ready_members
+            },
+            "adaptive_member_corrections": {
+                member.name: member.adaptive_corrections
+                for member in self.ready_members
+            },
             "receiver_resync_count": self._receiver_resync_count,
             "last_receiver_resync_reason": self._last_receiver_resync_reason,
             "last_receiver_resync_age_seconds": (
@@ -1334,6 +1386,7 @@ class AqaraM1SMediaGroupManager:
             member.lag_since_monotonic = None
             member.lag_peak_chunks = 0
             member.consecutive_drain_timeouts = 0
+            self._reset_member_adaptive_sync(member)
             member.join_at_sequence = self._sequence if self.ffmpeg_running else 0
             member.state = "waiting_for_sync"
             member.last_error = None
@@ -1586,6 +1639,7 @@ class AqaraM1SMediaGroupManager:
         member.lag_since_monotonic = None
         member.lag_peak_chunks = 0
         member.consecutive_drain_timeouts = 0
+        self._reset_member_adaptive_sync(member)
         if queue is not None:
             with suppress(asyncio.QueueFull):
                 queue.put_nowait(None)
@@ -1720,11 +1774,201 @@ class AqaraM1SMediaGroupManager:
 
     @staticmethod
     def _member_payload(member: GroupMember, payload: bytes) -> bytes:
+        # Prefill/catch-up bursts intentionally stay bit-identical across members.
+        # Adaptive correction starts only after a receiver joins live fanout.
         return b"\x00" * len(payload) if member.muted_in_group else payload
 
     @staticmethod
-    def _member_chunk(member: GroupMember, chunk: bytes) -> bytes:
-        return SILENCE_CHUNK if member.muted_in_group else chunk
+    def _reset_member_adaptive_sync(member: GroupMember) -> None:
+        member.adaptive_rate = 1.0
+        member.adaptive_target_rate = 1.0
+        member.adaptive_delay_ema = None
+        member.adaptive_error_frames = None
+        member.adaptive_last_error_frames = None
+        member.adaptive_integral = 0.0
+        member.adaptive_last_update_monotonic = 0.0
+        member.adaptive_health_monotonic = 0.0
+        member.adaptive_resample_residual = 0.0
+
+    @staticmethod
+    def _median(values: list[float]) -> float:
+        ordered = sorted(values)
+        mid = len(ordered) // 2
+        if len(ordered) % 2:
+            return ordered[mid]
+        return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+    def _update_adaptive_sync_rates(self) -> None:
+        """Continuously steer member playout delays toward one common median.
+
+        Positive error means the receiver has more ALSA audio queued and is
+        therefore behind the group timeline.  It gets a rate > 1.0, which
+        emits slightly fewer output frames for each source frame and lets it
+        catch up.  A receiver ahead gets rate < 1.0 and is slowed slightly.
+        """
+        if not ADAPTIVE_SYNC_ENABLED:
+            return
+        now = time.monotonic()
+        if (
+            self._last_adaptive_sync_control_monotonic > 0.0
+            and now - self._last_adaptive_sync_control_monotonic < 0.8
+        ):
+            return
+        control_dt = (
+            1.0
+            if self._last_adaptive_sync_control_monotonic <= 0.0
+            else max(
+                0.25,
+                min(15.0, now - self._last_adaptive_sync_control_monotonic),
+            )
+        )
+        self._last_adaptive_sync_control_monotonic = now
+        usable = [
+            member
+            for member in self.ready_members
+            if member.adaptive_delay_ema is not None
+            and member.adaptive_health_monotonic > 0.0
+            and now - member.adaptive_health_monotonic
+            <= ADAPTIVE_SYNC_HEALTH_MAX_AGE_SECONDS
+        ]
+        if len(usable) < ADAPTIVE_SYNC_MIN_MEMBERS:
+            for member in self.ready_members:
+                member.adaptive_target_rate = 1.0
+                member.adaptive_rate += max(
+                    -ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE,
+                    min(
+                        ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE,
+                        1.0 - member.adaptive_rate,
+                    ),
+                )
+            return
+
+        median_delay = self._median(
+            [float(member.adaptive_delay_ema) for member in usable]
+        )
+        for member in usable:
+            error_frames = float(member.adaptive_delay_ema) - median_delay
+            previous_error = member.adaptive_last_error_frames
+            member.adaptive_error_frames = error_frames
+            member.adaptive_last_error_frames = error_frames
+            dt = control_dt
+            member.adaptive_last_update_monotonic = now
+
+            # Never carry integral wind-up through an alignment crossing.
+            if (
+                previous_error is not None
+                and error_frames * previous_error < 0.0
+            ):
+                member.adaptive_integral = 0.0
+
+            error_seconds = error_frames / PCM_RATE
+            if abs(error_frames) <= ADAPTIVE_SYNC_DEADBAND_FRAMES:
+                # Inside the sync window, retain the small learned clock
+                # compensation instead of drifting away again.
+                proportional = 0.0
+            else:
+                # For a large existing echo use proportional correction only;
+                # integrate once we are close enough that the residual mostly
+                # represents crystal-clock mismatch rather than position error.
+                if abs(error_frames) <= ADAPTIVE_SYNC_INTEGRAL_GATE_FRAMES:
+                    member.adaptive_integral += error_seconds * dt
+                    member.adaptive_integral = max(
+                        -ADAPTIVE_SYNC_INTEGRAL_LIMIT,
+                        min(ADAPTIVE_SYNC_INTEGRAL_LIMIT, member.adaptive_integral),
+                    )
+                proportional = ADAPTIVE_SYNC_KP * error_seconds
+
+            offset = proportional + ADAPTIVE_SYNC_KI * member.adaptive_integral
+            offset = max(
+                -ADAPTIVE_SYNC_MAX_RATE_OFFSET,
+                min(ADAPTIVE_SYNC_MAX_RATE_OFFSET, offset),
+            )
+            member.adaptive_target_rate = 1.0 + offset
+            delta = member.adaptive_target_rate - member.adaptive_rate
+            delta = max(
+                -ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE,
+                min(ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE, delta),
+            )
+            new_rate = member.adaptive_rate + delta
+            if abs(new_rate - member.adaptive_rate) >= 0.00005:
+                member.adaptive_corrections += 1
+            member.adaptive_rate = new_rate
+
+        usable_entry_ids = {member.entry_id for member in usable}
+        for member in self.ready_members:
+            if member.entry_id not in usable_entry_ids:
+                member.adaptive_target_rate = 1.0
+                delta = 1.0 - member.adaptive_rate
+                delta = max(
+                    -ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE,
+                    min(ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE, delta),
+                )
+                member.adaptive_rate += delta
+
+        _LOGGER.debug(
+            "M1S adaptive sync median_delay_frames=%.1f rates=%s errors_ms=%s",
+            median_delay,
+            {m.name: round(m.adaptive_rate, 6) for m in usable},
+            {
+                m.name: round((m.adaptive_error_frames or 0.0) * 1000 / PCM_RATE, 2)
+                for m in usable
+            },
+        )
+
+    def _adaptive_resample_member_chunk(
+        self, member: GroupMember, chunk: bytes
+    ) -> bytes:
+        """Micro-resample one S32_LE mono chunk without stopping the stream."""
+        rate = max(
+            1.0 - ADAPTIVE_SYNC_MAX_RATE_OFFSET,
+            min(1.0 + ADAPTIVE_SYNC_MAX_RATE_OFFSET, member.adaptive_rate),
+        )
+        if abs(rate - 1.0) <= ADAPTIVE_SYNC_RATE_BYPASS:
+            return SILENCE_CHUNK if member.muted_in_group else chunk
+
+        samples = array("i")
+        samples.frombytes(chunk)
+        if samples.itemsize != PCM_SAMPLE_BYTES:
+            raise RuntimeError(
+                f"Unsupported native int size for S32_LE PCM: {samples.itemsize}"
+            )
+        if sys.byteorder != "little":
+            samples.byteswap()
+        in_frames = len(samples)
+        if in_frames < 2:
+            return SILENCE_CHUNK if member.muted_in_group else chunk
+
+        exact_out = (in_frames / rate) + member.adaptive_resample_residual
+        out_frames = max(2, int(exact_out))
+        member.adaptive_resample_residual = exact_out - out_frames
+
+        if member.muted_in_group:
+            return b"\x00" * (out_frames * PCM_SAMPLE_BYTES)
+
+        out = array("i", [0]) * out_frames
+        # Map both endpoints exactly.  With the tiny rate offsets used here this
+        # is a smooth per-period interpolation and avoids sample drops/clicks.
+        scale = (in_frames - 1) / (out_frames - 1)
+        last = in_frames - 1
+        for index in range(out_frames):
+            src = index * scale
+            left = int(src)
+            if left >= last:
+                out[index] = samples[last]
+                continue
+            frac = src - left
+            a = samples[left]
+            b = samples[left + 1]
+            out[index] = int(a + ((b - a) * frac))
+
+        if sys.byteorder != "little":
+            out.byteswap()
+        return out.tobytes()
+
+    def _member_chunk(self, member: GroupMember, chunk: bytes) -> bytes:
+        if not ADAPTIVE_SYNC_ENABLED:
+            return SILENCE_CHUNK if member.muted_in_group else chunk
+        return self._adaptive_resample_member_chunk(member, chunk)
 
     async def _broadcast_loop(
         self, process: asyncio.subprocess.Process, generation: int
@@ -2218,7 +2462,20 @@ class AqaraM1SMediaGroupManager:
             if not member.ready_for_fanout or member.writer is None:
                 return
             health = await self._read_group_receiver_health(member)
+            sample_now = time.monotonic()
+            health["sample_monotonic"] = sample_now
             member.last_receiver_health = health
+            delay = health.get("alsa_delay_frames")
+            if isinstance(delay, int) and not health.get("stale"):
+                if member.adaptive_delay_ema is None:
+                    member.adaptive_delay_ema = float(delay)
+                else:
+                    member.adaptive_delay_ema = (
+                        (1.0 - ADAPTIVE_SYNC_DELAY_EMA_ALPHA)
+                        * member.adaptive_delay_ema
+                        + ADAPTIVE_SYNC_DELAY_EMA_ALPHA * float(delay)
+                    )
+                member.adaptive_health_monotonic = sample_now
             if health.get("stale") and member.ready_for_fanout and member.writer is not None:
                 reason = str(health.get("reason") or "receiver_stale")
                 _LOGGER.warning(
@@ -2305,6 +2562,12 @@ class AqaraM1SMediaGroupManager:
                                 f"aqara_m1s_group_receiver_health_{member.entry_id}",
                             )
                         )
+
+                # Apply continuous drift correction from the latest health
+                # samples. Probes are intentionally decoupled from the controller so
+                # a burst of per-member SSH results cannot jerk the rates several
+                # times in the same instant.
+                self._update_adaptive_sync_rates()
 
                 # Remove ineligible members independently.
                 for member in list(self.members.values()):

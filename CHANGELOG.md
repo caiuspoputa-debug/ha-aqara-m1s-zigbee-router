@@ -1,3 +1,11 @@
+## 0.10.31 - Adaptive continuous group sync
+
+- Replaces disruptive periodic receiver resync with continuous per-hub micro-resampling.
+- Uses live ALSA delay feedback to accelerate a lagging hub or slow an early hub without STOP/reconnect.
+- PI-style controller keeps small long-term clock differences compensated after alignment.
+- Maximum correction is limited to +/-0.8%; corrections are slewed to avoid audible jumps.
+- Preserves the clean group STOP behaviour from 0.10.30.
+
 ## 0.10.28 - 2026-09-01
 
 - Adauga trigger-ele de buton 6x, 7x, 8x, 9x si 10x.
