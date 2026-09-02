@@ -1,3 +1,10 @@
+## 0.10.41 - Clean natural EOF for media group
+
+- Rebased directly on 0.10.40 without changing PCM buffers, pacing, synchronization or resync.
+- After finite group media drains every HA/member queue, closes each TCP writer without issuing remote GROUP_STOP.
+- Lets hub-side nc/aplay drain its existing ALSA cushion and receive natural EOF, matching the proven individual-player boundary.
+- Prevents the group receiver from remaining open in underrun and repeating the final audio fragment.
+
 ## 0.10.40 - Individual finite-media EOF
 
 - Rebased directly on 0.10.39 without changing group playback or buffering.

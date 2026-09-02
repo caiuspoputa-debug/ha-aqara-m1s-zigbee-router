@@ -1979,11 +1979,12 @@ class AqaraM1SMediaGroupManager:
                     # add-on's receiver-tail monitor. In the normal case join()
                     # returns immediately; the timeout is only a safety bound for
                     # a genuinely stuck member.
-                    member_queues = [
-                        member.queue
+                    eof_members = [
+                        member
                         for member in self.active_members
                         if member.queue is not None and member.ready_for_fanout
                     ]
+                    member_queues = [member.queue for member in eof_members]
                     if member_queues:
                         try:
                             await asyncio.wait_for(
@@ -1996,11 +1997,33 @@ class AqaraM1SMediaGroupManager:
                                 "within %ss; completing with bounded fallback",
                                 WRITER_DRAIN_TIMEOUT,
                             )
+                    # The queues are now empty and every final PCM chunk has been
+                    # accepted by the TCP writers. Close those writers without a
+                    # remote GROUP_STOP so nc/aplay receives a natural EOF and can
+                    # drain its existing ALSA cushion. Leaving the TCP connections
+                    # open keeps aplay alive in underrun and repeats the last audio
+                    # fragment; force-stopping here would instead cut the tail.
+                    # Disable reconcile before detaching, otherwise the ordinary
+                    # group maintenance loop can immediately reopen a receiver
+                    # while this finite EOF is still being finalized.
                     self.desired_playing = False
+                    if eof_members:
+                        await asyncio.gather(
+                            *(
+                                self._detach_member(
+                                    member.entry_id,
+                                    stop_remote=False,
+                                    new_state="idle",
+                                )
+                                for member in eof_members
+                            ),
+                            return_exceptions=False,
+                        )
                     self._last_failure = None
                     _LOGGER.info(
                         "M1S group finite media reached normal EOF after member "
-                        "queues drained; watchdog restart suppressed"
+                        "queues drained and TCP writers closed naturally; "
+                        "watchdog restart suppressed"
                     )
                 else:
                     self._last_failure = self._last_failure or "ffmpeg_stream_ended"
