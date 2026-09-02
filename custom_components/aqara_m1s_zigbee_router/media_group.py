@@ -115,10 +115,12 @@ MEMBER_CONNECT_TIMEOUT = 0.40
 MEMBER_CONNECT_RETRY_DELAY = 0.08
 WRITER_CLOSE_TIMEOUT = 0.75
 TASK_CANCEL_TIMEOUT = 1.0
-PERIODIC_RECEIVER_RESYNC_ENABLED = False
-PERIODIC_RECEIVER_RESYNC_SECONDS = 10 * 60.0
+PERIODIC_RECEIVER_RESYNC_ENABLED = True
+PERIODIC_RECEIVER_RESYNC_SECONDS = 3 * 60.0
 PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS = 2
 PERIODIC_RECEIVER_RESYNC_PAUSE_TIMEOUT = 2.0
+SOFT_RESYNC_DRIFT_THRESHOLD_FRAMES = int(PCM_RATE * 0.20)
+SOFT_RESYNC_MIN_REFERENCE_MEMBERS = 3
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 FFMPEG_NICE_TARGET = -5
@@ -234,6 +236,7 @@ class AqaraM1SMediaGroupManager:
         self._receiver_resync_count = 0
         self._last_receiver_resync_monotonic: float | None = None
         self._last_receiver_resync_reason: str | None = None
+        self._last_soft_resync_check_monotonic: float | None = None
         self._broadcast_pause_requested = asyncio.Event()
         self._broadcast_paused = asyncio.Event()
         self._fanout_lock = asyncio.Lock()
@@ -520,7 +523,10 @@ class AqaraM1SMediaGroupManager:
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
-            "receiver_drift_guard_mode": "clock_paced_stream_no_periodic_global_resync",
+            "receiver_drift_guard_mode": "three_minute_soft_outlier_guard",
+            "receiver_soft_resync_threshold_ms": int(
+                SOFT_RESYNC_DRIFT_THRESHOLD_FRAMES * 1000 / PCM_RATE
+            ),
             "receiver_resync_interval_seconds": PERIODIC_RECEIVER_RESYNC_SECONDS,
             "receiver_resync_count": self._receiver_resync_count,
             "last_receiver_resync_reason": self._last_receiver_resync_reason,
@@ -599,6 +605,7 @@ class AqaraM1SMediaGroupManager:
             self._watchdog_attempts = 0
             await self._restart_stream_locked(reason="user_play")
         self._ensure_reconcile_task()
+        self._ensure_periodic_receiver_resync_task()
         self._signal_update()
 
     async def async_resume(self) -> None:
@@ -609,6 +616,7 @@ class AqaraM1SMediaGroupManager:
             if not self.ffmpeg_running:
                 await self._restart_stream_locked(reason="resume")
         self._ensure_reconcile_task()
+        self._ensure_periodic_receiver_resync_task()
         self._signal_update()
 
     async def async_stop(self, *, clear_intent: bool = True) -> None:
@@ -651,7 +659,11 @@ class AqaraM1SMediaGroupManager:
                             member.name,
                             result,
                         )
-                await self._stop_stream_locked(stop_members=True, reason="user_stop")
+                await self._stop_stream_locked(
+                    stop_members=True,
+                    reason="user_stop",
+                    member_remote_cleanup=False,
+                )
 
         try:
             await asyncio.wait_for(
@@ -1031,6 +1043,7 @@ class AqaraM1SMediaGroupManager:
         self._rebuffer_events = 0
         self._silence_fill_events = 0
         self._stream_started_monotonic = time.monotonic()
+        self._last_soft_resync_check_monotonic = self._stream_started_monotonic
         self._playout_epoch_monotonic = None
         self._last_pcm_monotonic = None
         for member in self.active_members:
@@ -1083,7 +1096,13 @@ class AqaraM1SMediaGroupManager:
             )
             return False
 
-    async def _stop_stream_locked(self, *, stop_members: bool, reason: str) -> None:
+    async def _stop_stream_locked(
+        self,
+        *,
+        stop_members: bool,
+        reason: str,
+        member_remote_cleanup: bool = True,
+    ) -> None:
         self._broadcast_pause_requested.clear()
         self._broadcast_paused.clear()
         self._playout_epoch_monotonic = None
@@ -1143,7 +1162,9 @@ class AqaraM1SMediaGroupManager:
                 *(
                     self._detach_member(
                         member.entry_id,
-                        stop_remote=member.writer is not None,
+                        stop_remote=(
+                            member_remote_cleanup and member.writer is not None
+                        ),
                         new_state=self._idle_member_state(member),
                     )
                     for member in list(self.members.values())
@@ -1916,7 +1937,11 @@ class AqaraM1SMediaGroupManager:
 
     def _ensure_periodic_receiver_resync_task(self) -> None:
         """Keep long-running group playback from accumulating inter-hub drift."""
-        if self._shutting_down or not self.desired_playing:
+        if (
+            not PERIODIC_RECEIVER_RESYNC_ENABLED
+            or self._shutting_down
+            or not self.desired_playing
+        ):
             return
         if (
             self.periodic_receiver_resync_task is None
@@ -1928,7 +1953,7 @@ class AqaraM1SMediaGroupManager:
             )
 
     async def _periodic_receiver_resync_loop(self) -> None:
-        """Periodically restart only hub receivers while preserving FFmpeg position."""
+        """Audit receiver timing every three minutes and heal only real outliers."""
         try:
             while self.desired_playing and not self._shutting_down:
                 await asyncio.sleep(5.0)
@@ -1936,33 +1961,114 @@ class AqaraM1SMediaGroupManager:
                     continue
                 if len(self.active_members) < PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS:
                     continue
-                started = self._stream_started_monotonic
-                if started is None:
+
+                now = time.monotonic()
+                reference = (
+                    self._last_soft_resync_check_monotonic
+                    or self._stream_started_monotonic
+                )
+                if reference is None or now - reference < PERIODIC_RECEIVER_RESYNC_SECONDS:
                     continue
-                if time.monotonic() - started < PERIODIC_RECEIVER_RESYNC_SECONDS:
-                    continue
-                async with self._lock:
-                    if (
-                        self.desired_playing
-                        and self.ffmpeg_running
-                        and len(self.active_members)
-                        >= PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS
-                        and self._stream_started_monotonic is not None
-                        and time.monotonic() - self._stream_started_monotonic
-                        >= PERIODIC_RECEIVER_RESYNC_SECONDS
-                    ):
-                        await self._resync_receivers_preserve_source_locked(
-                            reason="periodic_drift_guard"
-                        )
+
+                self._last_soft_resync_check_monotonic = now
+                await self._soft_receiver_resync_audit()
                 self._signal_update()
         except asyncio.CancelledError:
             raise
         except Exception as err:
             self._last_failure = str(err)
-            _LOGGER.warning("M1S periodic receiver resync failed: %s", err)
+            _LOGGER.warning("M1S periodic soft receiver resync failed: %s", err)
         finally:
             if self.periodic_receiver_resync_task is asyncio.current_task():
                 self.periodic_receiver_resync_task = None
+
+    async def _soft_receiver_resync_audit(self) -> None:
+        """Compare live ALSA timing and rebuild only a clearly drifting hub.
+
+        The shared FFmpeg timeline and every healthy receiver are left untouched.
+        With fewer than three usable delay samples we only refresh diagnostics,
+        because two receivers do not provide a safe way to identify which one is
+        the timing outlier. Existing stale/underrun detection still applies.
+        """
+        members = [
+            member
+            for member in self.ready_members
+            if member.writer is not None and self._member_online(member)
+        ]
+        if len(members) < PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS:
+            return
+
+        results = await asyncio.gather(
+            *(self._read_group_receiver_health(member) for member in members),
+            return_exceptions=True,
+        )
+
+        delays: list[tuple[GroupMember, int]] = []
+        for member, result in zip(members, results, strict=False):
+            if isinstance(result, Exception):
+                _LOGGER.debug(
+                    "M1S soft resync timing probe failed member=%s error=%s",
+                    member.name,
+                    result,
+                )
+                continue
+            member.last_receiver_health = result
+            if result.get("stale"):
+                reason = str(result.get("reason") or "receiver_stale")
+                self._schedule_isolate_member(
+                    member, reason=f"soft resync stale: {reason}"
+                )
+                continue
+            delay = result.get("alsa_delay_frames")
+            if isinstance(delay, int):
+                delays.append((member, delay))
+
+        if len(delays) < SOFT_RESYNC_MIN_REFERENCE_MEMBERS:
+            return
+
+        ordered = sorted(delay for _, delay in delays)
+        mid = len(ordered) // 2
+        if len(ordered) % 2:
+            median_delay = ordered[mid]
+        else:
+            median_delay = int((ordered[mid - 1] + ordered[mid]) / 2)
+
+        outliers = [
+            (member, delay, abs(delay - median_delay))
+            for member, delay in delays
+            if abs(delay - median_delay) > SOFT_RESYNC_DRIFT_THRESHOLD_FRAMES
+            and not member.detaching
+        ]
+        if not outliers:
+            _LOGGER.debug(
+                "M1S soft resync audit aligned members=%s median_delay_frames=%s",
+                len(delays),
+                median_delay,
+            )
+            return
+
+        # Heal only the worst outlier per audit. This is intentionally
+        # conservative: the common source and healthy hubs never restart, and
+        # a second outlier can be corrected at the next three-minute audit.
+        member, delay, drift = max(outliers, key=lambda item: item[2])
+        drift_ms = round(drift * 1000 / PCM_RATE)
+        self._receiver_resync_count += 1
+        self._last_receiver_resync_monotonic = time.monotonic()
+        self._last_receiver_resync_reason = (
+            f"soft_drift_guard:{member.name}:{drift_ms}ms"
+        )
+        _LOGGER.info(
+            "M1S soft resync correcting one timing outlier member=%s "
+            "delay_frames=%s median_frames=%s drift_ms=%s; "
+            "healthy receivers and FFmpeg remain untouched",
+            member.name,
+            delay,
+            median_delay,
+            drift_ms,
+        )
+        self._schedule_isolate_member(
+            member, reason=f"soft timing drift {drift_ms}ms"
+        )
 
     async def _resync_receivers_preserve_source_locked(self, reason: str) -> None:
         """Pause PCM at a frame boundary, rebuild all receivers, then resume.
