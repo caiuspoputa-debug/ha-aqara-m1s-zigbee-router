@@ -1,3 +1,9 @@
+## 0.10.37 - Finite media: no FFmpeg reconnect
+
+- YT/YTM media explicitly marked as finite no longer uses FFmpeg HTTP reconnect flags.
+- Prevents FFmpeg from reopening the same add-on URL/seek position at EOF.
+- Radio/live HTTP streams keep the existing reconnect behavior unchanged.
+
 ## v0.10.36 - Clean source switch + finite media EOF
 
 - Base: v0.10.30 only.

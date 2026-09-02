@@ -1038,7 +1038,13 @@ class AqaraM1SMediaGroupManager:
             "-loglevel",
             "warning",
         ]
-        if urlsplit(self.media_url).scheme.lower() in ("http", "https"):
+        if (
+            urlsplit(self.media_url).scheme.lower() in ("http", "https")
+            and not self.media_is_finite
+        ):
+            # Live/radio streams benefit from FFmpeg reconnect. Finite YT/YTM
+            # streams must NOT reconnect at EOF: reconnecting the add-on URL
+            # starts the same seek position again and prevents normal completion.
             args.extend(
                 [
                     "-reconnect",
