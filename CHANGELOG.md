@@ -1,3 +1,19 @@
+## 0.10.34 - Drift-only adaptive sync and shared-buffer-dominant output
+
+- Prevents adaptive correction from reacting to per-hub ALSA buffer-fill differences immediately after Play/Next/source changes.
+- Every new source runs at exactly 1.0x during a 10 s startup grace and learns a fresh per-member stable delay baseline.
+- Adaptive micro-resampling now corrects only drift accumulated relative to each member's own baseline, compared against the group median.
+- Reduces independent hub-side buffering (ALSA 750 ms, remote prefill 350 ms, TCP write buffers ~280 ms) so the common HA jitter buffer is the dominant buffer and per-hub latency cannot diverge as easily.
+- Keeps the unified all-source startup barrier, clean source-switch STOP ordering, member isolation/rejoin and all non-audio integration behaviour unchanged.
+
+## 0.10.33 - Unified synchronized start for every group source
+
+- Replaces the old first-receiver + 300 ms startup grace with a bounded all-ready startup barrier.
+- Prepares every currently eligible M1S receiver concurrently before the shared FFmpeg timeline starts.
+- Healthy hubs now enter the same initial PCM prefill for radio, YT/YTM, direct URLs, notification media, resume and global recovery.
+- A failed/stuck hub cannot block playback forever; after the bounded barrier it keeps the existing late-join recovery path.
+- Keeps the clean source-switch STOP ordering from 0.10.32 and adaptive continuous sync from 0.10.31 unchanged.
+
 ## 0.10.32 - Clean group source switching
 
 - Group source changes now issue the remote group STOP before FFmpeg/TCP teardown, matching the clean explicit-STOP ordering.

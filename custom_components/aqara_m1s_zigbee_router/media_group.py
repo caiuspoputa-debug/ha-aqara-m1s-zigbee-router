@@ -57,7 +57,7 @@ CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
 GROUP_JITTER_BUFFER_SECONDS = 4.00
 GROUP_PREBUFFER_SECONDS = 2.50
 GROUP_REBUFFER_RESUME_SECONDS = 2.00
-GROUP_REMOTE_PREFILL_SECONDS = 1.40
+GROUP_REMOTE_PREFILL_SECONDS = 0.35
 GROUP_JITTER_BUFFER_CHUNKS = max(1, round(GROUP_JITTER_BUFFER_SECONDS / CHUNK_SECONDS))
 GROUP_PREBUFFER_CHUNKS = max(1, round(GROUP_PREBUFFER_SECONDS / CHUNK_SECONDS))
 GROUP_REBUFFER_RESUME_CHUNKS = max(1, round(GROUP_REBUFFER_RESUME_SECONDS / CHUNK_SECONDS))
@@ -75,8 +75,13 @@ JOIN_BOUNDARY_SECONDS = CHUNK_SECONDS
 JOIN_BOUNDARY_CHUNKS = 1
 INITIAL_PREROLL_SECONDS = 0.0
 INITIAL_PREROLL_CHUNKS = 0
-START_COHORT_GRACE_SECONDS = 0.30
-START_FIRST_MEMBER_TIMEOUT = 3.0
+# A new source must not start on the first receiver and let the remaining hubs
+# become audible late. Prepare every currently eligible receiver concurrently and
+# hold a short bounded barrier before FFmpeg starts. Healthy receivers therefore
+# enter the same initial PCM prefill regardless of source type (radio, YT/YTM,
+# direct URL, notification media, resume/recovery). A genuinely slow/broken hub
+# is still allowed to join later without blocking the healthy cohort forever.
+START_COHORT_BARRIER_SECONDS = 3.20
 PLAYOUT_START_MARGIN_SECONDS = 0.02
 # Preserve the clock through ordinary stalls and catch up from the HA jitter
 # buffer. Only abandon timing after the entire four-second window is exceeded.
@@ -90,9 +95,9 @@ PCM_HEALTH_CHECK_SECONDS = 2.0
 PCM_STALL_TIMEOUT = 12.0
 PCM_START_GRACE_SECONDS = 8.0
 WRITER_DRAIN_TIMEOUT = 5.0
-WRITER_HIGH_WATER_BYTES = CHUNK_BYTES * 16
-WRITER_LOW_WATER_BYTES = CHUNK_BYTES * 8
-SOCKET_SNDBUF_BYTES = CHUNK_BYTES * 16
+WRITER_HIGH_WATER_BYTES = CHUNK_BYTES * 8
+WRITER_LOW_WATER_BYTES = CHUNK_BYTES * 4
+SOCKET_SNDBUF_BYTES = CHUNK_BYTES * 8
 GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS = 5.0
 GROUP_RECEIVER_STALE_DELAY_FRAMES = int(PCM_RATE * 0.20)
 GROUP_RECEIVER_STALE_AVAIL_MULTIPLIER = 2
@@ -123,10 +128,10 @@ SOFT_RESYNC_DRIFT_THRESHOLD_FRAMES = int(PCM_RATE * 0.20)
 SOFT_RESYNC_MIN_REFERENCE_MEMBERS = 3
 
 # Continuous adaptive drift correction.  Unlike the old periodic resync this
-# never tears down a receiver: each member is micro-resampled around 1.0x so
-# its ALSA playout delay converges toward the group median while audio keeps
-# flowing.  ±0.8% is intentionally small enough to be unobtrusive but still
-# able to remove a clearly audible echo over several seconds.
+# never tears down a receiver.  A fresh source runs 1.0x while buffers settle;
+# then each member is micro-resampled only for drift relative to its own learned
+# startup baseline.  Raw per-hub ALSA occupancy is never treated as acoustic
+# phase.  The smaller per-hub buffer keeps the shared HA jitter buffer dominant.
 ADAPTIVE_SYNC_ENABLED = True
 ADAPTIVE_SYNC_MIN_MEMBERS = 2
 ADAPTIVE_SYNC_HEALTH_MAX_AGE_SECONDS = GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS * 2.5
@@ -136,14 +141,20 @@ ADAPTIVE_SYNC_KP = 0.045
 ADAPTIVE_SYNC_KI = 0.0012
 ADAPTIVE_SYNC_INTEGRAL_LIMIT = 2.5
 ADAPTIVE_SYNC_INTEGRAL_GATE_FRAMES = int(PCM_RATE * 0.080)  # integrate only inside 80 ms
-ADAPTIVE_SYNC_MAX_RATE_OFFSET = 0.008  # ±0.8%
+ADAPTIVE_SYNC_MAX_RATE_OFFSET = 0.006  # ±0.6%
 ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE = 0.004  # max 0.4% change per health sample
 ADAPTIVE_SYNC_RATE_BYPASS = 0.00002
+# Do not let startup/track-change buffer fill become a sync reference.
+# The controller learns each receiver's own stable buffer baseline first
+# and only corrects subsequent drift relative to that baseline.
+ADAPTIVE_SYNC_STARTUP_GRACE_SECONDS = 10.0
+ADAPTIVE_SYNC_BASELINE_MIN_AGE_SECONDS = 4.0
+ADAPTIVE_SYNC_BASELINE_SAMPLES = 2
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
-APLAY_BUFFER_TIME_US = 2000000
+APLAY_BUFFER_TIME_US = 750000
 APLAY_PERIOD_TIME_US = 35000
 
 SILENCE_CHUNK = b"\x00" * CHUNK_BYTES
@@ -212,6 +223,9 @@ class GroupMember:
     adaptive_rate: float = 1.0
     adaptive_target_rate: float = 1.0
     adaptive_delay_ema: float | None = None
+    adaptive_delay_baseline: float | None = None
+    adaptive_baseline_sum: float = 0.0
+    adaptive_baseline_samples: int = 0
     adaptive_error_frames: float | None = None
     adaptive_last_error_frames: float | None = None
     adaptive_integral: float = 0.0
@@ -530,6 +544,8 @@ class AqaraM1SMediaGroupManager:
             "group_prebuffer_seconds": GROUP_PREBUFFER_SECONDS,
             "group_rebuffer_resume_seconds": GROUP_REBUFFER_RESUME_SECONDS,
             "group_remote_prefill_seconds": GROUP_REMOTE_PREFILL_SECONDS,
+            "startup_sync_policy": "bounded_all_ready_barrier_then_shared_prefill",
+            "startup_cohort_barrier_seconds": START_COHORT_BARRIER_SECONDS,
             "rebuffer_events": self._rebuffer_events,
             "silence_fill_events": self._silence_fill_events,
             "playout_clock_rebases": self._clock_rebase_count,
@@ -558,6 +574,9 @@ class AqaraM1SMediaGroupManager:
             ),
             "receiver_resync_interval_seconds": PERIODIC_RECEIVER_RESYNC_SECONDS,
             "adaptive_sync_enabled": ADAPTIVE_SYNC_ENABLED,
+            "adaptive_sync_mode": "relative_drift_from_per_member_start_baseline",
+            "adaptive_sync_startup_grace_seconds": ADAPTIVE_SYNC_STARTUP_GRACE_SECONDS,
+            "adaptive_sync_baseline_samples": ADAPTIVE_SYNC_BASELINE_SAMPLES,
             "adaptive_sync_deadband_ms": round(
                 ADAPTIVE_SYNC_DEADBAND_FRAMES * 1000 / PCM_RATE, 1
             ),
@@ -567,6 +586,14 @@ class AqaraM1SMediaGroupManager:
             "adaptive_member_rate": {
                 member.name: round(member.adaptive_rate, 6)
                 for member in self.ready_members
+            },
+            "adaptive_member_baseline_delay_ms": {
+                member.name: (
+                    None
+                    if member.adaptive_delay_baseline is None
+                    else round(member.adaptive_delay_baseline * 1000 / PCM_RATE, 2)
+                )
+                for member in self.members.values()
             },
             "adaptive_member_error_ms": {
                 member.name: (
@@ -1050,26 +1077,7 @@ class AqaraM1SMediaGroupManager:
             if task is not None:
                 prepare_tasks.append(task)
 
-        # Google-Home-like startup policy: establish a small initial cohort, not
-        # a hard all-members barrier.  Start as soon as one hub is ready, allow a
-        # short grace window for other healthy hubs, and let the rest join later.
-        pending = set(prepare_tasks)
-        deadline = time.monotonic() + START_FIRST_MEMBER_TIMEOUT
-        while pending and not self.active_members:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            done, pending = await asyncio.wait(
-                pending,
-                timeout=remaining,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if not done:
-                break
-
-        if self.active_members and pending:
-            # Preparation continues independently during this tiny cohort window.
-            await asyncio.sleep(START_COHORT_GRACE_SECONDS)
+        await self._await_startup_cohort_locked(eligible, prepare_tasks)
 
         if not self.active_members:
             self._last_failure = "no_group_member_ready"
@@ -1081,8 +1089,72 @@ class AqaraM1SMediaGroupManager:
 
         await self._start_ffmpeg_locked()
 
+    async def _await_startup_cohort_locked(
+        self,
+        eligible: list[GroupMember] | None = None,
+        prepare_tasks: list[asyncio.Task] | None = None,
+    ) -> None:
+        """Hold one bounded barrier before any global source becomes audible.
+
+        This is the single startup gate for every source type and for background
+        recovery.  It prevents the old behaviour where FFmpeg could start as soon
+        as the first receiver connected and the remaining healthy hubs then joined
+        the already-running timeline at visibly different times.
+        """
+        if eligible is None:
+            eligible = [m for m in self.members.values() if self._eligible(m)]
+        if prepare_tasks is None:
+            prepare_tasks = [
+                member.prepare_task
+                for member in eligible
+                if member.prepare_task is not None
+                and not member.prepare_task.done()
+            ]
+
+        pending = {task for task in prepare_tasks if task is not None and not task.done()}
+        if not pending:
+            return
+
+        cohort_deadline = time.monotonic() + START_COHORT_BARRIER_SECONDS
+        while pending:
+            ready_eligible = [
+                member
+                for member in eligible
+                if member.writer is not None and not member.detaching
+            ]
+            if len(ready_eligible) >= len(eligible):
+                break
+            remaining = cohort_deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            done, still_pending = await asyncio.wait(
+                pending,
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                break
+            pending = {task for task in still_pending if not task.done()}
+
+        if pending:
+            _LOGGER.info(
+                "M1S group startup barrier released with pending receivers "
+                "ready=%s eligible=%s pending=%s timeout_ms=%s",
+                [m.name for m in self.active_members if m in eligible],
+                [m.name for m in eligible],
+                len(pending),
+                int(START_COHORT_BARRIER_SECONDS * 1000),
+            )
+
     async def _start_ffmpeg_locked(self) -> None:
         if not self.media_url or not self.desired_playing:
+            return
+
+        # Safety gate for every caller, including reconcile/background recovery.
+        # Normal user starts already passed this barrier in _restart_stream_locked;
+        # in that case this returns immediately.
+        await self._await_startup_cohort_locked()
+        if not self.active_members:
             return
         ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
         args = [
@@ -1143,6 +1215,11 @@ class AqaraM1SMediaGroupManager:
         self._playout_epoch_monotonic = None
         self._last_pcm_monotonic = None
         for member in self.active_members:
+            # A new source/track gets a completely fresh timing baseline.
+            # Never reuse ALSA occupancy from the previous song.
+            self._reset_member_adaptive_sync(member)
+            member.last_receiver_health = None
+            member.last_health_probe_monotonic = self._stream_started_monotonic
             member.lag_since_monotonic = None
             member.lag_peak_chunks = 0
             member.ready_for_fanout = False
@@ -1827,6 +1904,9 @@ class AqaraM1SMediaGroupManager:
         member.adaptive_rate = 1.0
         member.adaptive_target_rate = 1.0
         member.adaptive_delay_ema = None
+        member.adaptive_delay_baseline = None
+        member.adaptive_baseline_sum = 0.0
+        member.adaptive_baseline_samples = 0
         member.adaptive_error_frames = None
         member.adaptive_last_error_frames = None
         member.adaptive_integral = 0.0
@@ -1843,16 +1923,37 @@ class AqaraM1SMediaGroupManager:
         return (ordered[mid - 1] + ordered[mid]) / 2.0
 
     def _update_adaptive_sync_rates(self) -> None:
-        """Continuously steer member playout delays toward one common median.
+        """Correct only drift accumulated after a stable per-member baseline.
 
-        Positive error means the receiver has more ALSA audio queued and is
-        therefore behind the group timeline.  It gets a rate > 1.0, which
-        emits slightly fewer output frames for each source frame and lets it
-        catch up.  A receiver ahead gets rate < 1.0 and is slowed slightly.
+        ALSA ``delay`` is buffer occupancy, not an absolute acoustic playhead.
+        Using its raw value directly makes a fresh track dangerous: tiny
+        per-receiver startup-fill differences look like sync errors and the PI
+        controller can create an echo that was not there.  Each receiver now
+        learns its own stable delay baseline after startup, and only *changes*
+        from that baseline are compared with the group median.
         """
         if not ADAPTIVE_SYNC_ENABLED:
             return
         now = time.monotonic()
+
+        # Track/source startup is sacred: all members run exactly 1.0x until the
+        # remote ALSA/TCP buffers have settled and fresh baselines exist.
+        stream_age = (
+            0.0
+            if self._stream_started_monotonic is None
+            else max(0.0, now - self._stream_started_monotonic)
+        )
+        if stream_age < ADAPTIVE_SYNC_STARTUP_GRACE_SECONDS:
+            self._last_adaptive_sync_control_monotonic = now
+            for member in self.ready_members:
+                member.adaptive_target_rate = 1.0
+                member.adaptive_rate = 1.0
+                member.adaptive_error_frames = None
+                member.adaptive_last_error_frames = None
+                member.adaptive_integral = 0.0
+                member.adaptive_resample_residual = 0.0
+            return
+
         if (
             self._last_adaptive_sync_control_monotonic > 0.0
             and now - self._last_adaptive_sync_control_monotonic < 0.8
@@ -1867,10 +1968,12 @@ class AqaraM1SMediaGroupManager:
             )
         )
         self._last_adaptive_sync_control_monotonic = now
+
         usable = [
             member
             for member in self.ready_members
             if member.adaptive_delay_ema is not None
+            and member.adaptive_delay_baseline is not None
             and member.adaptive_health_monotonic > 0.0
             and now - member.adaptive_health_monotonic
             <= ADAPTIVE_SYNC_HEALTH_MAX_AGE_SECONDS
@@ -1878,44 +1981,37 @@ class AqaraM1SMediaGroupManager:
         if len(usable) < ADAPTIVE_SYNC_MIN_MEMBERS:
             for member in self.ready_members:
                 member.adaptive_target_rate = 1.0
-                member.adaptive_rate += max(
-                    -ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE,
-                    min(
-                        ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE,
-                        1.0 - member.adaptive_rate,
-                    ),
-                )
+                member.adaptive_rate = 1.0
+                member.adaptive_error_frames = None
+                member.adaptive_integral = 0.0
+                member.adaptive_resample_residual = 0.0
             return
 
-        median_delay = self._median(
-            [float(member.adaptive_delay_ema) for member in usable]
-        )
+        relative_delays = {
+            member.entry_id: (
+                float(member.adaptive_delay_ema)
+                - float(member.adaptive_delay_baseline)
+            )
+            for member in usable
+        }
+        median_relative = self._median(list(relative_delays.values()))
+
         for member in usable:
-            error_frames = float(member.adaptive_delay_ema) - median_delay
+            error_frames = relative_delays[member.entry_id] - median_relative
             previous_error = member.adaptive_last_error_frames
             member.adaptive_error_frames = error_frames
             member.adaptive_last_error_frames = error_frames
-            dt = control_dt
             member.adaptive_last_update_monotonic = now
 
-            # Never carry integral wind-up through an alignment crossing.
-            if (
-                previous_error is not None
-                and error_frames * previous_error < 0.0
-            ):
+            if previous_error is not None and error_frames * previous_error < 0.0:
                 member.adaptive_integral = 0.0
 
             error_seconds = error_frames / PCM_RATE
             if abs(error_frames) <= ADAPTIVE_SYNC_DEADBAND_FRAMES:
-                # Inside the sync window, retain the small learned clock
-                # compensation instead of drifting away again.
                 proportional = 0.0
             else:
-                # For a large existing echo use proportional correction only;
-                # integrate once we are close enough that the residual mostly
-                # represents crystal-clock mismatch rather than position error.
                 if abs(error_frames) <= ADAPTIVE_SYNC_INTEGRAL_GATE_FRAMES:
-                    member.adaptive_integral += error_seconds * dt
+                    member.adaptive_integral += error_seconds * control_dt
                     member.adaptive_integral = max(
                         -ADAPTIVE_SYNC_INTEGRAL_LIMIT,
                         min(ADAPTIVE_SYNC_INTEGRAL_LIMIT, member.adaptive_integral),
@@ -1942,16 +2038,14 @@ class AqaraM1SMediaGroupManager:
         for member in self.ready_members:
             if member.entry_id not in usable_entry_ids:
                 member.adaptive_target_rate = 1.0
-                delta = 1.0 - member.adaptive_rate
-                delta = max(
-                    -ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE,
-                    min(ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE, delta),
-                )
-                member.adaptive_rate += delta
+                member.adaptive_rate = 1.0
+                member.adaptive_error_frames = None
+                member.adaptive_integral = 0.0
+                member.adaptive_resample_residual = 0.0
 
         _LOGGER.debug(
-            "M1S adaptive sync median_delay_frames=%.1f rates=%s errors_ms=%s",
-            median_delay,
+            "M1S adaptive drift sync median_relative_frames=%.1f rates=%s errors_ms=%s",
+            median_relative,
             {m.name: round(m.adaptive_rate, 6) for m in usable},
             {
                 m.name: round((m.adaptive_error_frames or 0.0) * 1000 / PCM_RATE, 2)
@@ -2520,6 +2614,28 @@ class AqaraM1SMediaGroupManager:
                         + ADAPTIVE_SYNC_DELAY_EMA_ALPHA * float(delay)
                     )
                 member.adaptive_health_monotonic = sample_now
+                stream_age = (
+                    0.0
+                    if self._stream_started_monotonic is None
+                    else max(0.0, sample_now - self._stream_started_monotonic)
+                )
+                if (
+                    member.adaptive_delay_baseline is None
+                    and stream_age >= ADAPTIVE_SYNC_BASELINE_MIN_AGE_SECONDS
+                ):
+                    member.adaptive_baseline_sum += float(member.adaptive_delay_ema)
+                    member.adaptive_baseline_samples += 1
+                    if member.adaptive_baseline_samples >= ADAPTIVE_SYNC_BASELINE_SAMPLES:
+                        member.adaptive_delay_baseline = (
+                            member.adaptive_baseline_sum
+                            / member.adaptive_baseline_samples
+                        )
+                        _LOGGER.debug(
+                            "M1S adaptive baseline learned member=%s delay_frames=%.1f age_s=%.1f",
+                            member.name,
+                            member.adaptive_delay_baseline,
+                            stream_age,
+                        )
             if health.get("stale") and member.ready_for_fanout and member.writer is not None:
                 reason = str(health.get("reason") or "receiver_stale")
                 _LOGGER.warning(
