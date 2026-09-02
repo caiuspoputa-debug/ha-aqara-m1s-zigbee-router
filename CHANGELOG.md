@@ -1,3 +1,11 @@
+## 0.10.38 - Clean STOP FFmpeg stdout drain
+
+- Rebased directly on 0.10.37.
+- Fixes a STOP deadlock where the PCM stdout producer was cancelled before FFmpeg had closed its PIPE.
+- During STOP/source replacement the producer now keeps draining/discarding FFmpeg stdout until the process exits (or the existing kill timeout is reached).
+- Prevents normal STOP/seek/track-boundary transitions from escalating to `user_stop_timeout` hard transport resets.
+- No changes to buffering, Play startup, finite-media EOF policy, reconnect policy, group sync, or add-on behavior.
+
 ## 0.10.37 - Finite media: no FFmpeg reconnect
 
 - YT/YTM media explicitly marked as finite no longer uses FFmpeg HTTP reconnect flags.

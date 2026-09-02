@@ -1952,20 +1952,55 @@ class AqaraM1SMediaGroupManager:
             _LOGGER.warning("M1S group broadcaster failed: %s", err)
         finally:
             if not producer_task.done():
-                producer_task.cancel()
+                if generation != self._generation or not self.desired_playing or self._shutting_down:
+                    # During STOP/source replacement, keep consuming FFmpeg stdout
+                    # until the terminated process closes the pipe. Cancelling this
+                    # reader first can leave FFmpeg blocked on a full PIPE, making
+                    # process.wait() time out and escalating an otherwise normal
+                    # STOP into a hard transport reset.
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(producer_task),
+                            timeout=GROUP_FFMPEG_TERMINATE_TIMEOUT + GROUP_FFMPEG_KILL_TIMEOUT,
+                        )
+                    except asyncio.TimeoutError:
+                        producer_task.cancel()
+                else:
+                    producer_task.cancel()
             with suppress(asyncio.CancelledError):
                 await producer_task
             if generation == self._generation and self.desired_playing:
                 if self.media_is_finite and producer_error is None:
-                    # A finite track reaching EOF is a normal completion, not a
-                    # failed live stream. Do not restart FFmpeg or let reconcile
-                    # reopen the same URL. The already-sent PCM is left to drain
-                    # naturally from the hub-side buffers.
+                    # Match the stable single-player end-of-media contract: do
+                    # not expose IDLE merely because the shared source queue is
+                    # empty. Every per-member HA queue must first hand its final
+                    # PCM to the TCP writer. The hub-side aplay cushion is then
+                    # allowed to drain naturally and is accounted for by the
+                    # add-on's receiver-tail monitor. In the normal case join()
+                    # returns immediately; the timeout is only a safety bound for
+                    # a genuinely stuck member.
+                    member_queues = [
+                        member.queue
+                        for member in self.active_members
+                        if member.queue is not None and member.ready_for_fanout
+                    ]
+                    if member_queues:
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.gather(*(queue.join() for queue in member_queues)),
+                                timeout=WRITER_DRAIN_TIMEOUT,
+                            )
+                        except asyncio.TimeoutError:
+                            _LOGGER.warning(
+                                "M1S group finite EOF member queues did not drain "
+                                "within %ss; completing with bounded fallback",
+                                WRITER_DRAIN_TIMEOUT,
+                            )
                     self.desired_playing = False
                     self._last_failure = None
                     _LOGGER.info(
-                        "M1S group finite media reached normal EOF; "
-                        "watchdog restart suppressed"
+                        "M1S group finite media reached normal EOF after member "
+                        "queues drained; watchdog restart suppressed"
                     )
                 else:
                     self._last_failure = self._last_failure or "ffmpeg_stream_ended"
