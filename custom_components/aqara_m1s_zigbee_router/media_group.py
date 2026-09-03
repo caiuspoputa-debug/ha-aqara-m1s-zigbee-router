@@ -127,7 +127,7 @@ SOFT_RESYNC_MIN_REFERENCE_MEMBERS = 3
 # its ALSA playout delay converges toward the group median while audio keeps
 # flowing.  ±0.8% is intentionally small enough to be unobtrusive but still
 # able to remove a clearly audible echo over several seconds.
-ADAPTIVE_SYNC_ENABLED = True
+ADAPTIVE_SYNC_ENABLED = False
 ADAPTIVE_SYNC_MIN_MEMBERS = 2
 ADAPTIVE_SYNC_HEALTH_MAX_AGE_SECONDS = GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS * 2.5
 ADAPTIVE_SYNC_DELAY_EMA_ALPHA = 0.65

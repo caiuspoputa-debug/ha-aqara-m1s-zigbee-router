@@ -1,3 +1,10 @@
+## 0.20.1 - Adaptive sync disabled for group-stability test
+
+- Based directly on v0.20.0.
+- Single functional change: `ADAPTIVE_SYNC_ENABLED = False` in `media_group.py`.
+- Keeps jitter buffer 4.0 s, initial prebuffer 2.5 s, rebuffer resume 2.0 s, remote prefill 1.4 s, cohort grace 0.30 s, clean STOP/source-switch, Radio, YT/YTM transport, individual playback, membership, watchdog and recovery unchanged.
+- README files updated only to identify v0.20.1 and state that adaptive sync is disabled.
+
 ## 0.20.0 - Clean individual source switching + current documentation
 
 - Baseline remains the proven 0.10.32 runtime; no group timing, buffering, adaptive-sync, Radio, Zigbee, mapping, volume, WAV, button or Wi-Fi behavior is changed.
