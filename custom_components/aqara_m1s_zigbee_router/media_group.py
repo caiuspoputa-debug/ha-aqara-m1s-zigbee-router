@@ -63,6 +63,13 @@ GROUP_PREBUFFER_CHUNKS = max(1, round(GROUP_PREBUFFER_SECONDS / CHUNK_SECONDS))
 GROUP_REBUFFER_RESUME_CHUNKS = max(1, round(GROUP_REBUFFER_RESUME_SECONDS / CHUNK_SECONDS))
 GROUP_REMOTE_PREFILL_CHUNKS = max(1, round(GROUP_REMOTE_PREFILL_SECONDS / CHUNK_SECONDS))
 GROUP_SOURCE_STALL_TIMEOUT = 5.0
+# Finite YT/YTM EOF must not become HA IDLE until the PCM already handed to
+# each hub has actually drained.  These values are safety bounds/poll cadence
+# only; normal completion is decided from live queue/TCP/ALSA state.
+GROUP_FINITE_DRAIN_TIMEOUT_SECONDS = 8.0
+GROUP_FINITE_DRAIN_POLL_SECONDS = 0.10
+GROUP_FINITE_DRAIN_HEALTH_TIMEOUT_SECONDS = 1.0
+GROUP_FINITE_DRAIN_STABLE_POLLS = 3
 
 # Keep enough per-member queue for the complete jitter window.  Late joiners
 # are primed with the recent shared PCM history and catch up over TCP before
@@ -1915,6 +1922,125 @@ class AqaraM1SMediaGroupManager:
             int(source_queue.qsize() * CHUNK_SECONDS * 1000),
         )
 
+    async def _wait_for_finite_playout_drain(self, generation: int) -> bool:
+        """Wait until finite group PCM has really left every active hub.
+
+        Source EOF only means FFmpeg/HA has no more PCM to produce.  It does
+        not mean the M1S speakers are silent: frames can still be waiting in a
+        member queue, the local TCP transport, or the hub ALSA buffer.  Keep
+        the HA group logically active until all three layers are drained.
+        """
+        deadline = time.monotonic() + GROUP_FINITE_DRAIN_TIMEOUT_SECONDS
+        stable_polls = 0
+        last_pending: dict[str, Any] = {}
+
+        while (
+            generation == self._generation
+            and self.desired_playing
+            and not self._shutting_down
+            and time.monotonic() < deadline
+        ):
+            members = [
+                member
+                for member in self.active_members
+                if member.ready_for_fanout and self._member_online(member)
+            ]
+            if not members:
+                _LOGGER.info(
+                    "M1S group finite EOF drain has no active receivers; complete"
+                )
+                return True
+
+            health_results = await asyncio.gather(
+                *(
+                    asyncio.wait_for(
+                        self._read_group_receiver_health(member),
+                        timeout=GROUP_FINITE_DRAIN_HEALTH_TIMEOUT_SECONDS,
+                    )
+                    for member in members
+                ),
+                return_exceptions=True,
+            )
+
+            all_drained = True
+            pending: dict[str, Any] = {}
+            for member, result in zip(members, health_results, strict=False):
+                queue_ms = int(
+                    (member.queue.qsize() if member.queue is not None else 0)
+                    * CHUNK_SECONDS
+                    * 1000
+                )
+                transport_bytes = 0
+                writer = member.writer
+                transport = (
+                    getattr(writer, "transport", None)
+                    if writer is not None
+                    else None
+                )
+                if transport is not None:
+                    with suppress(Exception):
+                        transport_bytes = int(transport.get_write_buffer_size())
+
+                if isinstance(result, BaseException):
+                    # Do not guess a completed drain while the receiver is still
+                    # connected but its ALSA state cannot be read.
+                    alsa_delay = None
+                    tcp_established = True
+                    health_error = str(result)
+                else:
+                    member.last_receiver_health = result
+                    alsa_delay = result.get("alsa_delay_frames")
+                    tcp_established = bool(result.get("tcp_established"))
+                    health_error = None
+
+                alsa_drained = (
+                    alsa_delay is not None and int(alsa_delay) <= 0
+                ) or (alsa_delay is None and not tcp_established)
+                member_drained = (
+                    queue_ms == 0
+                    and transport_bytes == 0
+                    and alsa_drained
+                )
+                if not member_drained:
+                    all_drained = False
+                    pending[member.name] = {
+                        "queue_ms": queue_ms,
+                        "transport_bytes": transport_bytes,
+                        "alsa_delay_frames": alsa_delay,
+                        "tcp_established": tcp_established,
+                        "health_error": health_error,
+                    }
+
+            last_pending = pending
+            if all_drained:
+                stable_polls += 1
+                if stable_polls >= GROUP_FINITE_DRAIN_STABLE_POLLS:
+                    _LOGGER.info(
+                        "M1S group finite EOF fully drained receivers=%s stable_polls=%s",
+                        [member.name for member in members],
+                        stable_polls,
+                    )
+                    return True
+            else:
+                stable_polls = 0
+
+            await asyncio.sleep(GROUP_FINITE_DRAIN_POLL_SECONDS)
+
+        if (
+            generation != self._generation
+            or not self.desired_playing
+            or self._shutting_down
+        ):
+            return False
+
+        _LOGGER.warning(
+            "M1S group finite EOF drain safety timeout after %.1fs pending=%s; "
+            "publishing completion to avoid a stuck Cast session",
+            GROUP_FINITE_DRAIN_TIMEOUT_SECONDS,
+            last_pending,
+        )
+        return True
+
     async def _broadcast_loop(
         self, process: asyncio.subprocess.Process, generation: int
     ) -> None:
@@ -2118,16 +2244,24 @@ class AqaraM1SMediaGroupManager:
                 await producer_task
             if generation == self._generation and self.desired_playing:
                 if self.media_is_finite and producer_error is None:
-                    # A finite track reaching EOF is a normal completion, not a
-                    # failed live stream. Do not restart FFmpeg or let reconcile
-                    # reopen the same URL. The already-sent PCM is left to drain
-                    # naturally from the hub-side buffers.
-                    self.desired_playing = False
-                    self._last_failure = None
-                    _LOGGER.info(
-                        "M1S group finite media reached normal EOF; "
-                        "watchdog restart suppressed"
-                    )
+                    # Source EOF is not audible EOF.  The broadcaster has emptied
+                    # the shared HA source queue, but per-member TCP/ALSA buffers
+                    # can still contain the final PCM.  Keep the group active
+                    # (PLAYING/BUFFERING from HA's point of view) until those real
+                    # downstream queues have drained, then publish IDLE exactly once.
+                    drained = await self._wait_for_finite_playout_drain(generation)
+                    if (
+                        drained
+                        and generation == self._generation
+                        and self.desired_playing
+                        and not self._shutting_down
+                    ):
+                        self.desired_playing = False
+                        self._last_failure = None
+                        _LOGGER.info(
+                            "M1S group finite media reached audible EOF after "
+                            "receiver drain; watchdog restart suppressed"
+                        )
                 else:
                     self._last_failure = self._last_failure or "ffmpeg_stream_ended"
                     self._schedule_watchdog_restart()

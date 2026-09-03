@@ -1,3 +1,9 @@
+## 0.10.47
+
+- Group YT/YTM finite-media EOF only: HA no longer publishes IDLE immediately when the FFmpeg/source queue ends.
+- Before publishing IDLE, the group now waits for the actual per-hub PCM queue, local TCP write buffer, and hub ALSA delay to drain, with three consecutive drained health samples.
+- Radio/live media, individual media player, startup handshake, buffering/rebuffering, synchronization, volume/mute, membership, Zigbee and all other behavior are unchanged from 0.10.46.
+
 ## 0.10.46
 
 - YT/YTM transport-start handshake for both M1S Media Group and individual M1S media players.
