@@ -230,6 +230,11 @@ class AqaraM1SMediaGroupManager:
         self.volume = 0.05
         self.muted = False
         self.desired_playing = False
+        # True only after a finite YT/YTM source has reached normal EOF while
+        # downstream member/TCP/ALSA buffers are still draining.  During this
+        # phase the logical media_player remains active, but no recovery path
+        # may reopen the already-finished source URL.
+        self._finite_eof_draining = False
 
         self.ffmpeg: asyncio.subprocess.Process | None = None
         self.broadcast_task: asyncio.Task | None = None
@@ -637,6 +642,7 @@ class AqaraM1SMediaGroupManager:
                 else None
             )
             self.youtube_transport_started_serial = None
+            self._finite_eof_draining = False
             self.desired_playing = True
             self._watchdog_attempts = 0
             await self._restart_stream_locked(reason="user_play")
@@ -647,6 +653,7 @@ class AqaraM1SMediaGroupManager:
     async def async_resume(self) -> None:
         if not self.media_url:
             return
+        self._finite_eof_draining = False
         self.desired_playing = True
         async with self._lock:
             if not self.ffmpeg_running:
@@ -657,6 +664,7 @@ class AqaraM1SMediaGroupManager:
 
     async def async_stop(self, *, clear_intent: bool = True) -> None:
         if clear_intent:
+            self._finite_eof_draining = False
             self.desired_playing = False
         try:
             await asyncio.wait_for(self._cancel_background_recovery(), timeout=3.0)
@@ -723,6 +731,7 @@ class AqaraM1SMediaGroupManager:
 
         # Disable every automatic restart path first.  The next user Play starts
         # a completely new timeline instead of inheriting a stuck recovery task.
+        self._finite_eof_draining = False
         self.desired_playing = False
         self._watchdog_attempts = 0
         self._last_failure = reason
@@ -2150,6 +2159,12 @@ class AqaraM1SMediaGroupManager:
                 if producer_error is not None:
                     raise producer_error
                 if producer_done.is_set() and source_queue.empty():
+                    if self.media_is_finite:
+                        # Arm the no-reopen gate at the exact source EOF boundary,
+                        # before the broadcaster enters its downstream drain phase.
+                        self._finite_eof_draining = True
+                        self._last_failure = None
+                        self._signal_update()
                     break
 
                 now = time.monotonic()
@@ -2244,12 +2259,21 @@ class AqaraM1SMediaGroupManager:
                 await producer_task
             if generation == self._generation and self.desired_playing:
                 if self.media_is_finite and producer_error is None:
-                    # Source EOF is not audible EOF.  The broadcaster has emptied
-                    # the shared HA source queue, but per-member TCP/ALSA buffers
-                    # can still contain the final PCM.  Keep the group active
-                    # (PLAYING/BUFFERING from HA's point of view) until those real
-                    # downstream queues have drained, then publish IDLE exactly once.
-                    drained = await self._wait_for_finite_playout_drain(generation)
+                    # Source EOF is not audible EOF.  Keep the entity active while
+                    # downstream PCM drains, but explicitly freeze every source
+                    # recovery path.  Without this gate the reconcile loop sees
+                    # desired_playing=True + ffmpeg_running=False and reopens the
+                    # same finite URL, creating an endless tail/full-track loop.
+                    # The gate is normally armed at the exact source-queue EOF
+                    # boundary above. Keep this defensive assignment for short/
+                    # unusual finite streams that reach finally by another clean path.
+                    self._finite_eof_draining = True
+                    self._last_failure = None
+                    self._signal_update()
+                    try:
+                        drained = await self._wait_for_finite_playout_drain(generation)
+                    finally:
+                        self._finite_eof_draining = False
                     if (
                         drained
                         and generation == self._generation
@@ -2260,7 +2284,7 @@ class AqaraM1SMediaGroupManager:
                         self._last_failure = None
                         _LOGGER.info(
                             "M1S group finite media reached audible EOF after "
-                            "receiver drain; watchdog restart suppressed"
+                            "receiver drain; source reopen suppressed during drain"
                         )
                 else:
                     self._last_failure = self._last_failure or "ffmpeg_stream_ended"
@@ -2617,6 +2641,11 @@ class AqaraM1SMediaGroupManager:
                 await asyncio.sleep(RECONCILE_SECONDS)
                 if not self.desired_playing:
                     return
+                if self._finite_eof_draining:
+                    # Normal finite EOF: downstream PCM is still audible, but
+                    # the source itself is finished.  Freeze receiver/source
+                    # reconciliation until the explicit drain phase completes.
+                    continue
 
                 now = time.monotonic()
                 for member in self.members.values():
@@ -2693,10 +2722,16 @@ class AqaraM1SMediaGroupManager:
                 # If Play was requested while every receiver was unavailable, start
                 # the source automatically as soon as any background preparation
                 # succeeds.  No global receiver teardown is performed.
-                if not self.ffmpeg_running and self.active_members and self.media_url:
+                if (
+                    not self._finite_eof_draining
+                    and not self.ffmpeg_running
+                    and self.active_members
+                    and self.media_url
+                ):
                     async with self._lock:
                         if (
                             self.desired_playing
+                            and not self._finite_eof_draining
                             and not self.ffmpeg_running
                             and self.active_members
                             and self.media_url
@@ -2772,7 +2807,12 @@ class AqaraM1SMediaGroupManager:
             self._schedule_watchdog_restart()
 
     def _schedule_watchdog_restart(self) -> None:
-        if self._shutting_down or not self.desired_playing or not self.media_url:
+        if (
+            self._shutting_down
+            or self._finite_eof_draining
+            or not self.desired_playing
+            or not self.media_url
+        ):
             return
         if self.watchdog_task and not self.watchdog_task.done():
             return
@@ -2786,7 +2826,12 @@ class AqaraM1SMediaGroupManager:
     async def _watchdog_restart(self) -> None:
         try:
             await asyncio.sleep(WATCHDOG_RESTART_DELAY)
-            if not self.desired_playing or self.ffmpeg_running or not self.media_url:
+            if (
+                self._finite_eof_draining
+                or not self.desired_playing
+                or self.ffmpeg_running
+                or not self.media_url
+            ):
                 return
             self._watchdog_attempts += 1
             _LOGGER.warning(
@@ -2824,7 +2869,12 @@ class AqaraM1SMediaGroupManager:
     async def _slow_retry(self) -> None:
         try:
             await asyncio.sleep(WATCHDOG_SLOW_RETRY_DELAY)
-            if not self.desired_playing or self.ffmpeg_running or not self.media_url:
+            if (
+                self._finite_eof_draining
+                or not self.desired_playing
+                or self.ffmpeg_running
+                or not self.media_url
+            ):
                 return
             self._watchdog_attempts = 0
             async with self._lock:

@@ -1,3 +1,11 @@
+## 0.10.48 - YT/YTM finite EOF drain without source reopen
+
+- Base: 0.10.47 only.
+- Fixes the group finite-media EOF loop introduced by keeping `desired_playing` active during audible drain.
+- Adds an internal EOF-draining gate that prevents reconcile/watchdog/slow-retry from reopening the already-finished YT/YTM URL while member/TCP/ALSA buffers drain.
+- The group remains logically active until the existing real drain completes, then publishes IDLE once.
+- No changes to individual playback, Radio, startup handshake, normal buffering/rebuffering, sync, volume/mute, membership, Zigbee, or add-on behavior.
+
 ## 0.10.47
 
 - Group YT/YTM finite-media EOF only: HA no longer publishes IDLE immediately when the FFmpeg/source queue ends.
