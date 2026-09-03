@@ -1,3 +1,10 @@
+## 0.10.44
+- YT/YTM finite media can receive duration + start-position metadata from the companion Cast add-on.
+- Group and individual FFmpeg use the remaining track duration as an output limit, so the HTTP source cannot hold the last fragment open indefinitely.
+- Individual YT/YTM no longer enables FFmpeg reconnect at finite-media EOF.
+- HA remains PLAYING through finite EOF until local TCP buffers and the hub-side ALSA tail report drained; group completion waits for every ready member.
+- Radio/live behavior is unchanged and retains FFmpeg reconnect/recovery.
+
 ## 0.10.38 - Clean STOP FFmpeg stdout drain
 
 - Rebased directly on 0.10.37.
