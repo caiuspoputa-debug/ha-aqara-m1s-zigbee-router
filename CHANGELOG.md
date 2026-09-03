@@ -1,43 +1,25 @@
-## 0.10.48 - YT/YTM finite EOF drain without source reopen
+## 0.20.0 - Clean individual source switching + current documentation
 
-- Base: 0.10.47 only.
-- Fixes the group finite-media EOF loop introduced by keeping `desired_playing` active during audible drain.
-- Adds an internal EOF-draining gate that prevents reconcile/watchdog/slow-retry from reopening the already-finished YT/YTM URL while member/TCP/ALSA buffers drain.
-- The group remains logically active until the existing real drain completes, then publishes IDLE once.
-- No changes to individual playback, Radio, startup handshake, normal buffering/rebuffering, sync, volume/mute, membership, Zigbee, or add-on behavior.
+- Baseline remains the proven 0.10.32 runtime; no group timing, buffering, adaptive-sync, Radio, Zigbee, mapping, volume, WAV, button or Wi-Fi behavior is changed.
+- Individual media source changes now stop the exact hub-side port 12346 receiver/aplay before detaching the old FFmpeg/TCP transport, matching the clean source-switch ordering already used by the group.
+- If that remote pre-stop succeeds, the new individual receiver starts without a second redundant stop; if it fails, the normal start command retains its scoped cleanup fallback.
+- Updated README.md and README_RO.md to describe the current 0.20.0 audio architecture: 35 ms PCM periods, 4.0 s jitter buffer, 2.5 s initial prebuffer, 2.0 s rebuffer threshold, 1.4 s remote prefill, 0.30 s initial-cohort grace, periodic receiver resync disabled, and continuous adaptive group correction up to +/-0.8%.
+- Documented the companion M1S YouTube Cast Receiver 1.0.1 continuous-session model: the integration treats YT/YTM as one ordinary continuous audio stream and does not own per-track EOF, queue or Next logic.
 
-## 0.10.47
+## 0.10.32 - Clean group source switching
 
-- Group YT/YTM finite-media EOF only: HA no longer publishes IDLE immediately when the FFmpeg/source queue ends.
-- Before publishing IDLE, the group now waits for the actual per-hub PCM queue, local TCP write buffer, and hub ALSA delay to drain, with three consecutive drained health samples.
-- Radio/live media, individual media player, startup handshake, buffering/rebuffering, synchronization, volume/mute, membership, Zigbee and all other behavior are unchanged from 0.10.46.
+- Group source changes now issue the remote group STOP before FFmpeg/TCP teardown, matching the clean explicit-STOP ordering.
+- Prevents buffered fragments from the previous source from draining/repeating during transitions such as YT/YTM -> radio.
+- Avoids a duplicate remote STOP during the same controlled source switch.
+- Adaptive continuous sync logic is unchanged from 0.10.31.
 
-## 0.10.46
+## 0.10.31 - Adaptive continuous group sync
 
-- YT/YTM transport-start handshake for both M1S Media Group and individual M1S media players.
-- The integration exposes the exact `stream_serial` only when first PCM is released toward the hub transport, allowing the Cast sender to remain LOADING during real buffering and start its clock at audible playout.
-- No fixed YT/YTM startup delay was added; Radio and all existing buffer/rebuffer/sync settings remain unchanged from 0.10.42.
-
-## 0.10.38 - Clean STOP FFmpeg stdout drain
-
-- Rebased directly on 0.10.37.
-- Fixes a STOP deadlock where the PCM stdout producer was cancelled before FFmpeg had closed its PIPE.
-- During STOP/source replacement the producer now keeps draining/discarding FFmpeg stdout until the process exits (or the existing kill timeout is reached).
-- Prevents normal STOP/seek/track-boundary transitions from escalating to `user_stop_timeout` hard transport resets.
-- No changes to buffering, Play startup, finite-media EOF policy, reconnect policy, group sync, or add-on behavior.
-
-## 0.10.37 - Finite media: no FFmpeg reconnect
-
-- YT/YTM media explicitly marked as finite no longer uses FFmpeg HTTP reconnect flags.
-- Prevents FFmpeg from reopening the same add-on URL/seek position at EOF.
-- Radio/live HTTP streams keep the existing reconnect behavior unchanged.
-
-## v0.10.36 - Clean source switch + finite media EOF
-
-- Base: v0.10.30 only.
-- Source change on the group now uses the same clean ordering as explicit group STOP: remote `GROUP_STOP` first, then local FFmpeg/TCP teardown, with no duplicate remote stop during detach.
-- Media explicitly marked by the companion YT/YTM Cast add-on is treated as finite: normal FFmpeg EOF does not trigger watchdog/reconcile restart of the same track; live radio/HTTP streams keep the existing recovery behaviour.
-- No adaptive sync, buffer, PCM, startup, Zigbee, volume, mute, or other behaviour changes.
+- Replaces disruptive periodic receiver resync with continuous per-hub micro-resampling.
+- Uses live ALSA delay feedback to accelerate a lagging hub or slow an early hub without STOP/reconnect.
+- PI-style controller keeps small long-term clock differences compensated after alignment.
+- Maximum correction is limited to +/-0.8%; corrections are slewed to avoid audible jumps.
+- Preserves the clean group STOP behaviour from 0.10.30.
 
 ## 0.10.28 - 2026-09-01
 
