@@ -56,15 +56,16 @@ CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
 # stalls refill from buffered PCM instead of starving aplay.
 GROUP_JITTER_BUFFER_SECONDS = 4.00
 GROUP_PREBUFFER_SECONDS = 2.50
+# YT/YTM only: reduce initial startup cushion without changing radio or rebuffer policy.
+YTYTM_INITIAL_PREBUFFER_SECONDS = 0.50
 GROUP_REBUFFER_RESUME_SECONDS = 2.00
 GROUP_REMOTE_PREFILL_SECONDS = 1.40
 GROUP_JITTER_BUFFER_CHUNKS = max(1, round(GROUP_JITTER_BUFFER_SECONDS / CHUNK_SECONDS))
 GROUP_PREBUFFER_CHUNKS = max(1, round(GROUP_PREBUFFER_SECONDS / CHUNK_SECONDS))
+YTYTM_INITIAL_PREBUFFER_CHUNKS = max(1, round(YTYTM_INITIAL_PREBUFFER_SECONDS / CHUNK_SECONDS))
 GROUP_REBUFFER_RESUME_CHUNKS = max(1, round(GROUP_REBUFFER_RESUME_SECONDS / CHUNK_SECONDS))
 GROUP_REMOTE_PREFILL_CHUNKS = max(1, round(GROUP_REMOTE_PREFILL_SECONDS / CHUNK_SECONDS))
 GROUP_SOURCE_STALL_TIMEOUT = 5.0
-FINITE_EOF_DRAIN_TIMEOUT = 15.0
-FINITE_EOF_DRAIN_POLL_SECONDS = 0.20
 
 # Keep enough per-member queue for the complete jitter window.  Late joiners
 # are primed with the recent shared PCM history and catch up over TCP before
@@ -214,9 +215,6 @@ class AqaraM1SMediaGroupManager:
         # the companion YouTube/YouTube Music Cast receiver). Live streams such
         # as Radio Browser remain restartable on unexpected EOF.
         self.media_is_finite = False
-        self.media_duration_seconds: float | None = None
-        self.media_start_position_seconds = 0.0
-        self._finite_eof_draining = False
         self.volume = 0.05
         self.muted = False
         self.desired_playing = False
@@ -611,8 +609,6 @@ class AqaraM1SMediaGroupManager:
         title: str | None,
         *,
         finite_media: bool = False,
-        duration_seconds: float | None = None,
-        start_position_seconds: float = 0.0,
     ) -> None:
         async with self._lock:
             self.media_url = media_url
@@ -620,17 +616,6 @@ class AqaraM1SMediaGroupManager:
             self.media_type = media_type or MediaType.MUSIC
             self.media_title = title
             self.media_is_finite = bool(finite_media)
-            self.media_duration_seconds = (
-                float(duration_seconds)
-                if finite_media and duration_seconds is not None and duration_seconds > 0
-                else None
-            )
-            self.media_start_position_seconds = (
-                max(0.0, float(start_position_seconds))
-                if finite_media
-                else 0.0
-            )
-            self._finite_eof_draining = False
             self.desired_playing = True
             self._watchdog_attempts = 0
             await self._restart_stream_locked(reason="user_play")
@@ -1118,17 +1103,6 @@ class AqaraM1SMediaGroupManager:
         args.extend([
             "-i",
             self.media_url,
-        ])
-        if self.media_is_finite and self.media_duration_seconds is not None:
-            remaining = max(0.05, self.media_duration_seconds - self.media_start_position_seconds)
-            args.extend(["-t", f"{remaining:.3f}"])
-            _LOGGER.info(
-                "M1S group finite FFmpeg output limit duration=%ss start=%ss remaining=%ss",
-                round(self.media_duration_seconds, 3),
-                round(self.media_start_position_seconds, 3),
-                round(remaining, 3),
-            )
-        args.extend([
             "-vn",
             "-ac",
             str(PCM_CHANNELS),
@@ -1969,8 +1943,18 @@ class AqaraM1SMediaGroupManager:
             # Let FFmpeg build the same real jitter cushion used by the stable
             # individual player. For finite/short media, EOF releases startup early.
             prebuffer_started = time.monotonic()
+            initial_prebuffer_chunks = (
+                YTYTM_INITIAL_PREBUFFER_CHUNKS
+                if self.media_is_finite
+                else GROUP_PREBUFFER_CHUNKS
+            )
+            initial_prebuffer_seconds = (
+                YTYTM_INITIAL_PREBUFFER_SECONDS
+                if self.media_is_finite
+                else GROUP_PREBUFFER_SECONDS
+            )
             while (
-                source_queue.qsize() < GROUP_PREBUFFER_CHUNKS
+                source_queue.qsize() < initial_prebuffer_chunks
                 and not producer_done.is_set()
                 and generation == self._generation
                 and self.desired_playing
@@ -1984,7 +1968,7 @@ class AqaraM1SMediaGroupManager:
                 "M1S group stable source buffer primed queued_ms=%s target_ms=%s "
                 "prime_time_ms=%s",
                 int(source_queue.qsize() * CHUNK_SECONDS * 1000),
-                int(GROUP_PREBUFFER_SECONDS * 1000),
+                int(initial_prebuffer_seconds * 1000),
                 int((time.monotonic() - prebuffer_started) * 1000),
             )
 
@@ -2108,15 +2092,14 @@ class AqaraM1SMediaGroupManager:
                 await producer_task
             if generation == self._generation and self.desired_playing:
                 if self.media_is_finite and producer_error is None:
-                    # Finite YT/YTM is complete only after the shared source,
-                    # every member's HA/TCP queue, and the hub-side ALSA tail have
-                    # drained. Keep HA in PLAYING during that drain so the Cast
-                    # add-on cannot advance the queue before the last PCM is heard.
-                    await self._wait_finite_eof_drain(generation)
+                    # A finite track reaching EOF is a normal completion, not a
+                    # failed live stream. Do not restart FFmpeg or let reconcile
+                    # reopen the same URL. The already-sent PCM is left to drain
+                    # naturally from the hub-side buffers.
                     self.desired_playing = False
                     self._last_failure = None
                     _LOGGER.info(
-                        "M1S group finite media reached normal EOF after receiver drain; "
+                        "M1S group finite media reached normal EOF; "
                         "watchdog restart suppressed"
                     )
                 else:
@@ -2424,139 +2407,6 @@ class AqaraM1SMediaGroupManager:
         )
         return self._parse_group_receiver_health(str(snapshot))
 
-    @staticmethod
-    def _writer_pending_bytes(writer: asyncio.StreamWriter | None) -> int:
-        if writer is None:
-            return 0
-        transport = getattr(writer, "transport", None)
-        if transport is None:
-            return 0
-        getter = getattr(transport, "get_write_buffer_size", None)
-        if getter is None:
-            return 0
-        try:
-            return max(0, int(getter()))
-        except Exception:
-            return 0
-
-    @staticmethod
-    def _receiver_audio_drained(health: dict[str, Any] | None) -> bool:
-        if not health:
-            return False
-        delay = health.get("alsa_delay_frames")
-        if isinstance(delay, (int, float)):
-            return delay <= 0
-
-        avail = health.get("alsa_avail_frames")
-        buffer_size = health.get("alsa_buffer_frames")
-        if (
-            isinstance(avail, (int, float))
-            and isinstance(buffer_size, (int, float))
-            and buffer_size > 0
-        ):
-            return avail >= buffer_size
-
-        state = str(health.get("alsa_state") or "").upper()
-        return state not in ("RUNNING", "DRAINING", "PREPARED")
-
-    async def _wait_finite_eof_drain(self, generation: int) -> None:
-        """Wait for YT/YTM PCM to leave HA, TCP, and each hub's ALSA buffer."""
-        if generation != self._generation or not self.desired_playing:
-            return
-
-        self._finite_eof_draining = True
-        started = time.monotonic()
-        stable_empty_polls = 0
-        last_snapshot = ""
-
-        # Stop ordinary stale-receiver probes from interpreting the intentional
-        # end-of-stream ALSA underrun as a fault and rebuilding a hub.
-        for member in list(self.ready_members):
-            task = member.receiver_health_task
-            member.receiver_health_task = None
-            if task is not None:
-                await self._cancel_task(task)
-
-        try:
-            while (
-                generation == self._generation
-                and self.desired_playing
-                and not self._shutting_down
-            ):
-                members = [
-                    member
-                    for member in self.ready_members
-                    if member.writer is not None and member.queue is not None
-                ]
-                if not members:
-                    _LOGGER.info(
-                        "M1S group finite EOF drain has no ready receivers; completing"
-                    )
-                    return
-
-                queue_depths = {
-                    member.name: member.queue.qsize()
-                    for member in members
-                    if member.queue is not None
-                }
-                writer_pending = {
-                    member.name: self._writer_pending_bytes(member.writer)
-                    for member in members
-                }
-                local_drained = (
-                    all(depth == 0 for depth in queue_depths.values())
-                    and all(pending == 0 for pending in writer_pending.values())
-                )
-
-                remote_drained = False
-                delays: dict[str, Any] = {}
-                if local_drained:
-                    results = await asyncio.gather(
-                        *(self._read_group_receiver_health(member) for member in members),
-                        return_exceptions=True,
-                    )
-                    remote_drained = True
-                    for member, result in zip(members, results, strict=False):
-                        if isinstance(result, BaseException):
-                            remote_drained = False
-                            delays[member.name] = f"health_error:{result}"
-                            continue
-                        member.last_receiver_health = result
-                        delays[member.name] = result.get("alsa_delay_frames")
-                        if not self._receiver_audio_drained(result):
-                            remote_drained = False
-
-                last_snapshot = (
-                    f"queues={queue_depths} writer_bytes={writer_pending} "
-                    f"alsa_delay_frames={delays}"
-                )
-
-                if local_drained and remote_drained:
-                    stable_empty_polls += 1
-                    if stable_empty_polls >= 2:
-                        _LOGGER.info(
-                            "M1S group finite EOF fully drained in %.3fs %s",
-                            time.monotonic() - started,
-                            last_snapshot,
-                        )
-                        return
-                else:
-                    stable_empty_polls = 0
-
-                if time.monotonic() - started >= FINITE_EOF_DRAIN_TIMEOUT:
-                    _LOGGER.warning(
-                        "M1S group finite EOF drain safety timeout after %.1fs; "
-                        "completing without restart %s",
-                        FINITE_EOF_DRAIN_TIMEOUT,
-                        last_snapshot,
-                    )
-                    return
-
-                await asyncio.sleep(FINITE_EOF_DRAIN_POLL_SECONDS)
-        finally:
-            self._finite_eof_draining = False
-            self._signal_update()
-
     async def _probe_group_receiver_health(self, member: GroupMember) -> None:
         current = asyncio.current_task()
         try:
@@ -2564,8 +2414,6 @@ class AqaraM1SMediaGroupManager:
                 return
             health = await self._read_group_receiver_health(member)
             member.last_receiver_health = health
-            if self._finite_eof_draining:
-                return
             if health.get("stale") and member.ready_for_fanout and member.writer is not None:
                 reason = str(health.get("reason") or "receiver_stale")
                 _LOGGER.warning(
@@ -2636,8 +2484,6 @@ class AqaraM1SMediaGroupManager:
                 # diagnostic only; ALSA negative delay / oversized avail triggers
                 # a member-only rebuild, matching the stable individual player.
                 for member in list(self.ready_members):
-                    if self._finite_eof_draining:
-                        break
                     task = member.receiver_health_task
                     if task is not None and task.done():
                         member.receiver_health_task = None
@@ -2687,16 +2533,10 @@ class AqaraM1SMediaGroupManager:
                 # If Play was requested while every receiver was unavailable, start
                 # the source automatically as soon as any background preparation
                 # succeeds.  No global receiver teardown is performed.
-                if (
-                    not self._finite_eof_draining
-                    and not self.ffmpeg_running
-                    and self.active_members
-                    and self.media_url
-                ):
+                if not self.ffmpeg_running and self.active_members and self.media_url:
                     async with self._lock:
                         if (
                             self.desired_playing
-                            and not self._finite_eof_draining
                             and not self.ffmpeg_running
                             and self.active_members
                             and self.media_url
@@ -2734,8 +2574,6 @@ class AqaraM1SMediaGroupManager:
                     or not self.desired_playing
                 ):
                     return
-                if self._finite_eof_draining:
-                    continue
                 now = time.monotonic()
                 if (
                     self._stream_started_monotonic is not None
@@ -2774,12 +2612,7 @@ class AqaraM1SMediaGroupManager:
             self._schedule_watchdog_restart()
 
     def _schedule_watchdog_restart(self) -> None:
-        if (
-            self._shutting_down
-            or self._finite_eof_draining
-            or not self.desired_playing
-            or not self.media_url
-        ):
+        if self._shutting_down or not self.desired_playing or not self.media_url:
             return
         if self.watchdog_task and not self.watchdog_task.done():
             return
@@ -2793,12 +2626,7 @@ class AqaraM1SMediaGroupManager:
     async def _watchdog_restart(self) -> None:
         try:
             await asyncio.sleep(WATCHDOG_RESTART_DELAY)
-            if (
-                not self.desired_playing
-                or self._finite_eof_draining
-                or self.ffmpeg_running
-                or not self.media_url
-            ):
+            if not self.desired_playing or self.ffmpeg_running or not self.media_url:
                 return
             self._watchdog_attempts += 1
             _LOGGER.warning(
@@ -2836,12 +2664,7 @@ class AqaraM1SMediaGroupManager:
     async def _slow_retry(self) -> None:
         try:
             await asyncio.sleep(WATCHDOG_SLOW_RETRY_DELAY)
-            if (
-                not self.desired_playing
-                or self._finite_eof_draining
-                or self.ffmpeg_running
-                or not self.media_url
-            ):
+            if not self.desired_playing or self.ffmpeg_running or not self.media_url:
                 return
             self._watchdog_attempts = 0
             async with self._lock:
@@ -3176,31 +2999,12 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
             isinstance(extra, dict)
             and extra.get("m1s_youtube_cast_receiver") is True
         )
-        duration_seconds: float | None = None
-        start_position_seconds = 0.0
-        if finite_media and isinstance(extra, dict):
-            try:
-                raw_duration = extra.get("yt_duration_seconds")
-                if raw_duration is not None:
-                    candidate = float(raw_duration)
-                    if candidate > 0:
-                        duration_seconds = candidate
-            except (TypeError, ValueError):
-                duration_seconds = None
-            try:
-                start_position_seconds = max(
-                    0.0, float(extra.get("yt_start_position_seconds") or 0.0)
-                )
-            except (TypeError, ValueError):
-                start_position_seconds = 0.0
         await self.manager.async_start(
             url,
             original,
             media_type or MediaType.MUSIC,
             self._group_media_title(title),
             finite_media=finite_media,
-            duration_seconds=duration_seconds,
-            start_position_seconds=start_position_seconds,
         )
         self.async_write_ha_state()
 

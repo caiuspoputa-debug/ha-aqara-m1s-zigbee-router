@@ -75,10 +75,13 @@ PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
 # below a few seconds without returning to the old 5-6 s volume lag.
 SINGLE_JITTER_BUFFER_SECONDS = 4.00
 SINGLE_PREBUFFER_SECONDS = 2.50
+# YT/YTM only: reduce initial startup cushion without changing radio or rebuffer policy.
+YTYTM_INITIAL_PREBUFFER_SECONDS = 0.50
 SINGLE_REBUFFER_RESUME_SECONDS = 2.00
 SINGLE_REMOTE_PREFILL_SECONDS = 1.40
 SINGLE_JITTER_BUFFER_CHUNKS = max(1, int(SINGLE_JITTER_BUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_PREBUFFER_CHUNKS = max(1, int(SINGLE_PREBUFFER_SECONDS / PCM_CHUNK_SECONDS))
+YTYTM_INITIAL_PREBUFFER_CHUNKS = max(1, int(YTYTM_INITIAL_PREBUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_REBUFFER_RESUME_CHUNKS = max(1, int(SINGLE_REBUFFER_RESUME_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_REMOTE_PREFILL_CHUNKS = max(
     1, int(SINGLE_REMOTE_PREFILL_SECONDS / PCM_CHUNK_SECONDS)
@@ -95,8 +98,6 @@ SINGLE_CATCHUP_LOG_THRESHOLD_SECONDS = 0.50
 SINGLE_CATCHUP_LOG_INTERVAL_SECONDS = 30.0
 SINGLE_LOW_QUEUE_LOG_INTERVAL = 30.0
 SINGLE_SOURCE_STALL_TIMEOUT = 5.0
-FINITE_EOF_DRAIN_TIMEOUT = 15.0
-FINITE_EOF_DRAIN_POLL_SECONDS = 0.20
 SINGLE_TCP_RECOVERY_WINDOW_SECONDS = 30.0
 SINGLE_TCP_RECOVERY_BURST_LIMIT = 3
 SINGLE_TCP_RECOVERY_SILENCE_SECONDS = 0.14
@@ -221,9 +222,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._resume_media_id: str | None = None
         self._resume_media_type: str = MediaType.MUSIC
         self._resume_after_reconnect = False
-        self._media_is_finite = False
-        self._media_duration_seconds: float | None = None
-        self._media_start_position_seconds = 0.0
+        self._ytm_fast_start = False
         self._last_online_generation = 0
         self._resume_task: asyncio.Task | None = None
         self._ffmpeg: asyncio.subprocess.Process | None = None
@@ -850,109 +849,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         )
         return self._parse_single_receiver_health(str(snapshot))
 
-    @staticmethod
-    def _single_writer_pending_bytes(writer: asyncio.StreamWriter | None) -> int:
-        if writer is None:
-            return 0
-        transport = getattr(writer, "transport", None)
-        if transport is None:
-            return 0
-        getter = getattr(transport, "get_write_buffer_size", None)
-        if getter is None:
-            return 0
-        try:
-            return max(0, int(getter()))
-        except Exception:
-            return 0
-
-    @staticmethod
-    def _single_receiver_audio_drained(health: dict[str, Any] | None) -> bool:
-        if not health:
-            return False
-
-        delay = health.get("alsa_delay_frames")
-        if isinstance(delay, (int, float)):
-            return delay <= 0
-
-        avail = health.get("alsa_avail_frames")
-        buffer_size = health.get("alsa_buffer_frames")
-        if (
-            isinstance(avail, (int, float))
-            and isinstance(buffer_size, (int, float))
-            and buffer_size > 0
-        ):
-            return avail >= buffer_size
-
-        state = str(health.get("alsa_state") or "").upper()
-        return state not in ("RUNNING", "DRAINING", "PREPARED")
-
-    async def _wait_single_finite_eof_drain(
-        self,
-        writer: asyncio.StreamWriter,
-        *,
-        generation: int,
-        session: int,
-    ) -> None:
-        """Keep HA PLAYING until YT/YTM audio has actually left hub ALSA."""
-        started = time.monotonic()
-        stable_empty_polls = 0
-        last_pending = 0
-        last_health: dict[str, Any] | None = None
-
-        while (
-            generation == self._play_generation
-            and not self._shutting_down
-        ):
-            last_pending = self._single_writer_pending_bytes(writer)
-            remote_drained = False
-
-            if last_pending == 0:
-                try:
-                    last_health = await self._read_single_receiver_health()
-                    self._last_receiver_health = last_health
-                    remote_drained = self._single_receiver_audio_drained(last_health)
-                except Exception as err:
-                    _LOGGER.debug(
-                        "Aqara media finite EOF receiver-health read failed "
-                        "entity=%s session=%s host=%s error=%s",
-                        self.entity_id,
-                        session,
-                        self.client.host,
-                        err,
-                    )
-
-            if last_pending == 0 and remote_drained:
-                stable_empty_polls += 1
-                if stable_empty_polls >= 2:
-                    _LOGGER.info(
-                        "Aqara media finite EOF fully drained entity=%s session=%s "
-                        "host=%s elapsed=%.3fs alsa_delay_frames=%s",
-                        self.entity_id,
-                        session,
-                        self.client.host,
-                        time.monotonic() - started,
-                        None if not last_health else last_health.get("alsa_delay_frames"),
-                    )
-                    return
-            else:
-                stable_empty_polls = 0
-
-            if time.monotonic() - started >= FINITE_EOF_DRAIN_TIMEOUT:
-                _LOGGER.warning(
-                    "Aqara media finite EOF drain safety timeout entity=%s "
-                    "session=%s host=%s timeout=%ss writer_pending_bytes=%s "
-                    "alsa_delay_frames=%s",
-                    self.entity_id,
-                    session,
-                    self.client.host,
-                    FINITE_EOF_DRAIN_TIMEOUT,
-                    last_pending,
-                    None if not last_health else last_health.get("alsa_delay_frames"),
-                )
-                return
-
-            await asyncio.sleep(FINITE_EOF_DRAIN_POLL_SECONDS)
-
     async def _terminate_process_bounded(
         self, process: asyncio.subprocess.Process | None, *, reason: str
     ) -> None:
@@ -1234,29 +1130,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
         title = None
         extra = kwargs.get("extra") or {}
-        finite_media = bool(
+        ytm_fast_start = bool(
             isinstance(extra, dict)
             and extra.get("m1s_youtube_cast_receiver") is True
         )
-        duration_seconds: float | None = None
-        start_position_seconds = 0.0
         if isinstance(extra, dict):
             title = extra.get("title")
-            if finite_media:
-                try:
-                    raw_duration = extra.get("yt_duration_seconds")
-                    if raw_duration is not None:
-                        candidate = float(raw_duration)
-                        if candidate > 0:
-                            duration_seconds = candidate
-                except (TypeError, ValueError):
-                    duration_seconds = None
-                try:
-                    start_position_seconds = max(
-                        0.0, float(extra.get("yt_start_position_seconds") or 0.0)
-                    )
-                except (TypeError, ValueError):
-                    start_position_seconds = 0.0
         if not self._clean_media_title(title):
             title = await self._async_resolve_media_title(original_media_id, resolved)
             if not self._generation_is_current(generation):
@@ -1278,6 +1157,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 return
             self._resume_media_id = original_media_id
             self._resume_media_type = media_type or MediaType.MUSIC
+            self._ytm_fast_start = ytm_fast_start
             self._media_url = media_url
             self._attr_media_content_id = original_media_id
             self._attr_media_content_type = self._resume_media_type
@@ -1287,11 +1167,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 or "Radio stream"
             )
             self._resume_after_reconnect = True
-            self._media_is_finite = finite_media
-            self._media_duration_seconds = duration_seconds if finite_media else None
-            self._media_start_position_seconds = (
-                start_position_seconds if finite_media else 0.0
-            )
             await self._start_locked(generation)
 
     async def async_media_play(self) -> None:
@@ -1715,34 +1590,15 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
         args = [
             ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning",
-        ]
-        if (
-            urlsplit(self._media_url).scheme.lower() in ("http", "https")
-            and not self._media_is_finite
-        ):
-            args.extend([
-                "-reconnect", "1", "-reconnect_streamed", "1",
-                "-reconnect_delay_max", "5",
-            ])
-        # Decode freely into the bounded HA-side jitter buffer. The consumer
-        # below is the only real-time clock, so FFmpeg can refill the buffer
-        # after a short stall without ever filling the hub several seconds ahead.
-        args.extend(["-i", self._media_url])
-        if self._media_is_finite and self._media_duration_seconds is not None:
-            remaining = max(0.05, self._media_duration_seconds - self._media_start_position_seconds)
-            args.extend(["-t", f"{remaining:.3f}"])
-            _LOGGER.info(
-                "Aqara media finite FFmpeg output limit entity=%s "
-                "duration=%ss start=%ss remaining=%ss",
-                self.entity_id,
-                round(self._media_duration_seconds, 3),
-                round(self._media_start_position_seconds, 3),
-                round(remaining, 3),
-            )
-        args.extend([
+            "-reconnect", "1", "-reconnect_streamed", "1",
+            "-reconnect_delay_max", "5",
+            # Decode freely into the bounded HA-side jitter buffer. The consumer
+            # below is the only real-time clock, so FFmpeg can refill the buffer
+            # after a short stall without ever filling the hub several seconds ahead.
+            "-i", self._media_url,
             "-vn", "-ac", str(PCM_CHANNELS), "-ar", str(PCM_RATE),
             "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1",
-        ])
+        ]
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -1857,7 +1713,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         producer_done = asyncio.Event()
         producer_error: Exception | None = None
         producer_discard = False
-        normal_finite_eof = False
         low_queue_events = 0
         silence_fill_events = 0
         rebuffer_events = 0
@@ -2066,8 +1921,18 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             # Build a real jitter cushion before opening the playout clock. For
             # short files, start as soon as FFmpeg reaches EOF instead of waiting.
             prebuffer_started = time.monotonic()
+            initial_prebuffer_chunks = (
+                YTYTM_INITIAL_PREBUFFER_CHUNKS
+                if self._ytm_fast_start
+                else SINGLE_PREBUFFER_CHUNKS
+            )
+            initial_prebuffer_seconds = (
+                YTYTM_INITIAL_PREBUFFER_SECONDS
+                if self._ytm_fast_start
+                else SINGLE_PREBUFFER_SECONDS
+            )
             while (
-                queue.qsize() < SINGLE_PREBUFFER_CHUNKS
+                queue.qsize() < initial_prebuffer_chunks
                 and not producer_done.is_set()
                 and self._ffmpeg is process
                 and not self._shutting_down
@@ -2081,7 +1946,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 session,
                 self.client.host,
                 int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
-                int(SINGLE_PREBUFFER_SECONDS * 1000),
+                int(initial_prebuffer_seconds * 1000),
                 int((time.monotonic() - prebuffer_started) * 1000),
             )
 
@@ -2274,23 +2139,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             await process.wait()
             stderr_text = await stderr_task
 
-            normal_finite_eof = bool(
-                self._media_is_finite
-                and producer_error is None
-                and process.returncode == 0
-                and self._generation_is_current(generation)
-            )
-            if normal_finite_eof:
-                if health_task is not None:
-                    if not health_task.done():
-                        health_task.cancel()
-                    with suppress(asyncio.CancelledError, Exception):
-                        await health_task
-                    health_task = None
-                await self._wait_single_finite_eof_drain(
-                    writer, generation=generation, session=session
-                )
-
             if detached:
                 _LOGGER.debug(
                     "Aqara media detached FFmpeg drained and reaped entity=%s "
@@ -2393,29 +2241,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         stable_task = self._watchdog_stable_task
         self._watchdog_stable_task = None
         await self._cancel_task(stable_task)
-
-        if (
-            normal_finite_eof
-            and generation == self._play_generation
-            and not self._shutting_down
-        ):
-            self._resume_after_reconnect = False
-            self._last_failure_kind = None
-            self._last_failure_detail = None
-            self._recovery_pending = False
-            self._attr_state = MediaPlayerState.IDLE
-            self.async_write_ha_state()
-            _LOGGER.info(
-                "Aqara media finite YT/YTM reached normal EOF after receiver drain "
-                "entity=%s session=%s generation=%s host=%s",
-                self.entity_id,
-                session,
-                generation,
-                self.client.host,
-            )
-            if self._watch_task is asyncio.current_task():
-                self._watch_task = None
-            return
 
         if not self.coordinator.last_update_success:
             failure_kind = "hub_offline"
