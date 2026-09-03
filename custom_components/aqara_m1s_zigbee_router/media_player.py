@@ -75,13 +75,10 @@ PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
 # below a few seconds without returning to the old 5-6 s volume lag.
 SINGLE_JITTER_BUFFER_SECONDS = 4.00
 SINGLE_PREBUFFER_SECONDS = 2.50
-# YT/YTM only: reduce initial startup cushion without changing radio or rebuffer policy.
-YTYTM_INITIAL_PREBUFFER_SECONDS = 0.50
 SINGLE_REBUFFER_RESUME_SECONDS = 2.00
 SINGLE_REMOTE_PREFILL_SECONDS = 1.40
 SINGLE_JITTER_BUFFER_CHUNKS = max(1, int(SINGLE_JITTER_BUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_PREBUFFER_CHUNKS = max(1, int(SINGLE_PREBUFFER_SECONDS / PCM_CHUNK_SECONDS))
-YTYTM_INITIAL_PREBUFFER_CHUNKS = max(1, int(YTYTM_INITIAL_PREBUFFER_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_REBUFFER_RESUME_CHUNKS = max(1, int(SINGLE_REBUFFER_RESUME_SECONDS / PCM_CHUNK_SECONDS))
 SINGLE_REMOTE_PREFILL_CHUNKS = max(
     1, int(SINGLE_REMOTE_PREFILL_SECONDS / PCM_CHUNK_SECONDS)
@@ -222,7 +219,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._resume_media_id: str | None = None
         self._resume_media_type: str = MediaType.MUSIC
         self._resume_after_reconnect = False
-        self._ytm_fast_start = False
+        # YT/YTM Cast startup handshake. The companion add-on sends a unique
+        # stream_serial with each transport start. We keep HA in BUFFERING until
+        # the first PCM burst is actually released to the hub, then publish the
+        # same serial so the sender can start its clock at the audible boundary.
+        self._youtube_cast_source = False
+        self._youtube_stream_serial: int | None = None
+        self._youtube_transport_started_serial: int | None = None
         self._last_online_generation = 0
         self._resume_task: asyncio.Task | None = None
         self._ffmpeg: asyncio.subprocess.Process | None = None
@@ -583,6 +586,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_prebuffer_ms": int(SINGLE_PREBUFFER_SECONDS * 1000),
             "single_rebuffer_resume_ms": int(SINGLE_REBUFFER_RESUME_SECONDS * 1000),
             "single_remote_prefill_ms": int(SINGLE_REMOTE_PREFILL_SECONDS * 1000),
+            "ytm_stream_serial": self._youtube_stream_serial,
+            "ytm_transport_started_serial": self._youtube_transport_started_serial,
             "single_pcm_hub_rate": PCM_RATE,
             "single_receiver_build": SINGLE_BUILD_ID,
             "single_tcp_self_heal": True,
@@ -1130,10 +1135,14 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
         title = None
         extra = kwargs.get("extra") or {}
-        ytm_fast_start = bool(
+        youtube_cast_source = bool(
             isinstance(extra, dict)
             and extra.get("m1s_youtube_cast_receiver") is True
         )
+        youtube_stream_serial: int | None = None
+        if youtube_cast_source and isinstance(extra, dict):
+            with suppress(TypeError, ValueError):
+                youtube_stream_serial = int(extra.get("stream_serial"))
         if isinstance(extra, dict):
             title = extra.get("title")
         if not self._clean_media_title(title):
@@ -1157,7 +1166,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 return
             self._resume_media_id = original_media_id
             self._resume_media_type = media_type or MediaType.MUSIC
-            self._ytm_fast_start = ytm_fast_start
             self._media_url = media_url
             self._attr_media_content_id = original_media_id
             self._attr_media_content_type = self._resume_media_type
@@ -1167,6 +1175,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 or "Radio stream"
             )
             self._resume_after_reconnect = True
+            self._youtube_cast_source = youtube_cast_source
+            self._youtube_stream_serial = youtube_stream_serial
+            self._youtube_transport_started_serial = None
             await self._start_locked(generation)
 
     async def async_media_play(self) -> None:
@@ -1205,6 +1216,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         generation = self._next_play_generation("user_stop")
         self._cancel_recovery_tasks_now()
         self._resume_after_reconnect = False
+        self._youtube_cast_source = False
+        self._youtube_stream_serial = None
+        self._youtube_transport_started_serial = None
         self._watchdog_restart_attempts = 0
         _LOGGER.info(
             "Aqara media STOP requested entity=%s host=%s generation=%s",
@@ -1649,7 +1663,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._attr_volume_level or 0.0, self._attr_is_volume_muted,
             FFMPEG_NICE_TARGET, self._ffmpeg_nice_applied,
         )
-        self._attr_state = MediaPlayerState.PLAYING
+        self._attr_state = (
+            MediaPlayerState.BUFFERING
+            if self._youtube_cast_source and self._youtube_stream_serial is not None
+            else MediaPlayerState.PLAYING
+        )
         self.async_write_ha_state()
         self._watch_task = self.hass.async_create_background_task(
             self._watch_ffmpeg(process, writer, generation),
@@ -1691,6 +1709,26 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 lines.append(decoded)
                 lines = lines[-40:]
         return "\n".join(lines)[-4000:]
+
+    def _mark_youtube_transport_started(self, generation: int) -> None:
+        """Publish YT/YTM STARTED exactly when first PCM is released to hub."""
+        if (
+            not self._generation_is_current(generation)
+            or not self._youtube_cast_source
+            or self._youtube_stream_serial is None
+            or self._youtube_transport_started_serial == self._youtube_stream_serial
+        ):
+            return
+        self._youtube_transport_started_serial = self._youtube_stream_serial
+        self._attr_state = MediaPlayerState.PLAYING
+        _LOGGER.info(
+            "Aqara media YT/YTM transport start entity=%s host=%s serial=%s generation=%s",
+            self.entity_id,
+            self.client.host,
+            self._youtube_stream_serial,
+            generation,
+        )
+        self.async_write_ha_state()
 
     async def _watch_ffmpeg(
         self,
@@ -1921,18 +1959,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             # Build a real jitter cushion before opening the playout clock. For
             # short files, start as soon as FFmpeg reaches EOF instead of waiting.
             prebuffer_started = time.monotonic()
-            initial_prebuffer_chunks = (
-                YTYTM_INITIAL_PREBUFFER_CHUNKS
-                if self._ytm_fast_start
-                else SINGLE_PREBUFFER_CHUNKS
-            )
-            initial_prebuffer_seconds = (
-                YTYTM_INITIAL_PREBUFFER_SECONDS
-                if self._ytm_fast_start
-                else SINGLE_PREBUFFER_SECONDS
-            )
             while (
-                queue.qsize() < initial_prebuffer_chunks
+                queue.qsize() < SINGLE_PREBUFFER_CHUNKS
                 and not producer_done.is_set()
                 and self._ffmpeg is process
                 and not self._shutting_down
@@ -1946,10 +1974,14 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 session,
                 self.client.host,
                 int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
-                int(initial_prebuffer_seconds * 1000),
+                int(SINGLE_PREBUFFER_SECONDS * 1000),
                 int((time.monotonic() - prebuffer_started) * 1000),
             )
 
+            # No fixed startup sleep. The normal stable HA prebuffer is built
+            # while the Cast sender remains LOADING; publish STARTED at the exact
+            # event-loop boundary that releases the first PCM toward aplay.
+            self._mark_youtube_transport_started(generation)
             primed_chunks = await _prefill_remote_receiver()
             _LOGGER.info(
                 "Aqara media remote receiver prefilled entity=%s session=%s "

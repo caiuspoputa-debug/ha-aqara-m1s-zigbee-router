@@ -1,8 +1,8 @@
-## 0.10.45 - YT/YTM fast initial prebuffer
+## 0.10.46
 
-- Built directly from 0.10.42.
-- YT/YTM only: initial HA-side prebuffer is 0.5 s instead of 2.5 s, on group and individual playback.
-- Radio, rebuffer thresholds, 1.4 s remote prefill, ALSA/TCP, STOP/PLAY, group membership and all other transport settings remain unchanged.
+- YT/YTM transport-start handshake for both M1S Media Group and individual M1S media players.
+- The integration exposes the exact `stream_serial` only when first PCM is released toward the hub transport, allowing the Cast sender to remain LOADING during real buffering and start its clock at audible playout.
+- No fixed YT/YTM startup delay was added; Radio and all existing buffer/rebuffer/sync settings remain unchanged from 0.10.42.
 
 ## 0.10.38 - Clean STOP FFmpeg stdout drain
 

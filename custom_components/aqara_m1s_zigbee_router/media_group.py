@@ -56,13 +56,10 @@ CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
 # stalls refill from buffered PCM instead of starving aplay.
 GROUP_JITTER_BUFFER_SECONDS = 4.00
 GROUP_PREBUFFER_SECONDS = 2.50
-# YT/YTM only: reduce initial startup cushion without changing radio or rebuffer policy.
-YTYTM_INITIAL_PREBUFFER_SECONDS = 0.50
 GROUP_REBUFFER_RESUME_SECONDS = 2.00
 GROUP_REMOTE_PREFILL_SECONDS = 1.40
 GROUP_JITTER_BUFFER_CHUNKS = max(1, round(GROUP_JITTER_BUFFER_SECONDS / CHUNK_SECONDS))
 GROUP_PREBUFFER_CHUNKS = max(1, round(GROUP_PREBUFFER_SECONDS / CHUNK_SECONDS))
-YTYTM_INITIAL_PREBUFFER_CHUNKS = max(1, round(YTYTM_INITIAL_PREBUFFER_SECONDS / CHUNK_SECONDS))
 GROUP_REBUFFER_RESUME_CHUNKS = max(1, round(GROUP_REBUFFER_RESUME_SECONDS / CHUNK_SECONDS))
 GROUP_REMOTE_PREFILL_CHUNKS = max(1, round(GROUP_REMOTE_PREFILL_SECONDS / CHUNK_SECONDS))
 GROUP_SOURCE_STALL_TIMEOUT = 5.0
@@ -215,6 +212,14 @@ class AqaraM1SMediaGroupManager:
         # the companion YouTube/YouTube Music Cast receiver). Live streams such
         # as Radio Browser remain restartable on unexpected EOF.
         self.media_is_finite = False
+        # Companion YT/YTM Cast receiver startup handshake.  The add-on sends
+        # one monotonically increasing stream_serial with each Play/Seek/Next.
+        # We expose the serial again only at the instant the first PCM burst is
+        # released toward the hub receivers, so the sender can remain LOADING
+        # while FFmpeg / HA buffering is prepared and start its clock only when
+        # audible playout actually begins.
+        self.youtube_stream_serial: int | None = None
+        self.youtube_transport_started_serial: int | None = None
         self.volume = 0.05
         self.muted = False
         self.desired_playing = False
@@ -513,6 +518,8 @@ class AqaraM1SMediaGroupManager:
             "group_prebuffer_seconds": GROUP_PREBUFFER_SECONDS,
             "group_rebuffer_resume_seconds": GROUP_REBUFFER_RESUME_SECONDS,
             "group_remote_prefill_seconds": GROUP_REMOTE_PREFILL_SECONDS,
+            "ytm_stream_serial": self.youtube_stream_serial,
+            "ytm_transport_started_serial": self.youtube_transport_started_serial,
             "rebuffer_events": self._rebuffer_events,
             "silence_fill_events": self._silence_fill_events,
             "playout_clock_rebases": self._clock_rebase_count,
@@ -609,6 +616,7 @@ class AqaraM1SMediaGroupManager:
         title: str | None,
         *,
         finite_media: bool = False,
+        youtube_stream_serial: int | None = None,
     ) -> None:
         async with self._lock:
             self.media_url = media_url
@@ -616,6 +624,12 @@ class AqaraM1SMediaGroupManager:
             self.media_type = media_type or MediaType.MUSIC
             self.media_title = title
             self.media_is_finite = bool(finite_media)
+            self.youtube_stream_serial = (
+                int(youtube_stream_serial)
+                if self.media_is_finite and youtube_stream_serial is not None
+                else None
+            )
+            self.youtube_transport_started_serial = None
             self.desired_playing = True
             self._watchdog_attempts = 0
             await self._restart_stream_locked(reason="user_play")
@@ -1709,6 +1723,24 @@ class AqaraM1SMediaGroupManager:
             member.last_prepare_attempt_monotonic = 0.0
         self._signal_update()
 
+    def _mark_youtube_transport_started(self, generation: int) -> None:
+        """Publish the exact YT/YTM serial when first PCM is released to hubs."""
+        if (
+            generation != self._generation
+            or not self.media_is_finite
+            or self.youtube_stream_serial is None
+            or self.youtube_transport_started_serial == self.youtube_stream_serial
+        ):
+            return
+        self.youtube_transport_started_serial = self.youtube_stream_serial
+        _LOGGER.info(
+            "M1S group YT/YTM transport start serial=%s generation=%s members=%s",
+            self.youtube_stream_serial,
+            generation,
+            [member.name for member in self.active_members],
+        )
+        self._signal_update()
+
     async def _remote_group_stop(self, member: GroupMember) -> None:
         with suppress(Exception):
             await asyncio.wait_for(
@@ -1747,6 +1779,10 @@ class AqaraM1SMediaGroupManager:
             )
             for member in members
         }
+        # No fixed startup sleep: expose STARTED at the same event-loop boundary
+        # that releases the first PCM burst.  The YT/YTM sender stays LOADING
+        # while the normal stable prebuffer is built, then starts its clock here.
+        self._mark_youtube_transport_started(generation)
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         successful: list[GroupMember] = []
         for member, result in zip(members, results):
@@ -1943,18 +1979,8 @@ class AqaraM1SMediaGroupManager:
             # Let FFmpeg build the same real jitter cushion used by the stable
             # individual player. For finite/short media, EOF releases startup early.
             prebuffer_started = time.monotonic()
-            initial_prebuffer_chunks = (
-                YTYTM_INITIAL_PREBUFFER_CHUNKS
-                if self.media_is_finite
-                else GROUP_PREBUFFER_CHUNKS
-            )
-            initial_prebuffer_seconds = (
-                YTYTM_INITIAL_PREBUFFER_SECONDS
-                if self.media_is_finite
-                else GROUP_PREBUFFER_SECONDS
-            )
             while (
-                source_queue.qsize() < initial_prebuffer_chunks
+                source_queue.qsize() < GROUP_PREBUFFER_CHUNKS
                 and not producer_done.is_set()
                 and generation == self._generation
                 and self.desired_playing
@@ -1968,7 +1994,7 @@ class AqaraM1SMediaGroupManager:
                 "M1S group stable source buffer primed queued_ms=%s target_ms=%s "
                 "prime_time_ms=%s",
                 int(source_queue.qsize() * CHUNK_SECONDS * 1000),
-                int(initial_prebuffer_seconds * 1000),
+                int(GROUP_PREBUFFER_SECONDS * 1000),
                 int((time.monotonic() - prebuffer_started) * 1000),
             )
 
@@ -2999,12 +3025,17 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
             isinstance(extra, dict)
             and extra.get("m1s_youtube_cast_receiver") is True
         )
+        youtube_stream_serial: int | None = None
+        if finite_media and isinstance(extra, dict):
+            with suppress(TypeError, ValueError):
+                youtube_stream_serial = int(extra.get("stream_serial"))
         await self.manager.async_start(
             url,
             original,
             media_type or MediaType.MUSIC,
             self._group_media_title(title),
             finite_media=finite_media,
+            youtube_stream_serial=youtube_stream_serial,
         )
         self.async_write_ha_state()
 
