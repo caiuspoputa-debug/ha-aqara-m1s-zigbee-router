@@ -117,5 +117,4 @@ reset_media_group:
 
 resync_media_group:
   name: Resync Media Group
-  description: Rebuild all active group receivers together while preserving the current FFmpeg/source timeline. No per-hub sync buffer or rate correction is used.
-
+  description: Manually restart the shared group timeline once, with cooldown, using the remembered source. No adaptive sync, no per-hub buffering, and no individual resampling.

@@ -1,12 +1,12 @@
-## 0.20.3 - Global cohort resync, NO per-buffer sync
+## 0.20.4 - Manual shared-timeline resync, no adaptive/per-buffer sync
 
-- Based directly on v0.20.1 NO-ADAPTIVE-SYNC. The rejected v0.20.2 adaptive/per-buffer experiment is not used.
-- `ADAPTIVE_SYNC_ENABLED` remains `False`; periodic receiver resync remains disabled.
-- Adds `aqara_m1s_zigbee_router.resync_media_group`: pauses the one shared PCM broadcaster at a common boundary, rebuilds every eligible group nc/aplay receiver concurrently, sends the exact same 350 ms silent cohort lead to all, then resumes the same FFmpeg/source timeline.
-- No per-hub sync buffer, no per-hub micro-resampling, no individual drift speed correction.
-- A hub returning while group playback is active now triggers the same global cohort resync instead of individual history catch-up.
-- A stale ALSA receiver also requests the global cohort resync when multiple group members are active.
-- Existing hard `reset_media_group`, shared jitter buffer, live volume, source handling, individual player priority and all non-audio functions remain unchanged.
+- Based directly on v0.20.1 NO-ADAPTIVE-SYNC, not on the failed v0.20.2/v0.20.3 experiments.
+- Added `aqara_m1s_zigbee_router.resync_media_group` as a manual shared-timeline realignment path.
+- Manual resync performs one controlled group transport restart from the remembered source and has a 20 s cooldown.
+- Manual resync refuses to leave only one hub playing: it requires at least two eligible receivers to be ready during the 4 s cohort window, otherwise it cleans the group transport and reports `cohort_not_ready`.
+- Adaptive sync remains disabled; per-member resampling/rate correction is not enabled.
+- Automatic drift/stale ALSA probes are diagnostic only; they no longer rebuild one receiver just because one hub looks like an outlier.
+- The failed v0.20.3-style pause-and-rebuild receiver cohort is not scheduled automatically.
 
 ## 0.20.1 - Adaptive sync disabled for group-stability test
 

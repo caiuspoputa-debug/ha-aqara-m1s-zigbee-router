@@ -269,12 +269,10 @@ async def async_setup_entry(
             await group_manager.async_force_reset(reason="service_reset")
 
     async def resync_media_group(call: ServiceCall) -> None:
-        """Resync all group receivers together without restarting FFmpeg/source."""
+        """Manually realign the shared M1S group audio transport."""
         group_manager = hass.data[DOMAIN].get(DATA_MEDIA_GROUP)
         if group_manager is not None:
-            await group_manager.async_resync_receivers_preserve_source(
-                reason="service_resync"
-            )
+            await group_manager.async_manual_resync(reason="service_resync")
 
     if not hass.services.has_service(DOMAIN, SERVICE_PLAY_URL):
         hass.services.async_register(DOMAIN, SERVICE_PLAY_URL, play_url)

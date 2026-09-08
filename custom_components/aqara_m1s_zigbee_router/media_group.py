@@ -119,18 +119,14 @@ PERIODIC_RECEIVER_RESYNC_ENABLED = False
 PERIODIC_RECEIVER_RESYNC_SECONDS = 3 * 60.0
 PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS = 2
 PERIODIC_RECEIVER_RESYNC_PAUSE_TIMEOUT = 2.0
-GLOBAL_RESYNC_SILENT_LEAD_SECONDS = 0.35
-GLOBAL_RESYNC_SILENT_LEAD_CHUNKS = max(
-    1, round(GLOBAL_RESYNC_SILENT_LEAD_SECONDS / CHUNK_SECONDS)
-)
 SOFT_RESYNC_DRIFT_THRESHOLD_FRAMES = int(PCM_RATE * 0.20)
 SOFT_RESYNC_MIN_REFERENCE_MEMBERS = 3
+MANUAL_GROUP_RESYNC_COOLDOWN_SECONDS = 20.0
+MANUAL_GROUP_RESYNC_COHORT_SECONDS = 4.0
 
-# Continuous adaptive drift correction.  Unlike the old periodic resync this
-# never tears down a receiver: each member is micro-resampled around 1.0x so
-# its ALSA playout delay converges toward the group median while audio keeps
-# flowing.  ±0.8% is intentionally small enough to be unobtrusive but still
-# able to remove a clearly audible echo over several seconds.
+# v0.20.2 proved that per-member correction is not usable on these hubs.
+# Keep the old diagnostic attributes readable, but never enable per-hub
+# resampling, per-hub buffers, or automatic drift correction.
 ADAPTIVE_SYNC_ENABLED = False
 ADAPTIVE_SYNC_MIN_MEMBERS = 2
 ADAPTIVE_SYNC_HEALTH_MAX_AGE_SECONDS = GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS * 2.5
@@ -268,6 +264,8 @@ class AqaraM1SMediaGroupManager:
         self._receiver_resync_count = 0
         self._last_receiver_resync_monotonic: float | None = None
         self._last_receiver_resync_reason: str | None = None
+        self._last_manual_resync_monotonic: float | None = None
+        self._manual_resync_skipped_reason: str | None = None
         self._last_soft_resync_check_monotonic: float | None = None
         self._last_adaptive_sync_control_monotonic: float = 0.0
         self._broadcast_pause_requested = asyncio.Event()
@@ -556,17 +554,19 @@ class AqaraM1SMediaGroupManager:
             "full_resync_count": self._full_resync_count,
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
-            "receiver_drift_guard_mode": "manual_or_event_global_cohort_resync",
-            "per_member_sync_buffers": False,
-            "per_member_rate_correction": False,
-            "global_resync_preserves_ffmpeg": True,
-            "global_resync_silent_lead_ms": int(
-                GLOBAL_RESYNC_SILENT_LEAD_SECONDS * 1000
-            ),
+            "receiver_drift_guard_mode": "diagnostic_only_no_auto_rebuild",
             "receiver_soft_resync_threshold_ms": int(
                 SOFT_RESYNC_DRIFT_THRESHOLD_FRAMES * 1000 / PCM_RATE
             ),
             "receiver_resync_interval_seconds": PERIODIC_RECEIVER_RESYNC_SECONDS,
+            "manual_resync_cooldown_seconds": MANUAL_GROUP_RESYNC_COOLDOWN_SECONDS,
+            "manual_resync_cohort_seconds": MANUAL_GROUP_RESYNC_COHORT_SECONDS,
+            "last_manual_resync_age_seconds": (
+                None
+                if self._last_manual_resync_monotonic is None
+                else round(time.monotonic() - self._last_manual_resync_monotonic, 1)
+            ),
+            "manual_resync_skipped_reason": self._manual_resync_skipped_reason,
             "adaptive_sync_enabled": ADAPTIVE_SYNC_ENABLED,
             "adaptive_sync_deadband_ms": round(
                 ADAPTIVE_SYNC_DEADBAND_FRAMES * 1000 / PCM_RATE, 1
@@ -627,7 +627,7 @@ class AqaraM1SMediaGroupManager:
             "muted_hubs": sorted(
                 member.name for member in self.members.values() if member.muted_in_group
             ),
-            "sync_policy": "shared_timeline_global_cohort_resync_no_per_buffer",
+            "sync_policy": "shared_timeline_manual_group_resync_no_adaptive_no_per_buffer",
             "queue_overflow_policy": "detach_only_slow_member",
             "receiver_health_interval_seconds": GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS,
             "member_receiver_health": {
@@ -882,6 +882,50 @@ class AqaraM1SMediaGroupManager:
                 member.state = self._idle_member_state(member)
         self._signal_update()
 
+    async def async_manual_resync(self, *, reason: str = "manual_resync") -> None:
+        """Realign the group with one user-requested shared-timeline restart."""
+        now = time.monotonic()
+        if self._last_manual_resync_monotonic is not None:
+            age = now - self._last_manual_resync_monotonic
+            if age < MANUAL_GROUP_RESYNC_COOLDOWN_SECONDS:
+                self._manual_resync_skipped_reason = (
+                    f"cooldown:{round(MANUAL_GROUP_RESYNC_COOLDOWN_SECONDS - age, 1)}s"
+                )
+                _LOGGER.warning(
+                    "M1S group manual resync ignored by cooldown reason=%s "
+                    "remaining=%.1fs",
+                    reason,
+                    MANUAL_GROUP_RESYNC_COOLDOWN_SECONDS - age,
+                )
+                self._signal_update()
+                return
+        if not self.desired_playing or not self.media_url:
+            self._manual_resync_skipped_reason = "not_playing"
+            self._signal_update()
+            return
+
+        eligible_count = sum(1 for member in self.members.values() if self._eligible(member))
+        if eligible_count < PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS:
+            self._manual_resync_skipped_reason = "less_than_two_eligible_hubs"
+            self._signal_update()
+            return
+
+        self._last_manual_resync_monotonic = now
+        self._manual_resync_skipped_reason = None
+        self._receiver_resync_count += 1
+        self._last_receiver_resync_monotonic = now
+        self._last_receiver_resync_reason = reason
+        _LOGGER.warning(
+            "M1S group manual shared-timeline resync requested reason=%s "
+            "eligible_hubs=%s",
+            reason,
+            eligible_count,
+        )
+        async with self._lock:
+            await self._restart_stream_locked(reason=reason)
+        self._ensure_reconcile_task()
+        self._signal_update()
+
     async def async_shutdown(self) -> None:
         self._shutting_down = True
         await self._cancel_background_recovery()
@@ -1045,6 +1089,7 @@ class AqaraM1SMediaGroupManager:
         if not self.desired_playing or not self.media_url:
             return
 
+        manual_group_resync = reason in ("manual_resync", "service_resync")
         await asyncio.gather(
             *(
                 self._suspend_individual_for_group(member)
@@ -1054,6 +1099,11 @@ class AqaraM1SMediaGroupManager:
         )
 
         eligible = [m for m in self.members.values() if self._eligible(m)]
+        required_ready_members = (
+            min(len(eligible), PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS)
+            if manual_group_resync
+            else 1
+        )
         prepare_tasks: list[asyncio.Task] = []
         for member in eligible:
             task = self._schedule_member_prepare(member, initial=True)
@@ -1079,10 +1129,31 @@ class AqaraM1SMediaGroupManager:
 
         if self.active_members and pending:
             # Preparation continues independently during this tiny cohort window.
-            await asyncio.sleep(START_COHORT_GRACE_SECONDS)
+            if manual_group_resync:
+                done, pending = await asyncio.wait(
+                    pending,
+                    timeout=MANUAL_GROUP_RESYNC_COHORT_SECONDS,
+                    return_when=asyncio.ALL_COMPLETED,
+                )
+            else:
+                await asyncio.sleep(START_COHORT_GRACE_SECONDS)
 
-        if not self.active_members:
+        if len(self.active_members) < required_ready_members:
             self._last_failure = "no_group_member_ready"
+            if manual_group_resync:
+                ready_before_abort = len(self.active_members)
+                self._manual_resync_skipped_reason = "cohort_not_ready"
+                await self._stop_stream_locked(
+                    stop_members=True,
+                    reason="manual_resync_cohort_not_ready",
+                )
+                _LOGGER.warning(
+                    "M1S group manual resync aborted because only %s/%s "
+                    "required receivers were ready",
+                    ready_before_abort,
+                    required_ready_members,
+                )
+                return
             _LOGGER.warning(
                 "M1S group Play has no ready receiver yet; keeping intent and "
                 "retrying members in background"
@@ -1382,13 +1453,7 @@ class AqaraM1SMediaGroupManager:
         member.prepare_task = task
         return task
 
-    async def _prepare_member(
-        self,
-        member: GroupMember,
-        *,
-        initial: bool,
-        prime_late_join: bool = True,
-    ) -> bool:
+    async def _prepare_member(self, member: GroupMember, *, initial: bool) -> bool:
         if not self._eligible(member) or member.writer is not None:
             return False
         # The single player intentionally keeps its remote receiver warm after
@@ -1456,7 +1521,7 @@ class AqaraM1SMediaGroupManager:
             # after the shared 2.5 s source buffer exists. A receiver prepared while
             # FFmpeg is already running instead receives recent shared PCM history,
             # catches up, then joins live fanout without disturbing healthy peers.
-            if self.ffmpeg_running and prime_late_join:
+            if self.ffmpeg_running:
                 await self._prime_late_join_member(member, generation)
 
             _LOGGER.info(
@@ -1835,7 +1900,6 @@ class AqaraM1SMediaGroupManager:
     @staticmethod
     def _member_payload(member: GroupMember, payload: bytes) -> bytes:
         # Prefill/catch-up bursts intentionally stay bit-identical across members.
-        # Adaptive correction starts only after a receiver joins live fanout.
         return b"\x00" * len(payload) if member.muted_in_group else payload
 
     @staticmethod
@@ -2287,12 +2351,11 @@ class AqaraM1SMediaGroupManager:
                 self.periodic_receiver_resync_task = None
 
     async def _soft_receiver_resync_audit(self) -> None:
-        """Compare live ALSA timing and rebuild only a clearly drifting hub.
+        """Compare live ALSA timing without rebuilding individual receivers.
 
-        The shared FFmpeg timeline and every healthy receiver are left untouched.
-        With fewer than three usable delay samples we only refresh diagnostics,
-        because two receivers do not provide a safe way to identify which one is
-        the timing outlier. Existing stale/underrun detection still applies.
+        v0.20.2/v0.20.3 showed that per-member correction and automatic receiver
+        rebuilds can make the group worse. This audit now only records evidence;
+        the user can call resync_media_group when a real audible offset appears.
         """
         members = [
             member
@@ -2318,9 +2381,11 @@ class AqaraM1SMediaGroupManager:
                 continue
             member.last_receiver_health = result
             if result.get("stale"):
-                reason = str(result.get("reason") or "receiver_stale")
-                self._schedule_isolate_member(
-                    member, reason=f"soft resync stale: {reason}"
+                _LOGGER.warning(
+                    "M1S soft resync diagnostic only member=%s stale=%s; "
+                    "no automatic receiver rebuild",
+                    member.name,
+                    result.get("reason") or "receiver_stale",
                 )
                 continue
             delay = result.get("alsa_delay_frames")
@@ -2351,79 +2416,31 @@ class AqaraM1SMediaGroupManager:
             )
             return
 
-        # Heal only the worst outlier per audit. This is intentionally
-        # conservative: the common source and healthy hubs never restart, and
-        # a second outlier can be corrected at the next three-minute audit.
         member, delay, drift = max(outliers, key=lambda item: item[2])
         drift_ms = round(drift * 1000 / PCM_RATE)
-        self._receiver_resync_count += 1
-        self._last_receiver_resync_monotonic = time.monotonic()
-        self._last_receiver_resync_reason = (
-            f"soft_drift_guard:{member.name}:{drift_ms}ms"
-        )
-        _LOGGER.info(
-            "M1S soft resync correcting one timing outlier member=%s "
+        self._last_receiver_resync_reason = f"diagnostic_drift:{member.name}:{drift_ms}ms"
+        _LOGGER.warning(
+            "M1S soft resync diagnostic drift member=%s "
             "delay_frames=%s median_frames=%s drift_ms=%s; "
-            "healthy receivers and FFmpeg remain untouched",
+            "no automatic receiver rebuild",
             member.name,
             delay,
             median_delay,
             drift_ms,
         )
-        self._schedule_isolate_member(
-            member, reason=f"soft timing drift {drift_ms}ms"
-        )
-
-    async def async_resync_receivers_preserve_source(
-        self, *, reason: str = "manual_resync"
-    ) -> None:
-        """Public global cohort resync that keeps FFmpeg/source alive."""
-        async with self._lock:
-            await self._resync_receivers_preserve_source_locked(reason)
-        self._signal_update()
-
-    def _schedule_global_receiver_resync(self, reason: str) -> None:
-        """Schedule one all-receiver refresh; never sync one hub independently."""
-        if self._shutting_down or not self.desired_playing or not self.ffmpeg_running:
-            return
-        if self.resync_task is not None and not self.resync_task.done():
-            return
-
-        async def _runner() -> None:
-            try:
-                await self.async_resync_receivers_preserve_source(reason=reason)
-            except asyncio.CancelledError:
-                raise
-            except Exception as err:
-                self._last_failure = f"global_receiver_resync:{err}"
-                _LOGGER.warning(
-                    "M1S global cohort resync failed reason=%s error=%s",
-                    reason,
-                    err,
-                )
-            finally:
-                if self.resync_task is asyncio.current_task():
-                    self.resync_task = None
-                self._signal_update()
-
-        self.resync_task = self.hass.async_create_background_task(
-            _runner(), "aqara_m1s_group_global_cohort_resync"
-        )
 
     async def _resync_receivers_preserve_source_locked(self, reason: str) -> None:
-        """Recreate ALL eligible receivers together while preserving FFmpeg.
+        """Pause PCM at a frame boundary, rebuild all receivers, then resume.
 
-        Design rule for v0.20.3: NO per-hub sync buffer, NO per-hub resampling,
-        NO individual timing correction.  The one shared broadcaster pauses at
-        a common PCM boundary, every eligible group nc/aplay receiver is rebuilt
-        concurrently, every receiver gets the exact same short silent lead, and
-        the common broadcaster then resumes from the same FFmpeg/source timeline.
+        FFmpeg is deliberately kept alive.  Its stdout back-pressure pauses the
+        source while the hub-side nc/aplay pipelines are recreated, so finite
+        media does not restart from the beginning and every receiver resumes
+        from the same PCM position after the common silent lead-in.
         """
         if not self.ffmpeg_running or not self.desired_playing:
             return
-
-        targets = [m for m in self.members.values() if self._eligible(m)]
-        if not targets:
+        eligible = [m for m in self.members.values() if self._eligible(m)]
+        if len(eligible) < PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS:
             return
 
         self._broadcast_pause_requested.set()
@@ -2435,16 +2452,12 @@ class AqaraM1SMediaGroupManager:
         except asyncio.TimeoutError:
             self._broadcast_pause_requested.clear()
             _LOGGER.warning(
-                "M1S global cohort resync could not pause broadcaster; "
-                "stream left unchanged reason=%s",
-                reason,
+                "M1S receiver resync could not pause broadcaster; using full restart"
             )
+            await self._restart_stream_locked(reason=f"receiver_pause_timeout:{reason}")
             return
 
         try:
-            # Stop every currently connected group receiver first.  The target
-            # list also includes an eligible hub that just returned, so rejoin
-            # never uses a private history/catch-up sync path.
             active_ids = [m.entry_id for m in self.active_members]
             await asyncio.gather(
                 *(
@@ -2457,84 +2470,29 @@ class AqaraM1SMediaGroupManager:
                 ),
                 return_exceptions=True,
             )
-
-            # Start the complete cohort concurrently and explicitly bypass the
-            # normal late-join history prefill.
-            results = await asyncio.gather(
-                *(
-                    self._prepare_member(
-                        member, initial=False, prime_late_join=False
-                    )
-                    for member in targets
-                ),
-                return_exceptions=True,
-            )
-
-            prepared: list[GroupMember] = []
-            for member, result in zip(targets, results, strict=False):
-                if result is True and member.writer is not None:
-                    prepared.append(member)
-                elif isinstance(result, BaseException):
-                    member.last_error = f"global cohort prepare: {result}"
-
-            if not prepared:
-                raise RuntimeError("global cohort resync prepared no receiver")
-
-            # Same exact lead for every receiver. This is a single cohort lead,
-            # not an adaptive/per-member buffer.
-            lead = SILENCE_CHUNK * GLOBAL_RESYNC_SILENT_LEAD_CHUNKS
-            lead_results = await asyncio.gather(
-                *(
-                    self._write_member_burst(
-                        member, lead, stage="global_cohort_common_silent_lead"
-                    )
-                    for member in prepared
-                ),
-                return_exceptions=True,
-            )
-
-            aligned: list[GroupMember] = []
-            failed_lead: list[GroupMember] = []
-            for member, result in zip(prepared, lead_results, strict=False):
-                if isinstance(result, BaseException):
-                    member.last_error = f"global cohort lead: {result}"
-                    failed_lead.append(member)
-                else:
-                    aligned.append(member)
-
-            if failed_lead:
+            active_members = [
+                self.members[entry_id]
+                for entry_id in active_ids
+                if entry_id in self.members and self._eligible(self.members[entry_id])
+            ]
+            if active_members:
                 await asyncio.gather(
                     *(
-                        self._detach_member(
-                            member.entry_id,
-                            stop_remote=True,
-                            new_state="waiting_for_sync",
-                        )
-                        for member in failed_lead
+                        self._prepare_member(member, initial=False)
+                        for member in active_members
                     ),
                     return_exceptions=True,
                 )
-
-            if not aligned:
-                raise RuntimeError("global cohort resync aligned no receiver")
-
-            async with self._fanout_lock:
-                for member in aligned:
-                    self._start_member_writer(member, member.generation)
-                    member.ready_for_fanout = True
-                    member.join_at_sequence = None
-                    member.state = "playing_group"
-
             self._receiver_resync_count += 1
             self._last_receiver_resync_monotonic = time.monotonic()
             self._last_receiver_resync_reason = reason
+            # Reset the interval without restarting FFmpeg or changing media position.
             self._stream_started_monotonic = time.monotonic()
             _LOGGER.info(
-                "M1S GLOBAL cohort resync complete, FFmpeg preserved "
-                "reason=%s hubs=%s common_silent_lead_ms=%s",
+                "M1S group receivers resynchronised without restarting FFmpeg "
+                "reason=%s active=%s",
                 reason,
-                [m.name for m in aligned],
-                int(GLOBAL_RESYNC_SILENT_LEAD_SECONDS * 1000),
+                [m.name for m in self.active_members],
             )
         finally:
             self._broadcast_pause_requested.clear()
@@ -2638,7 +2596,7 @@ class AqaraM1SMediaGroupManager:
                 _LOGGER.warning(
                     "M1S group ALSA underrun/stale receiver detected member=%s "
                     "cause=%s state=%s delay_frames=%s avail_frames=%s "
-                    "buffer_frames=%s action=global_cohort_resync",
+                    "buffer_frames=%s action=diagnostic_only",
                     member.name,
                     reason,
                     health.get("alsa_state"),
@@ -2646,14 +2604,6 @@ class AqaraM1SMediaGroupManager:
                     health.get("alsa_avail_frames"),
                     health.get("alsa_buffer_frames"),
                 )
-                if len(self.ready_members) >= 2:
-                    self._schedule_global_receiver_resync(
-                        reason=f"receiver_health:{member.name}:{reason}"
-                    )
-                else:
-                    self._schedule_isolate_member(
-                        member, reason=f"receiver health: {reason}"
-                    )
         except asyncio.CancelledError:
             raise
         except Exception as err:
@@ -2705,8 +2655,8 @@ class AqaraM1SMediaGroupManager:
                         member.online_since_monotonic = None
 
                 # Probe each aligned receiver independently. FIN_WAIT by itself is
-                # diagnostic only; ALSA negative delay / oversized avail triggers
-                # a member-only rebuild, matching the stable individual player.
+                # diagnostic only; ALSA negative delay / oversized avail remains
+                # diagnostic-only in v0.20.4 to avoid one-hub rebuild loops.
                 for member in list(self.ready_members):
                     task = member.receiver_health_task
                     if task is not None and task.done():
@@ -2725,10 +2675,8 @@ class AqaraM1SMediaGroupManager:
                             )
                         )
 
-                # Apply continuous drift correction from the latest health
-                # samples. Probes are intentionally decoupled from the controller so
-                # a burst of per-member SSH results cannot jerk the rates several
-                # times in the same instant.
+                # Keep old adaptive-control diagnostics inert. v0.20.4 never
+                # changes member rates or resamples a hub independently.
                 self._update_adaptive_sync_rates()
 
                 # Remove ineligible members independently.
@@ -2755,15 +2703,10 @@ class AqaraM1SMediaGroupManager:
                     )
                     and now >= member.next_prepare_monotonic
                 ]
-                if due and self.ffmpeg_running and self.ready_members:
-                    self._schedule_global_receiver_resync(
-                        reason="member_join:" + ",".join(m.name for m in due)
+                for member in due:
+                    self._schedule_member_prepare(
+                        member, initial=not self.ffmpeg_running
                     )
-                else:
-                    for member in due:
-                        self._schedule_member_prepare(
-                            member, initial=not self.ffmpeg_running
-                        )
 
                 # If Play was requested while every receiver was unavailable, start
                 # the source automatically as soon as any background preparation
@@ -2789,8 +2732,12 @@ class AqaraM1SMediaGroupManager:
                 self.reconcile_task = None
 
     def _schedule_full_resync(self, reason: str) -> None:
-        """Compatibility hook: resync all receivers while preserving FFmpeg."""
-        self._schedule_global_receiver_resync(reason=f"legacy:{reason}")
+        """Legacy compatibility hook.  Member faults never restart the group."""
+        _LOGGER.warning(
+            "M1S group ignored legacy full-resync request reason=%s; "
+            "receiver isolation policy is active",
+            reason,
+        )
 
     async def _pcm_health_watch(
         self, process: asyncio.subprocess.Process, generation: int
