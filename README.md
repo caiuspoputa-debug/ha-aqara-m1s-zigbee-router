@@ -1,11 +1,11 @@
-**Current package: v0.20.1 + hub kit v0.8**
+**Current package: v0.20.2 + hub kit v0.8**
 
 [Romana](README_RO.md) | **English**
 
 # Aqara M1S Gen 1 - stock hub to Zigbee Router + Home Assistant integration
 
-Documentation version: **2026-09-03 - v0.20.1 + hub kit v0.8**  
-Home Assistant integration version: **0.20.1**  
+Documentation version: **2026-09-08 - v0.20.2 + hub kit v0.8**  
+Home Assistant integration version: **0.20.2**  
 Target model: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 This README is the current English operational guide for the packaged kit. The Romanian file `README_RO.md` is the long detailed reference; this file keeps the same current facts and the practical stock-hub flow.
@@ -16,18 +16,18 @@ The optional **M1S YouTube Cast Receiver 1.0.1** add-on owns YouTube/YTM playbac
 
 The Aqara integration does not own per-track YT/YTM logic. A track change must not become a new HA STOP/PLAY cycle, a new prebuffer operation, a duration timer, or a queue decision in this integration. The integration only transports PCM/TCP and synchronizes M1S receivers.
 
-## Current v0.20.1 audio behavior
+## Current v0.20.2 audio behavior
 
-- Runtime baseline is v0.20.0; v0.20.1 changes only the adaptive-sync enable flag for group-stability testing.
+- Runtime baseline is v0.20.1; v0.20.2 enables continuous adaptive group drift correction without adding periodic or global receiver restarts.
 - Group source changes already use clean ordering: remote GROUP STOP before old FFmpeg/TCP teardown.
-- v0.20.1 keeps the same clean ordering to an individual player on source replacement: remote port-12346 STOP before old FFmpeg/TCP teardown, then the new receiver/stream starts.
+- v0.20.2 keeps the same clean ordering to an individual player on source replacement: remote port-12346 STOP before old FFmpeg/TCP teardown, then the new receiver/stream starts.
 - PCM transport periods are **35 ms**.
 - Individual and group HA jitter buffer: **4.0 s**.
 - Initial source prebuffer: **2.5 s**.
 - Rebuffer resume threshold after a real underrun: **2.0 s**.
 - Hub-side remote prefill: **1.4 s**.
 - Group startup waits up to **3.0 s** for the first receiver, then gives other ready receivers a **0.30 s** cohort grace window. There is no YT/YTM-specific fixed startup sleep.
-- Periodic receiver resync is disabled. In v0.20.1, **adaptive sync is also disabled**, so no per-member micro-resampling/rate correction is applied.
+- Periodic receiver resync remains disabled. **Adaptive sync is enabled**: live ALSA delay feedback steers each ready hub toward the group median with continuous per-member micro-resampling, a ~6 ms deadband and a maximum rate correction of +/-0.8%, without STOP/PLAY.
 - A returning group member uses history prefill + live catch-up instead of forcing a global source restart.
 
 ## Current scope
@@ -260,7 +260,7 @@ Enable Permit Join in Zigbee2MQTT and wait for `BDB-Router` to appear online.
 
 ## 7. Add the hub in Home Assistant
 
-Install the integration with manifest `0.20.1`.
+Install the integration with manifest `0.20.2`.
 
 HACS:
 
@@ -467,7 +467,7 @@ Rollback reactivates the stock `/dev/input/event0` button path and can bring bac
 - flash completed with `FLASH_WRITE_OK`;
 - port `1888` is closed after flashing;
 - Router joins Zigbee2MQTT;
-- Home Assistant integration manifest is `0.20.1`;
+- Home Assistant integration manifest is `0.20.2`;
 - final reboot completed;
 - 120 seconds passed after boot;
 - `service_trim` stopped HomeKit and Mijia automation;

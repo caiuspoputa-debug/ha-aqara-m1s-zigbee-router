@@ -1,3 +1,13 @@
+## 0.20.2 - Continuous adaptive group drift correction
+
+- Based directly on v0.20.1.
+- Enables the already integrated continuous adaptive group-sync controller (`ADAPTIVE_SYNC_ENABLED = True`).
+- Keeps one shared PCM timeline and uses live per-hub ALSA `delay_frames` feedback to compare each ready receiver with the group median.
+- Corrects drift without STOP/PLAY by micro-resampling each hub around 1.0x; proportional + integral correction is limited to +/-0.8% and rate changes are slewed.
+- Deadband is about 6 ms, so already aligned hubs are not continuously chased.
+- Periodic receiver resync remains disabled; no automatic global STOP/PLAY is introduced by this test version.
+- All v0.20.1 buffering, source-switch, volume, mute, watchdog, late-join and recovery behavior remains unchanged.
+
 ## 0.20.1 - Adaptive sync disabled for group-stability test
 
 - Based directly on v0.20.0.
