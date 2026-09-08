@@ -31,6 +31,7 @@ from .const import (
     SERVICE_DELETE_SOUND,
     SERVICE_REFRESH_SOUNDS,
     SERVICE_RESET_MEDIA_GROUP,
+    SERVICE_RESYNC_MEDIA_GROUP,
     sound_list_signal,
 )
 from .coordinator import AqaraM1SRouterCoordinator
@@ -267,6 +268,14 @@ async def async_setup_entry(
         if group_manager is not None:
             await group_manager.async_force_reset(reason="service_reset")
 
+    async def resync_media_group(call: ServiceCall) -> None:
+        """Resync all group receivers together without restarting FFmpeg/source."""
+        group_manager = hass.data[DOMAIN].get(DATA_MEDIA_GROUP)
+        if group_manager is not None:
+            await group_manager.async_resync_receivers_preserve_source(
+                reason="service_resync"
+            )
+
     if not hass.services.has_service(DOMAIN, SERVICE_PLAY_URL):
         hass.services.async_register(DOMAIN, SERVICE_PLAY_URL, play_url)
         hass.services.async_register(DOMAIN, SERVICE_PLAY_SOUND, play_sound)
@@ -275,6 +284,7 @@ async def async_setup_entry(
         hass.services.async_register(DOMAIN, SERVICE_DELETE_SOUND, delete_sound)
         hass.services.async_register(DOMAIN, SERVICE_REFRESH_SOUNDS, refresh_sounds)
         hass.services.async_register(DOMAIN, SERVICE_RESET_MEDIA_GROUP, reset_media_group)
+        hass.services.async_register(DOMAIN, SERVICE_RESYNC_MEDIA_GROUP, resync_media_group)
 
     return True
 

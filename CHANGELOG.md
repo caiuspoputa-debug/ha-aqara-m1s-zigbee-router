@@ -1,12 +1,12 @@
-## 0.20.2 - Continuous adaptive group drift correction
+## 0.20.3 - Global cohort resync, NO per-buffer sync
 
-- Based directly on v0.20.1.
-- Enables the already integrated continuous adaptive group-sync controller (`ADAPTIVE_SYNC_ENABLED = True`).
-- Keeps one shared PCM timeline and uses live per-hub ALSA `delay_frames` feedback to compare each ready receiver with the group median.
-- Corrects drift without STOP/PLAY by micro-resampling each hub around 1.0x; proportional + integral correction is limited to +/-0.8% and rate changes are slewed.
-- Deadband is about 6 ms, so already aligned hubs are not continuously chased.
-- Periodic receiver resync remains disabled; no automatic global STOP/PLAY is introduced by this test version.
-- All v0.20.1 buffering, source-switch, volume, mute, watchdog, late-join and recovery behavior remains unchanged.
+- Based directly on v0.20.1 NO-ADAPTIVE-SYNC. The rejected v0.20.2 adaptive/per-buffer experiment is not used.
+- `ADAPTIVE_SYNC_ENABLED` remains `False`; periodic receiver resync remains disabled.
+- Adds `aqara_m1s_zigbee_router.resync_media_group`: pauses the one shared PCM broadcaster at a common boundary, rebuilds every eligible group nc/aplay receiver concurrently, sends the exact same 350 ms silent cohort lead to all, then resumes the same FFmpeg/source timeline.
+- No per-hub sync buffer, no per-hub micro-resampling, no individual drift speed correction.
+- A hub returning while group playback is active now triggers the same global cohort resync instead of individual history catch-up.
+- A stale ALSA receiver also requests the global cohort resync when multiple group members are active.
+- Existing hard `reset_media_group`, shared jitter buffer, live volume, source handling, individual player priority and all non-audio functions remain unchanged.
 
 ## 0.20.1 - Adaptive sync disabled for group-stability test
 

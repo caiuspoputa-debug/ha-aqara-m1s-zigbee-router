@@ -24,6 +24,7 @@ SERVICE_UPLOAD_SOUND = "upload_sound"
 SERVICE_DELETE_SOUND = "delete_sound"
 SERVICE_REFRESH_SOUNDS = "refresh_sounds"
 SERVICE_RESET_MEDIA_GROUP = "reset_media_group"
+SERVICE_RESYNC_MEDIA_GROUP = "resync_media_group"
 
 SOUND_ROOT = "/data/musics"
 MANAGED_SOUND_ROOT = "/data/musics/music-ch"

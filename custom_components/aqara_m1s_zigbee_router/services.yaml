@@ -114,3 +114,8 @@ refresh_sounds:
 reset_media_group:
   name: Restart Media Group
   description: Hard-reset only the shared M1S group audio transport without restarting Home Assistant or touching individual players / Zigbee UART.
+
+resync_media_group:
+  name: Resync Media Group
+  description: Rebuild all active group receivers together while preserving the current FFmpeg/source timeline. No per-hub sync buffer or rate correction is used.
+
