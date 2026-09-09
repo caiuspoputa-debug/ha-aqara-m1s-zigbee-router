@@ -1,10 +1,7 @@
-Validation for v0.20.5
-
-PASS: compile every Python source and parse every JSON file.
-PASS: StreamTitle parsing: UTF-8, CP1252 fallback, artist/title split, multiple separators, apostrophes, empty and absent fields.
-PASS: synthetic asynchronous ICY framing, zero-length unchanged blocks, explicit empty title, unsupported/malformed metadata intervals, EOF cleanup and cancellation/connection closure.
-PASS: old-generation metadata callback cannot overwrite current station/track.
-PASS: baseline AST comparison preserves existing Radio Browser/Media Source station resolution, persistence, resync, watchdog, PCM and receiver methods. Only metadata fields/hooks and group media_title property changed; media_artist/media_channel properties added.
-PASS: all other baseline integration files byte-identical except manifest version.
-
-No live Home Assistant instance or M1S hardware was available. Network reader tested with a synthetic response/session; live station and actual aiohttp/Home Assistant integration still require installation validation.
+v0.20.6 validation
+PASS: syntax compilation of all Python files and parsing of all JSON files.
+PASS: shared ICY parser/framing, empty vs absent metadata, UTF-8 and CP1252, cancellation, EOF and unsupported intervals using synthetic async responses.
+PASS: real individual metadata methods executed in isolation: independent players, station preservation, deduplicated updates, source reset, cancellation, old generation/process callback rejection and non-HTTP skip.
+PASS: AST comparison with v0.20.5: existing individual methods changed only for initialization and metadata lifecycle hooks. Existing station lookup, persistence, playback commands, PCM, volume and recovery logic retained.
+PASS: group implementation, shared ICY reader and all other integration files byte-identical to v0.20.5 except individual media_player.py and manifest version.
+LIMIT: Home Assistant/aiohttp integration and physical M1S playback not tested live; runtime tests use stubs for HA and HTTP responses.

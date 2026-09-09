@@ -1,3 +1,11 @@
+## v0.20.6 — ICY și pentru playerele individuale
+
+Fiecare player individual activ afișează acum `media_title` (piesa), `media_artist` (artistul când există separatorul ` - `) și `media_channel` (postul). Rezolvarea și memorarea numelui postului sunt păstrate. Fără metadata piesei, titlul revine la numele sursei.
+
+YAML-ul cu scrolling primit anterior rămâne valabil. Instalează noul folder al integrării, repornește Home Assistant și selectează un post radio pentru fiecare player dorit. Metadata apare când postul o transmite.
+
+Cititorul folosește o conexiune HTTP separată pentru fiecare player activ cu ICY, cu trafic suplimentar. Nu modifică redarea, sincronizarea, volumul sau comenzile STOP/PLAY. La schimbarea sursei ori oprire se elimină metadata veche. Nu adaugă suport pentru metadata playlist/HLS. Testele sunt simulate; nu s-a efectuat un test pe huburi fizice.
+
 ## Metadata radio ICY — v0.20.5
 
 Numele postului continuă să fie obținut prin mecanismul existent și este expus în `media_channel`. `media_title` afișează piesa din StreamTitle, iar `media_artist` artistul separat la primul ` - `. Fără titlu de piesă, rămâne numele sursei ca fallback. `icy-name` completează doar un nume de post indisponibil.

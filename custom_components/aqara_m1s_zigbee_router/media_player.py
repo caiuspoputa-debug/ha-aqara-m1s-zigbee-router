@@ -33,6 +33,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .client import AqaraM1SClient
 from .media_group import AqaraM1SMediaGroup
+from .icy_metadata import watch_icy_metadata
 from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
@@ -215,7 +216,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # Example: 6.0% main + 0.27% trim = 6.27% effective gain.
         self._fine_volume_trim_percent = 0.0
         self._attr_media_content_type = MediaType.MUSIC
-        self._attr_media_title = None
+        self._attr_media_title = None  # Preserve existing source/station resolution.
+        self._icy_track_title: str | None = None
+        self._icy_artist: str | None = None
+        self._icy_station: str | None = None
+        self._icy_task: asyncio.Task | None = None
         self._media_url: str | None = None
         self._resume_media_id: str | None = None
         self._resume_media_type: str = MediaType.MUSIC
@@ -265,11 +270,54 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._group_manager = manager
 
     @property
+    def media_title(self) -> str | None:
+        return self._icy_track_title or self._attr_media_title
+
+    @property
+    def media_artist(self) -> str | None:
+        return self._icy_artist
+
+    @property
+    def media_channel(self) -> str | None:
+        station = self._attr_media_title
+        if station and station not in ("Radio Browser", "Radio stream", "M1S group stream"):
+            return station
+        return self._icy_station
+
+    def _stop_icy_metadata(self) -> None:
+        task, self._icy_task = self._icy_task, None
+        if task is not None:
+            task.cancel()
+        self._icy_track_title = None
+        self._icy_artist = None
+        self._icy_station = None
+
+    def _start_icy_metadata(self, process: asyncio.subprocess.Process, generation: int) -> None:
+        self._stop_icy_metadata()
+        if not self._media_url or urlsplit(self._media_url).scheme.lower() not in ("http", "https"):
+            return
+
+        def update(title: str | None, artist: str | None, station: str | None) -> None:
+            if self._ffmpeg is not process or not self._generation_is_current(generation):
+                return
+            values = (title, artist, station)
+            if values != (self._icy_track_title, self._icy_artist, self._icy_station):
+                self._icy_track_title, self._icy_artist, self._icy_station = values
+                if self.entity_id is not None:
+                    self.async_write_ha_state()
+
+        self._icy_task = self.hass.async_create_background_task(
+            watch_icy_metadata(async_get_clientsession(self.hass), self._media_url, update),
+            f"aqara_m1s_icy_metadata_{self.entry.entry_id}",
+        )
+
+    @property
     def playback_requested(self) -> bool:
         return bool(self._resume_after_reconnect)
 
     def _next_play_generation(self, reason: str) -> int:
         """Invalidate every older queued single-audio operation."""
+        self._stop_icy_metadata()
         self._play_generation += 1
         generation = self._play_generation
         _LOGGER.info(
@@ -1672,6 +1720,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             FFMPEG_NICE_TARGET, self._ffmpeg_nice_applied,
         )
         self._attr_state = MediaPlayerState.PLAYING
+        self._start_icy_metadata(process, generation)
         self.async_write_ha_state()
         self._watch_task = self.hass.async_create_background_task(
             self._watch_ffmpeg(process, writer, generation),
@@ -2244,6 +2293,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     await stderr_task
 
         runtime = max(0.0, time.monotonic() - started) if started else 0.0
+        self._stop_icy_metadata()
         self._ffmpeg = None
         self._ffmpeg_started_monotonic = None
         if self._stream_writer is writer:
@@ -2543,6 +2593,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # Invalidate ownership before doing any I/O.  A new Play generation can
         # now create its own process/writer and an old watcher cannot overwrite
         # the new session because all watcher state updates are identity-guarded.
+        self._stop_icy_metadata()
         self._ffmpeg = None
         self._ffmpeg_started_monotonic = None
         watch_task = self._watch_task

@@ -1,3 +1,12 @@
+## 0.20.6 - Passive ICY for individual players
+
+- Every active individual player now uses the same independent ICY reader as the group. `media_title` exposes the track, `media_artist` the artist when separable, and `media_channel` the station.
+- Existing source/station name lookup and `last_media_title` persistence are preserved. ICY station headers are a fallback only. Without track metadata the existing source title remains visible.
+- Metadata connections are cancelled and track fields cleared on a new playback intent, transport replacement/stop, source failure, suspension and unload. Callbacks check both playback generation and process identity so obsolete readers cannot overwrite a new session. Each player owns separate metadata state.
+- No changes to FFmpeg arguments, PCM transport, volume, receiver commands, group synchronization or recovery policy. Metadata errors only retry the metadata reader, never STOP/PLAY or resync.
+- The supplied individual-player scrolling YAML works unchanged. Metadata still depends on the station exposing ICY on its direct resolved HTTP(S) URL; playlist/HLS parsing is not added. Each active HTTP(S) player probes its source and keeps an additional connection only when ICY is available, consuming additional stream bandwidth.
+- Passed syntax/JSON validation and synthetic parser, framing, cancellation, independent-player, source-switch, old-callback and station-preservation checks. No live Home Assistant/hub validation was available.
+
 ## 0.20.5 - Passive ICY radio metadata
 
 - Separate asynchronous HTTP reader requests `Icy-MetaData: 1` and reads `StreamTitle` using `icy-metaint`. No changes to FFmpeg arguments, PCM, buffers, receiver timing or synchronization.
