@@ -1,3 +1,11 @@
+## 0.20.7 - Do not probe single-client YouTube Cast transports for ICY
+
+- Fixes a regression introduced by passive ICY probing: the M1S YouTube Cast bridge permits one HTTP audio consumer and replaces that consumer when another connects. A metadata probe could therefore disconnect FFmpeg before discovering that the response has no ICY metadata.
+- The shared metadata reader now excludes the current `/stream/<receiver>/<serial>.wav` and legacy `/audio/<receiver>/<token>/<serial>` Cast URL formats BEFORE any HTTP request. This applies to group and individual players, custom hosts/ports, restored URLs and query parameters.
+- Radio metadata reading remains enabled. Player code, station naming, playback, buffers, synchronization and watchdog policy are unchanged from v0.20.6.
+- This fixes the known Cast/ICY connection conflict only. It does not claim to fix YouTube RPC failures, missing queue entries, disabled autoplay or every phone progress/reconnection issue.
+- Validation: zero HTTP requests for excluded transports; existing synthetic ICY framing/parser/cancellation tests; Python syntax and JSON; other integration files byte-identical to v0.20.6 except manifest. No live HA/hub test.
+
 ## 0.20.6 - Passive ICY for individual players
 
 - Every active individual player now uses the same independent ICY reader as the group. `media_title` exposes the track, `media_artist` the artist when separable, and `media_channel` the station.
@@ -17,14 +25,14 @@
 - This uses one additional radio HTTP connection and its bandwidth. Stations must expose ICY directly on the resolved HTTP(S) URL; playlist/HLS parsing is not added. Servers without `icy-metaint` are closed immediately. Metadata timing is station-dependent and is not aligned to buffered audio.
 - Validation: Python syntax, JSON parsing, synthetic ICY stream and lifecycle/regression checks. No live Home Assistant/hub playback test was available.
 
-**Current package: v0.20.6 + hub kit v0.8**
+**Current package: v0.20.7 + hub kit v0.8**
 
 [Romana](README_RO.md) | **English**
 
 # Aqara M1S Gen 1 - stock hub to Zigbee Router + Home Assistant integration
 
-Documentation version: **2026-09-09 - v0.20.6 + hub kit v0.8**  
-Home Assistant integration version: **0.20.6**  
+Documentation version: **2026-09-09 - v0.20.7 + hub kit v0.8**  
+Home Assistant integration version: **0.20.7**  
 Target model: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 This README is the current English operational guide for the packaged kit. The Romanian file `README_RO.md` is the long detailed reference; this file keeps the same current facts and the practical stock-hub flow.

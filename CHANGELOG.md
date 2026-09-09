@@ -1,3 +1,11 @@
+## 0.20.7 - Do not probe single-client YouTube Cast transports for ICY
+
+- Fixes a regression introduced by passive ICY probing: the M1S YouTube Cast bridge permits one HTTP audio consumer and replaces that consumer when another connects. A metadata probe could therefore disconnect FFmpeg before discovering that the response has no ICY metadata.
+- The shared metadata reader now excludes the current `/stream/<receiver>/<serial>.wav` and legacy `/audio/<receiver>/<token>/<serial>` Cast URL formats BEFORE any HTTP request. This applies to group and individual players, custom hosts/ports, restored URLs and query parameters.
+- Radio metadata reading remains enabled. Player code, station naming, playback, buffers, synchronization and watchdog policy are unchanged from v0.20.6.
+- This fixes the known Cast/ICY connection conflict only. It does not claim to fix YouTube RPC failures, missing queue entries, disabled autoplay or every phone progress/reconnection issue.
+- Validation: zero HTTP requests for excluded transports; existing synthetic ICY framing/parser/cancellation tests; Python syntax and JSON; other integration files byte-identical to v0.20.6 except manifest. No live HA/hub test.
+
 ## 0.20.6 - Passive ICY for individual players
 
 - Every active individual player now uses the same independent ICY reader as the group. `media_title` exposes the track, `media_artist` the artist when separable, and `media_channel` the station.

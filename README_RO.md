@@ -1,3 +1,11 @@
+## v0.20.7 — Corecție conflict ICY / YouTube Cast
+
+Cititorul ICY nu mai deschide conexiuni la URL-urile sesiunilor YouTube Cast M1S, nici pentru grup, nici pentru individuale. Add-on-ul permite un singur client audio; o verificare suplimentară de metadata putea deconecta FFmpeg. Excluderea se face înaintea cererii HTTP, inclusiv după restaurarea unei surse memorate și pe porturi personalizate.
+
+Instalează folderul integrării și repornește Home Assistant. Repornește redarea Cast din aplicație pentru o sesiune nouă. YAML-ul și add-on-ul YouTube rămân aceleași. Metadata radio continuă să funcționeze.
+
+Corecția elimină conflictul verificat în cod. Nu confirmă rezolvarea erorilor RPC, a cozii YouTube fără piesă următoare sau a progresului blocat în telefon. Testele sunt simulate, fără validare pe huburi fizice.
+
 ## v0.20.6 — ICY și pentru playerele individuale
 
 Fiecare player individual activ afișează acum `media_title` (piesa), `media_artist` (artistul când există separatorul ` - `) și `media_channel` (postul). Rezolvarea și memorarea numelui postului sunt păstrate. Fără metadata piesei, titlul revine la numele sursei.

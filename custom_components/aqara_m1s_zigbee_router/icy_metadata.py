@@ -5,6 +5,7 @@ import asyncio
 import logging
 import re
 from collections.abc import Callable
+from urllib.parse import urlsplit
 
 from aiohttp import ClientSession, ClientTimeout
 
@@ -29,12 +30,33 @@ def parse_stream_title(block: bytes) -> tuple[bool, str | None, str | None]:
     return True, title or None, None
 
 
+def is_icy_candidate(url: str) -> bool:
+    """Exclude known single-client Cast transports before any HTTP request.
+
+    Probing their headers is already destructive: accepting a second client
+    closes FFmpeg's response. This must happen before session.get(), regardless
+    of the configured host/port or whether the player was restored from state.
+    """
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https"):
+        return False
+    path = parts.path
+    # Current continuous WAV bridge and earlier token-based Cast sessions.
+    if re.fullmatch(r"/stream/[^/]+/[0-9]+\.wav/?", path, re.IGNORECASE):
+        return False
+    if re.fullmatch(r"/audio/[^/]+/[^/]+/[0-9]+/?", path):
+        return False
+    return True
+
+
 async def watch_icy_metadata(
     session: ClientSession,
     url: str,
     update: Callable[[str | None, str | None, str | None], None],
 ) -> None:
     """Discard this connection's audio; retry metadata failures independently."""
+    if not is_icy_candidate(url):
+        return
     retry_delay = 15
     while True:
         try:

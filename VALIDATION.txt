@@ -1,7 +1,6 @@
-v0.20.6 validation
-PASS: syntax compilation of all Python files and parsing of all JSON files.
-PASS: shared ICY parser/framing, empty vs absent metadata, UTF-8 and CP1252, cancellation, EOF and unsupported intervals using synthetic async responses.
-PASS: real individual metadata methods executed in isolation: independent players, station preservation, deduplicated updates, source reset, cancellation, old generation/process callback rejection and non-HTTP skip.
-PASS: AST comparison with v0.20.5: existing individual methods changed only for initialization and metadata lifecycle hooks. Existing station lookup, persistence, playback commands, PCM, volume and recovery logic retained.
-PASS: group implementation, shared ICY reader and all other integration files byte-identical to v0.20.5 except individual media_player.py and manifest version.
-LIMIT: Home Assistant/aiohttp integration and physical M1S playback not tested live; runtime tests use stubs for HA and HTTP responses.
+v0.20.7
+PASS: excluded current and legacy Cast URLs generate zero HTTP requests, including custom ports, HTTPS and query parameters.
+PASS: radio URLs remain eligible; shared parser/framing, empty metadata, EOF and cancellation tests pass.
+PASS: all other integration source files byte-identical to v0.20.6 except manifest version.
+PASS: Python syntax and JSON parsing; ZIP integrity.
+LIMIT: no live Home Assistant/hub/YouTube session test. Queue/autoplay and RPC failures remain unverified and are not claimed fixed.
