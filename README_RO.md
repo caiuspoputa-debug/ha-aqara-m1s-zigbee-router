@@ -1,4 +1,10 @@
-**Pachet curent: v0.20.4 + kit hub v0.8**
+## Metadata radio ICY — v0.20.5
+
+Numele postului continuă să fie obținut prin mecanismul existent și este expus în `media_channel`. `media_title` afișează piesa din StreamTitle, iar `media_artist` artistul separat la primul ` - `. Fără titlu de piesă, rămâne numele sursei ca fallback. `icy-name` completează doar un nume de post indisponibil.
+
+Cititorul asincron folosește o conexiune HTTP separată (consum suplimentar de trafic), fără modificări în fluxul audio, sincronizare sau comenzile STOP/PLAY. Nu activează adaptive/per-buffer sync. Se oprește odată cu transportul și își reîncearcă separat conexiunea la erori. Funcționează pentru URL-uri HTTP(S) directe cu ICY; nu adaugă interpretare playlist/HLS. Momentul metadata este decis de post și poate diferi de sunetul auzit.
+
+**Pachet curent: v0.20.5 + kit hub v0.8**
 
 [**Română**](README_RO.md) | [English](README.md)
 
@@ -15,8 +21,8 @@ Integrarea poate fi folosită împreună cu add-on-ul opțional **M1S YouTube Ca
 
 # Aqara M1S Gen 1 — conversie completă în Zigbee Router + integrare Home Assistant
 
-Versiune documentație: **2026-09-08 — v0.20.4 + kit hub v0.8**  
-Integrare Home Assistant inclusă: **0.20.4**  
+Versiune documentație: **2026-09-08 — v0.20.5 + kit hub v0.8**  
+Integrare Home Assistant inclusă: **0.20.5**  
 Model țintă: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 Acesta este ghidul principal pentru refacerea unui hub stock în configurația folosită de proiect:
@@ -38,9 +44,9 @@ Revizia integrării din 2026-09-03 păstrează kitul hub v0.8 validat și aduce 
 
 ---
 
-## Modificări curente v0.20.4 / kit hub v0.8
+## Modificări curente v0.20.5 / kit hub v0.8
 
-- manifestul integrării este `0.20.4`; baza runtime este v0.20.1 NO-ADAPTIVE-SYNC, nu experimentele nereușite v0.20.2/v0.20.3;
+- manifestul integrării este `0.20.5`; baza runtime este v0.20.1 NO-ADAPTIVE-SYNC, nu experimentele nereușite v0.20.2/v0.20.3;
 - source-switch-ul de grup păstrează regula curată din `0.10.32`: **GROUP STOP pe huburi înainte de teardown-ul FFmpeg/TCP al sursei vechi**;
 - source-switch-ul playerului individual folosește acum aceeași ordine: **REMOTE STOP pe receiverul 12346 înainte de teardown-ul FFmpeg/TCP**, apoi pornește transportul nou;
 - dacă pre-STOP-ul individual reușește, startul nou nu mai repetă inutil același STOP; dacă pre-STOP-ul eșuează, comanda standard de start păstrează cleanup-ul scoped ca fallback;
@@ -54,7 +60,7 @@ Revizia integrării din 2026-09-03 păstrează kitul hub v0.8 validat și aduce 
 - add-on-ul M1S YouTube Cast Receiver `1.0.1` livrează YT/YTM ca flux continuu; integrarea nu interpretează schimbarea piesei și nu face buffering per-track;
 - evenimentele de buton `click` ... `ten_click`, `hold`, `hold_start`, `hold_repeat`, `hold_release`, Factory Reset Guard, service trim, Wi-Fi, RGB/lux, WAV și restul funcțiilor rămân neschimbate.
 
-> Secțiunile `v0.5.x TEST` de mai jos sunt **istoric de dezvoltare**. Ele explică experimente vechi și nu descriu politica audio curentă din v0.20.4.
+> Secțiunile `v0.5.x TEST` de mai jos sunt **istoric de dezvoltare**. Ele explică experimente vechi și nu descriu politica audio curentă din v0.20.5.
 
 ---
 
@@ -115,7 +121,7 @@ Folosește pentru o instalare nouă numai următoarele componente:
 
 | Componentă | Versiune/fișier curent | Rol |
 |---|---|---|
-| Integrare Home Assistant | `custom_components/aqara_m1s_zigbee_router`, manifest `0.20.4` | control local, senzori, audio, grup, diagnostic, buton extins și schimbare Wi-Fi sigură |
+| Integrare Home Assistant | `custom_components/aqara_m1s_zigbee_router`, manifest `0.20.5` | control local, senzori, audio, grup, diagnostic, buton extins și schimbare Wi-Fi sigură |
 | Kit hub validat | `Aqara_M1S_WORKING_v0.8_STRICT10_HOLD_EVENTS_LOCAL_2026-09-02_README_RESEARCH_OK.zip` | pachet practic pentru transformarea unui hub stock în varianta locală curentă |
 | Bundle hub | `hub_bundle/m1s_hub_bundle_LOCAL.tgz` | instalează pe hub bootul persistent, guardul, service trim, GPIO watcher, MQTT publisher și scripturile JN5189 |
 | Firmware JN5189 | `jn5189_router_rgb_lux_rejoin_test.bin` | Zigbee Router, RGB, lux PIO19/ADC5, comandă rejoin A7 |
@@ -978,7 +984,7 @@ Nu lăsa un `cat /dev/ttyS1` manual după teste; integrarea își administrează
 2. Adaugă repository-ul:
    `https://github.com/caiuspoputa-debug/ha-aqara-m1s-zigbee-router`
 3. Categoria: **Integration**.
-4. Pentru această procedură reproductibilă instalează pachetul/release-ul care conține manifest `0.20.4`. Dacă folosești „latest”, verifică imediat după instalare că fișierul `custom_components/aqara_m1s_zigbee_router/manifest.json` arată `0.20.4`.
+4. Pentru această procedură reproductibilă instalează pachetul/release-ul care conține manifest `0.20.5`. Dacă folosești „latest”, verifică imediat după instalare că fișierul `custom_components/aqara_m1s_zigbee_router/manifest.json` arată `0.20.5`.
 5. HACS instalează direct repository-ul; nu este necesar un ZIP separat atașat release-ului.
 6. Repornește complet Home Assistant.
 
@@ -1076,7 +1082,7 @@ Coordonatorul verifică hubul la fiecare 15 secunde. Când hubul este offline, l
 - redarea individuală are prioritate față de grup;
 - suportă `PLAY_MEDIA` și `BROWSE_MEDIA`, inclusiv surse Home Assistant `media-source://` și URL-uri HTTP/HTTPS;
 - la un **STOP explicit**, receiverul/aplay de pe hub este oprit înainte ca Home Assistant să detașeze FFmpeg/TCP, astfel încât ALSA să nu mai golească audio vechi după Stop;
-- la o **schimbare explicită de sursă**, v0.20.4 păstrează aceeași regulă: `REMOTE STOP → teardown FFmpeg/TCP vechi → receiver nou → flux nou`;
+- la o **schimbare explicită de sursă**, v0.20.5 păstrează aceeași regulă: `REMOTE STOP → teardown FFmpeg/TCP vechi → receiver nou → flux nou`;
 - dacă fluxul are un defect TCP real, playerul poate reconstrui receiverul și aruncă o fereastră mică de PCM stale, fără a transforma o simplă schimbare de melodie YT/YTM într-un source-switch;
 - FFmpeg solicită best-effort `nice -5`, iar `aplay` pe hub `nice -3`; sunt priorități Linux normale, nu realtime.
 
@@ -1096,7 +1102,7 @@ Integrarea separată **Radio Favorites** și add-on-ul **M1S YouTube Cast Receiv
 - un membru lent/defect este izolat fără restartarea membrilor sănătoși;
 - un hub revenit online intră prin **history prefill + live catch-up** după o stabilizare scurtă, fără restart global al sursei;
 - resincronizarea periodică este dezactivată;
-- **adaptive sync este dezactivat în v0.20.4**; nu se aplică micro-resampling sau corecție de viteză per hub;
+- **adaptive sync este dezactivat în v0.20.5**; nu se aplică micro-resampling sau corecție de viteză per hub;
 - schimbarea melodiei în add-on-ul YT/YTM 1.0.1 nu este schimbare de sursă pentru integrare: același flux continuă și nu se repetă prebuffer-ul de start.
 
 ### Sunete WAV locale
@@ -1661,7 +1667,7 @@ După boot, după cele minimum 120 de secunde de stabilizare:
 
 ### Home Assistant
 
-- [ ] manifestul integrării arată `0.20.4`;
+- [ ] manifestul integrării arată `0.20.5`;
 - [ ] toate entitățile live sunt disponibile;
 - [ ] RGB și lux funcționează;
 - [ ] media player individual pornește/oprește și își păstrează volumul;
@@ -1839,7 +1845,7 @@ rm -f /data/m1s_wifi/ap_hold
 6. testează un singur hub înaintea tuturor;
 7. abia apoi actualizează restul huburilor.
 
-Pentru pachetul curent, manifestul așteptat este `0.20.4`. După update verifică în special STOP-ul curat, source-switch-ul și serviciul manual `resync_media_group`; evenimentele de buton trebuie să includă până la `ten_click` plus `hold_start`, `hold_repeat`, `hold_release`.
+Pentru pachetul curent, manifestul așteptat este `0.20.5`. După update verifică în special STOP-ul curat, source-switch-ul și serviciul manual `resync_media_group`; evenimentele de buton trebuie să includă până la `ten_click` plus `hold_start`, `hold_repeat`, `hold_release`.
 
 ---
 

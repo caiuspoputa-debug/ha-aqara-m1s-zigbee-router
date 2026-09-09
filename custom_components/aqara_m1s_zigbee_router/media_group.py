@@ -27,6 +27,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from .icy_metadata import watch_icy_metadata
+
 from .const import (
     DATA_RADIO_PLAYERS,
     DOMAIN,
@@ -235,7 +237,11 @@ class AqaraM1SMediaGroupManager:
         self.media_url: str | None = None
         self.media_id: str | None = None
         self.media_type: str = MediaType.MUSIC
-        self.media_title: str | None = None
+        self.media_title: str | None = None  # Existing resolved station/source name.
+        self.track_title: str | None = None
+        self.track_artist: str | None = None
+        self.icy_station: str | None = None
+        self.metadata_task: asyncio.Task | None = None
         self.volume = 0.05
         self.muted = False
         self.desired_playing = False
@@ -651,6 +657,28 @@ class AqaraM1SMediaGroupManager:
             "aplay_period_ms": int(APLAY_PERIOD_TIME_US / 1000),
         }
 
+    def _clear_track_metadata(self) -> None:
+        self.track_title = None
+        self.track_artist = None
+        self.icy_station = None
+
+    def _start_metadata(self, generation: int) -> None:
+        if not self.media_url or urlsplit(self.media_url).scheme.lower() not in ("http", "https"):
+            return
+
+        def update(title: str | None, artist: str | None, station: str | None) -> None:
+            if generation != self._generation or not self.desired_playing or self._shutting_down:
+                return
+            values = (title, artist, station)
+            if values != (self.track_title, self.track_artist, self.icy_station):
+                self.track_title, self.track_artist, self.icy_station = values
+                self._signal_update()
+
+        self.metadata_task = self.hass.async_create_background_task(
+            watch_icy_metadata(async_get_clientsession(self.hass), self.media_url, update),
+            "aqara_m1s_group_icy_metadata",
+        )
+
     async def async_start(
         self,
         media_url: str,
@@ -662,6 +690,7 @@ class AqaraM1SMediaGroupManager:
             self.media_url = media_url
             self.media_id = media_id
             self.media_type = media_type or MediaType.MUSIC
+            self._clear_track_metadata()
             self.media_title = title
             self.desired_playing = True
             self._watchdog_attempts = 0
@@ -1234,6 +1263,7 @@ class AqaraM1SMediaGroupManager:
             self._broadcast_loop(process, generation),
             "aqara_m1s_group_pcm_broadcast",
         )
+        self._start_metadata(generation)
         self.stderr_task = self.hass.async_create_background_task(
             self._stderr_loop(process, generation),
             "aqara_m1s_group_ffmpeg_stderr",
@@ -1284,6 +1314,10 @@ class AqaraM1SMediaGroupManager:
         self._broadcast_paused.clear()
         self._playout_epoch_monotonic = None
         self._generation += 1
+        metadata_task, self.metadata_task = self.metadata_task, None
+        if metadata_task is not None:
+            metadata_task.cancel()
+        self._clear_track_metadata()
         current = asyncio.current_task()
         broadcast_task = self.broadcast_task
         stderr_task = self.stderr_task
@@ -2979,7 +3013,19 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
 
     @property
     def media_title(self) -> str | None:
-        return self.manager.media_title
+        return self.manager.track_title or self.manager.media_title
+
+    @property
+    def media_artist(self) -> str | None:
+        return self.manager.track_artist
+
+    @property
+    def media_channel(self) -> str | None:
+        # Keep the existing Radio Browser/Media Source/extra.title resolution.
+        title = self.manager.media_title
+        if title and title != "M1S group stream":
+            return title
+        return self.manager.icy_station
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

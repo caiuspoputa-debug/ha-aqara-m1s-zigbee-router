@@ -1,0 +1,10 @@
+Validation for v0.20.5
+
+PASS: compile every Python source and parse every JSON file.
+PASS: StreamTitle parsing: UTF-8, CP1252 fallback, artist/title split, multiple separators, apostrophes, empty and absent fields.
+PASS: synthetic asynchronous ICY framing, zero-length unchanged blocks, explicit empty title, unsupported/malformed metadata intervals, EOF cleanup and cancellation/connection closure.
+PASS: old-generation metadata callback cannot overwrite current station/track.
+PASS: baseline AST comparison preserves existing Radio Browser/Media Source station resolution, persistence, resync, watchdog, PCM and receiver methods. Only metadata fields/hooks and group media_title property changed; media_artist/media_channel properties added.
+PASS: all other baseline integration files byte-identical except manifest version.
+
+No live Home Assistant instance or M1S hardware was available. Network reader tested with a synthetic response/session; live station and actual aiohttp/Home Assistant integration still require installation validation.

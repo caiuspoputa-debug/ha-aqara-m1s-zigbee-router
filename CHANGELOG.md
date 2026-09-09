@@ -1,3 +1,13 @@
+## 0.20.5 - Passive ICY radio metadata
+
+- Separate asynchronous HTTP reader requests `Icy-MetaData: 1` and reads `StreamTitle` using `icy-metaint`. No changes to FFmpeg arguments, PCM, buffers, receiver timing or synchronization.
+- Group `media_title` shows the song; `media_artist` uses the first `Artist - Title` separator. Without a separator, the whole value is the title and artist is unset.
+- Existing station-name resolution (`extra.title`, resolved source title/name, Radio Browser lookup, Media Source browse) is preserved, including restart persistence. `media_channel` uses that name; `icy-name` is only a fallback when the existing name is unavailable.
+- Without a song title, `media_title` retains the existing source-name fallback. Empty StreamTitle clears the song; zero-length metadata keeps the previous song. Old track data is cleared on stop/source change/restart and metadata disconnect.
+- Reader errors retry only the metadata connection with bounded backoff; they never trigger STOP/PLAY, resync, or the audio watchdog. The reader is cancelled on transport stop/replacement/shutdown. Adaptive/per-buffer sync remains disabled.
+- This uses one additional radio HTTP connection and its bandwidth. Stations must expose ICY directly on the resolved HTTP(S) URL; playlist/HLS parsing is not added. Servers without `icy-metaint` are closed immediately. Metadata timing is station-dependent and is not aligned to buffered audio.
+- Validation: Python syntax, JSON parsing, synthetic ICY stream and lifecycle/regression checks. No live Home Assistant/hub playback test was available.
+
 ## 0.20.4 - Manual shared-timeline resync, no adaptive/per-buffer sync
 
 - Based directly on v0.20.1 NO-ADAPTIVE-SYNC, not on the failed v0.20.2/v0.20.3 experiments.

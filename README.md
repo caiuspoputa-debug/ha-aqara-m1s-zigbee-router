@@ -1,11 +1,21 @@
-**Current package: v0.20.4 + hub kit v0.8**
+## Passive ICY radio metadata — v0.20.5
+
+- Separate asynchronous HTTP reader requests `Icy-MetaData: 1` and reads `StreamTitle` using `icy-metaint`. No changes to FFmpeg arguments, PCM, buffers, receiver timing or synchronization.
+- Group `media_title` shows the song; `media_artist` uses the first `Artist - Title` separator. Without a separator, the whole value is the title and artist is unset.
+- Existing station-name resolution (`extra.title`, resolved source title/name, Radio Browser lookup, Media Source browse) is preserved, including restart persistence. `media_channel` uses that name; `icy-name` is only a fallback when the existing name is unavailable.
+- Without a song title, `media_title` retains the existing source-name fallback. Empty StreamTitle clears the song; zero-length metadata keeps the previous song. Old track data is cleared on stop/source change/restart and metadata disconnect.
+- Reader errors retry only the metadata connection with bounded backoff; they never trigger STOP/PLAY, resync, or the audio watchdog. The reader is cancelled on transport stop/replacement/shutdown. Adaptive/per-buffer sync remains disabled.
+- This uses one additional radio HTTP connection and its bandwidth. Stations must expose ICY directly on the resolved HTTP(S) URL; playlist/HLS parsing is not added. Servers without `icy-metaint` are closed immediately. Metadata timing is station-dependent and is not aligned to buffered audio.
+- Validation: Python syntax, JSON parsing, synthetic ICY stream and lifecycle/regression checks. No live Home Assistant/hub playback test was available.
+
+**Current package: v0.20.5 + hub kit v0.8**
 
 [Romana](README_RO.md) | **English**
 
 # Aqara M1S Gen 1 - stock hub to Zigbee Router + Home Assistant integration
 
-Documentation version: **2026-09-08 - v0.20.4 + hub kit v0.8**  
-Home Assistant integration version: **0.20.4**  
+Documentation version: **2026-09-09 - v0.20.5 + hub kit v0.8**  
+Home Assistant integration version: **0.20.5**  
 Target model: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 This README is the current English operational guide for the packaged kit. The Romanian file `README_RO.md` is the long detailed reference; this file keeps the same current facts and the practical stock-hub flow.
@@ -16,12 +26,12 @@ The optional **M1S YouTube Cast Receiver 1.0.1** add-on owns YouTube/YTM playbac
 
 The Aqara integration does not own per-track YT/YTM logic. A track change must not become a new HA STOP/PLAY cycle, a new prebuffer operation, a duration timer, or a queue decision in this integration. The integration only transports PCM/TCP and synchronizes M1S receivers.
 
-## Current v0.20.4 audio behavior
+## Current v0.20.5 audio behavior
 
 - Runtime baseline is the stable v0.20.1 NO-ADAPTIVE-SYNC build.
 - v0.20.2 adaptive sync and v0.20.3 global receiver cohort are intentionally not used.
 - Group source changes already use clean ordering: remote GROUP STOP before old FFmpeg/TCP teardown.
-- v0.20.4 keeps the same clean ordering to an individual player on source replacement: remote port-12346 STOP before old FFmpeg/TCP teardown, then the new receiver/stream starts.
+- v0.20.5 keeps the same clean ordering to an individual player on source replacement: remote port-12346 STOP before old FFmpeg/TCP teardown, then the new receiver/stream starts.
 - PCM transport periods are **35 ms**.
 - Individual and group HA jitter buffer: **4.0 s**.
 - Initial source prebuffer: **2.5 s**.
@@ -262,7 +272,7 @@ Enable Permit Join in Zigbee2MQTT and wait for `BDB-Router` to appear online.
 
 ## 7. Add the hub in Home Assistant
 
-Install the integration with manifest `0.20.4`.
+Install the integration with manifest `0.20.5`.
 
 HACS:
 
@@ -469,7 +479,7 @@ Rollback reactivates the stock `/dev/input/event0` button path and can bring bac
 - flash completed with `FLASH_WRITE_OK`;
 - port `1888` is closed after flashing;
 - Router joins Zigbee2MQTT;
-- Home Assistant integration manifest is `0.20.4`;
+- Home Assistant integration manifest is `0.20.5`;
 - final reboot completed;
 - 120 seconds passed after boot;
 - `service_trim` stopped HomeKit and Mijia automation;
