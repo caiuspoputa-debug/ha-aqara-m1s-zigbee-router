@@ -662,6 +662,29 @@ class AqaraM1SMediaGroupManager:
         self.track_artist = None
         self.icy_station = None
 
+    def update_external_metadata(
+        self,
+        expected_media_id: str,
+        title: Any,
+        artist: Any,
+        channel: Any,
+    ) -> bool:
+        """Update attributes only when the caller still owns the active stream."""
+        if not self.desired_playing or expected_media_id not in (
+            self.media_id,
+            self.media_url,
+        ):
+            return False
+        clean = lambda value: value.strip() if isinstance(value, str) and value.strip() else None
+        values = (clean(title), clean(artist), clean(channel))
+        channel_changed = values[2] is not None and self.media_title != values[2]
+        if values != (self.track_title, self.track_artist, self.icy_station) or channel_changed:
+            self.track_title, self.track_artist, self.icy_station = values
+            if values[2] is not None:
+                self.media_title = values[2]
+            self._signal_update()
+        return True
+
     def _start_metadata(self, generation: int) -> None:
         if not self.media_url or urlsplit(self.media_url).scheme.lower() not in ("http", "https"):
             return

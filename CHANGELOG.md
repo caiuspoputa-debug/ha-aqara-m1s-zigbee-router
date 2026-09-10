@@ -1,3 +1,9 @@
+## 0.20.8 - Safe external track metadata
+
+- Add a metadata-only service for the YouTube Cast add-on, covering group and individual M1S media players.
+- Require an exact active media-content ID before changing title, artist or channel attributes.
+- Do not issue transport commands, probe the single-client stream or alter synchronization.
+
 ## 0.20.7 - Do not probe single-client YouTube Cast transports for ICY
 
 - Fixes a regression introduced by passive ICY probing: the M1S YouTube Cast bridge permits one HTTP audio consumer and replaces that consumer when another connects. A metadata probe could therefore disconnect FFmpeg before discovering that the response has no ICY metadata.

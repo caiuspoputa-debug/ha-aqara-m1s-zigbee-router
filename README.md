@@ -1,3 +1,9 @@
+## 0.20.8 - Metadata pentru fluxul YouTube continuu
+
+- Adaugă serviciul intern `update_media_metadata`, folosit de add-on-ul v1.0.11 pentru titlu, artist și canal.
+- Actualizarea este acceptată numai când identificatorul fluxului coincide exact cu sursa activă și playerul încă redă.
+- Serviciul modifică doar atributele entității. Nu pornește, nu oprește și nu reconstruiește fluxul audio; sincronizarea rămâne neschimbată.
+
 ## 0.20.7 - Do not probe single-client YouTube Cast transports for ICY
 
 - Fixes a regression introduced by passive ICY probing: the M1S YouTube Cast bridge permits one HTTP audio consumer and replaces that consumer when another connects. A metadata probe could therefore disconnect FFmpeg before discovering that the response has no ICY metadata.

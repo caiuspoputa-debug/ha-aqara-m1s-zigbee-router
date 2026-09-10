@@ -292,6 +292,29 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._icy_artist = None
         self._icy_station = None
 
+    def update_external_metadata(
+        self,
+        expected_media_id: str,
+        title: Any,
+        artist: Any,
+        channel: Any,
+    ) -> bool:
+        """Update attributes only when the caller still owns the active stream."""
+        if expected_media_id not in (self._attr_media_content_id, self._media_url):
+            return False
+        if self._attr_state not in (MediaPlayerState.PLAYING, MediaPlayerState.BUFFERING):
+            return False
+        clean = lambda value: value.strip() if isinstance(value, str) and value.strip() else None
+        values = (clean(title), clean(artist), clean(channel))
+        channel_changed = values[2] is not None and self._attr_media_title != values[2]
+        if values != (self._icy_track_title, self._icy_artist, self._icy_station) or channel_changed:
+            self._icy_track_title, self._icy_artist, self._icy_station = values
+            if values[2] is not None:
+                self._attr_media_title = values[2]
+            if self.entity_id is not None:
+                self.async_write_ha_state()
+        return True
+
     def _start_icy_metadata(self, process: asyncio.subprocess.Process, generation: int) -> None:
         self._stop_icy_metadata()
         if not self._media_url or urlsplit(self._media_url).scheme.lower() not in ("http", "https"):

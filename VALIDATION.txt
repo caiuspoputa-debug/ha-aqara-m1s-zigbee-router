@@ -1,4 +1,6 @@
-v0.20.7
+v0.20.8
+PASS: external metadata requires the exact active media ID and an active player; update changes attributes only.
+PASS: no transport, PCM, buffering, synchronization or ICY candidate behavior changed.
 PASS: excluded current and legacy Cast URLs generate zero HTTP requests, including custom ports, HTTPS and query parameters.
 PASS: radio URLs remain eligible; shared parser/framing, empty metadata, EOF and cancellation tests pass.
 PASS: all other integration source files byte-identical to v0.20.6 except manifest version.

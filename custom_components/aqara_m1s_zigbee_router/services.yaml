@@ -118,3 +118,34 @@ reset_media_group:
 resync_media_group:
   name: Resync Media Group
   description: Manually restart the shared group timeline once, with cooldown, using the remembered source. No adaptive sync, no per-hub buffering, and no individual resampling.
+
+update_media_metadata:
+  name: Update active media metadata
+  description: Update title, artist and channel for an exact active stream without changing playback or synchronization.
+  fields:
+    entity_id:
+      name: Media player
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    expected_media_content_id:
+      name: Expected active media ID
+      required: true
+      selector:
+        text:
+    title:
+      name: Title
+      required: true
+      selector:
+        text:
+    artist:
+      name: Artist
+      required: false
+      selector:
+        text:
+    channel:
+      name: Channel
+      required: false
+      selector:
+        text:

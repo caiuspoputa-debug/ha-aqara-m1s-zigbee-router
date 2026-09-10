@@ -32,6 +32,7 @@ from .const import (
     SERVICE_REFRESH_SOUNDS,
     SERVICE_RESET_MEDIA_GROUP,
     SERVICE_RESYNC_MEDIA_GROUP,
+    SERVICE_UPDATE_MEDIA_METADATA,
     sound_list_signal,
 )
 from .coordinator import AqaraM1SRouterCoordinator
@@ -274,6 +275,31 @@ async def async_setup_entry(
         if group_manager is not None:
             await group_manager.async_manual_resync(reason="service_resync")
 
+    async def update_media_metadata(call: ServiceCall) -> None:
+        """Update display metadata for the exact active stream, without transport commands."""
+        entity_id = str(call.data.get("entity_id") or "").strip()
+        expected_media_id = str(call.data.get("expected_media_content_id") or "").strip()
+        title = call.data.get("title")
+        artist = call.data.get("artist")
+        channel = call.data.get("channel")
+        if not entity_id or not expected_media_id:
+            return
+
+        group_manager = hass.data[DOMAIN].get(DATA_MEDIA_GROUP)
+        group_entity = getattr(group_manager, "entity", None)
+        if group_entity is not None and entity_id == group_entity.entity_id:
+            group_manager.update_external_metadata(
+                expected_media_id, title, artist, channel
+            )
+            return
+
+        for player in hass.data[DOMAIN].get(DATA_RADIO_PLAYERS, {}).values():
+            if entity_id == player.entity_id:
+                player.update_external_metadata(
+                    expected_media_id, title, artist, channel
+                )
+                return
+
     if not hass.services.has_service(DOMAIN, SERVICE_PLAY_URL):
         hass.services.async_register(DOMAIN, SERVICE_PLAY_URL, play_url)
         hass.services.async_register(DOMAIN, SERVICE_PLAY_SOUND, play_sound)
@@ -283,6 +309,10 @@ async def async_setup_entry(
         hass.services.async_register(DOMAIN, SERVICE_REFRESH_SOUNDS, refresh_sounds)
         hass.services.async_register(DOMAIN, SERVICE_RESET_MEDIA_GROUP, reset_media_group)
         hass.services.async_register(DOMAIN, SERVICE_RESYNC_MEDIA_GROUP, resync_media_group)
+    if not hass.services.has_service(DOMAIN, SERVICE_UPDATE_MEDIA_METADATA):
+        hass.services.async_register(
+            DOMAIN, SERVICE_UPDATE_MEDIA_METADATA, update_media_metadata
+        )
 
     return True
 

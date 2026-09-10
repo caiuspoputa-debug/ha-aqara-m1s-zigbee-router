@@ -1,3 +1,7 @@
+## v0.20.8 — Metadata pentru fluxul YouTube continuu
+
+Add-on-ul v1.0.11 poate actualiza titlul, artistul și canalul fără să repornească redarea. Integrarea acceptă actualizarea numai dacă URL-ul transmis coincide exact cu fluxul activ. Nu sunt modificate sincronizarea, bufferele sau citirea ICY pentru radio.
+
 ## v0.20.7 — Corecție conflict ICY / YouTube Cast
 
 Cititorul ICY nu mai deschide conexiuni la URL-urile sesiunilor YouTube Cast M1S, nici pentru grup, nici pentru individuale. Add-on-ul permite un singur client audio; o verificare suplimentară de metadata putea deconecta FFmpeg. Excluderea se face înaintea cererii HTTP, inclusiv după restaurarea unei surse memorate și pe porturi personalizate.
