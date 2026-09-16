@@ -1,3 +1,7 @@
+## v0.20.9 — Log de alerte curățat
+
+Tranzițiile intenționate player individual → grup, sunet prioritar, Stop și shutdown nu mai generează cascade false de WARNING pentru `Broken pipe`, receiver rebuild sau FFmpeg închis. Etapele normale de recovery sunt DEBUG/INFO; WARNING/ERROR rămân pentru întreruperi neașteptate, recovery eșuat ori procese care nu pot fi oprite. Transportul audio și sincronizarea nu sunt schimbate.
+
 ## v0.20.8 — Metadata pentru fluxul YouTube continuu
 
 Add-on-ul v1.0.11 poate actualiza titlul, artistul și canalul fără să repornească redarea. Integrarea acceptă actualizarea numai dacă URL-ul transmis coincide exact cu fluxul activ. Nu sunt modificate sincronizarea, bufferele sau citirea ICY pentru radio.

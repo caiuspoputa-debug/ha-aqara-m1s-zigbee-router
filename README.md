@@ -1,3 +1,7 @@
+## v0.20.9 — Quiet expected handoff logging
+
+Intentional individual → group handoff, priority-sound preemption, Stop and shutdown no longer emit false WARNING cascades for `Broken pipe`, receiver rebuild or expected FFmpeg exit. Routine recovery details are DEBUG/INFO; WARNING/ERROR remain for unexpected interruptions, failed recovery or processes that cannot be reaped. Audio transport and synchronization are unchanged.
+
 ## 0.20.8 - Metadata pentru fluxul YouTube continuu
 
 - Adaugă serviciul intern `update_media_metadata`, folosit de add-on-ul v1.0.11 pentru titlu, artist și canal.

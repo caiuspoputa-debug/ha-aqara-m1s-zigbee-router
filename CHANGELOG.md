@@ -1,3 +1,11 @@
+## 0.20.9 - Quiet expected handoff logging
+
+- Mark intentional single-player teardowns (group handoff, priority sound, explicit Stop and integration shutdown) so stale TCP/FFmpeg cleanup is not reported as an audio fault.
+- Do not rebuild the individual receiver when a fault arrives during an already-requested teardown.
+- Downgrade expected Broken pipe / writer-close cleanup, superseded requests, receiver start, diagnostic snapshots, low-buffer/catch-up notices and intermediate receiver-rebuild steps to DEBUG.
+- Keep one INFO line for a successful real TCP receiver recovery. Watchdog restart attempts are INFO; retry exhaustion, failed recovery, real unexpected FFmpeg/PCM termination and unreaped processes remain WARNING/ERROR.
+- Audio transport, buffering, ICY/Cast metadata, group synchronization and volume behavior are otherwise unchanged from v0.20.8.
+
 ## 0.20.8 - Safe external track metadata
 
 - Add a metadata-only service for the YouTube Cast add-on, covering group and individual M1S media players.

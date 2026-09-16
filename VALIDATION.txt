@@ -1,8 +1,9 @@
-v0.20.8
-PASS: external metadata requires the exact active media ID and an active player; update changes attributes only.
-PASS: no transport, PCM, buffering, synchronization or ICY candidate behavior changed.
-PASS: excluded current and legacy Cast URLs generate zero HTTP requests, including custom ports, HTTPS and query parameters.
-PASS: radio URLs remain eligible; shared parser/framing, empty metadata, EOF and cancellation tests pass.
-PASS: all other integration source files byte-identical to v0.20.6 except manifest version.
-PASS: Python syntax and JSON parsing; ZIP integrity.
-LIMIT: no live Home Assistant/hub/YouTube session test. Queue/autoplay and RPC failures remain unverified and are not claimed fixed.
+v0.20.9
+PASS: Python compileall and AST parsing for all integration Python modules.
+PASS: manifest JSON parses and reports version 0.20.9.
+PASS: intentional group handoff, priority-sound preemption, explicit Stop and integration shutdown are marked as expected transport teardown.
+PASS: receiver faults racing with an expected teardown do not rebuild the individual receiver.
+PASS: expected writer-close/Broken pipe cleanup, superseded requests, receiver start, diagnostic snapshots and intermediate recovery details are DEBUG/INFO instead of WARNING.
+PASS: real unexpected FFmpeg/PCM termination, failed/exhausted recovery and unreaped process paths remain WARNING/ERROR.
+PASS: audio transport constants, PCM buffering values, ICY/Cast metadata paths, group synchronization and volume logic were not intentionally changed.
+LIMIT: no live Home Assistant/hub handoff test was available; validate with individual -> group and group -> individual transitions after install.

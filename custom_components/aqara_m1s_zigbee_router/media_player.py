@@ -253,6 +253,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._priority_sound_suspended = False
         self._group_suspended = False
         self._group_resume_requested = False
+        # Intentional transport teardowns (group/sound/STOP/shutdown) are not
+        # audio faults. Keep the reason long enough for an old watcher to exit
+        # quietly instead of emitting false WARNING cascades.
+        self._expected_transport_stop_reason: str | None = None
         # Monotonic user/audio intent generation. Every new Play/Stop/priority
         # request invalidates older queued starts so only the newest request
         # may touch the hub audio receiver (latest request wins).
@@ -360,6 +364,18 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             and not self._group_suspended
         )
 
+    def _expected_transport_stop(self, generation: int | None = None) -> str | None:
+        """Return the intentional teardown reason for a stale/handed-off session."""
+        if self._shutting_down:
+            return "integration_shutdown"
+        if self._group_suspended:
+            return "group_preempt"
+        if self._priority_sound_suspended:
+            return "priority_sound"
+        if generation is not None and generation != self._play_generation:
+            return self._expected_transport_stop_reason or "superseded"
+        return self._expected_transport_stop_reason
+
     def _cancel_recovery_tasks_now(self) -> None:
         """Cancel retries immediately, before waiting for the transport lock."""
         current = asyncio.current_task()
@@ -379,7 +395,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     ) -> None:
         """Clean only the single-player 12346 receiver after a superseded start."""
         self._last_superseded_generation = generation
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Aqara media request superseded entity=%s host=%s "
             "generation=%s current_generation=%s phase=%s",
             self.entity_id,
@@ -444,6 +460,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """Temporarily stop this player's transport without forgetting its source."""
         if self._shutting_down:
             return False
+        self._expected_transport_stop_reason = "priority_sound"
         generation = self._next_play_generation("priority_sound_preempt")
         self._priority_sound_suspended = True
         self._cancel_recovery_tasks_now()
@@ -493,6 +510,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """Release the single receiver while preserving its playback intent."""
         if self._shutting_down:
             return False
+        self._expected_transport_stop_reason = "group_preempt"
         generation = self._next_play_generation("group_preempt")
         self._group_suspended = True
         self._cancel_recovery_tasks_now()
@@ -717,11 +735,21 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 close_task.result()
                 return
             except (OSError, ConnectionError) as err:
-                log = (
-                    _LOGGER.debug
-                    if reason.startswith("tcp_recovery:")
-                    else _LOGGER.warning
+                quiet_close = (
+                    reason.startswith("tcp_recovery:")
+                    or reason in {
+                        "group_preempt",
+                        "priority_sound",
+                        "user_stop",
+                        "integration_shutdown",
+                        "replace_before_start",
+                        "watcher_exit",
+                        "stale_after_tcp_connect",
+                        "stale_after_ffmpeg_start",
+                        "stale_tcp_recovery",
+                    }
                 )
+                log = _LOGGER.debug if quiet_close else _LOGGER.warning
                 log(
                     "Aqara media writer close failed entity=%s host=%s reason=%s "
                     "error=%r; aborting transport",
@@ -731,11 +759,21 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     err,
                 )
         else:
-            log = (
-                _LOGGER.debug
-                if reason.startswith("tcp_recovery:")
-                else _LOGGER.warning
+            quiet_close = (
+                reason.startswith("tcp_recovery:")
+                or reason in {
+                    "group_preempt",
+                    "priority_sound",
+                    "user_stop",
+                    "integration_shutdown",
+                    "replace_before_start",
+                    "watcher_exit",
+                    "stale_after_tcp_connect",
+                    "stale_after_ffmpeg_start",
+                    "stale_tcp_recovery",
+                }
             )
+            log = _LOGGER.debug if quiet_close else _LOGGER.warning
             log(
                 "Aqara media writer close timeout entity=%s host=%s reason=%s "
                 "timeout=%.2fs; aborting transport",
@@ -831,7 +869,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._stream_writer = new_writer
         self._single_receiver_rebuilds += 1
         self._last_receiver_rebuild_reason = reason
-        _LOGGER.warning(
+        _LOGGER.info(
             "Aqara media single TCP receiver recovered entity=%s session=%s "
             "generation=%s host=%s pid=%s reason=%s",
             self.entity_id,
@@ -1064,6 +1102,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if self._shutting_down:
             return
         self._shutting_down = True
+        self._expected_transport_stop_reason = "integration_shutdown"
 
         tasks = [
             self._resume_task,
@@ -1184,7 +1223,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 self.hass, media_id, self.entity_id
             )
             if not self._generation_is_current(generation):
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Aqara media request superseded before resolve finished "
                     "entity=%s host=%s generation=%s current_generation=%s",
                     self.entity_id, self.client.host, generation, self._play_generation
@@ -1203,7 +1242,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if not self._clean_media_title(title):
             title = await self._async_resolve_media_title(original_media_id, resolved)
             if not self._generation_is_current(generation):
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Aqara media request superseded before title resolve finished "
                     "entity=%s host=%s generation=%s current_generation=%s",
                     self.entity_id, self.client.host, generation, self._play_generation
@@ -1212,7 +1251,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
         async with self._lock:
             if not self._generation_is_current(generation):
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Aqara media request superseded queued request discarded "
                     "entity=%s host=%s "
                     "generation=%s current_generation=%s",
@@ -1265,6 +1304,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 await self._start_locked(generation)
 
     async def async_media_stop(self) -> None:
+        self._expected_transport_stop_reason = "user_stop"
         generation = self._next_play_generation("user_stop")
         self._cancel_recovery_tasks_now()
         self._resume_after_reconnect = False
@@ -1561,7 +1601,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             snapshot = await self.hass.async_add_executor_job(
                 self.client.run_command, command
             )
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Aqara media diagnostic hub snapshot entity=%s session=%s host=%s\n%s",
                 self.entity_id,
                 session,
@@ -1569,7 +1609,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 snapshot[-6000:],
             )
         except Exception as err:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Aqara media diagnostic could not read hub snapshot "
                 "entity=%s session=%s host=%s error=%s",
                 self.entity_id,
@@ -1583,6 +1623,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if not self._generation_is_current(generation) or not self._media_url:
             return
 
+        self._expected_transport_stop_reason = None
         await self._claim_individual_audio()
         if not self._generation_is_current(generation):
             return
@@ -1634,7 +1675,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         if not self._generation_is_current(generation):
             return
 
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Aqara media receiver start entity=%s host=%s generation=%s port=%s",
             self.entity_id, self.client.host, generation, RADIO_PORT
         )
@@ -1891,6 +1932,22 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         ) -> None:
             nonlocal writer, tcp_recovery_events, tcp_recovery_window_started
             nonlocal consecutive_drain_timeouts
+            expected_reason = self._expected_transport_stop(generation)
+            if expected_reason is not None:
+                _LOGGER.debug(
+                    "Aqara media receiver fault ignored during expected teardown "
+                    "entity=%s session=%s generation=%s host=%s stage=%s cause=%s "
+                    "reason=%s error=%r",
+                    self.entity_id,
+                    session,
+                    generation,
+                    self.client.host,
+                    stage,
+                    cause,
+                    expected_reason,
+                    error,
+                )
+                return
             now = time.monotonic()
             if now - tcp_recovery_window_started > SINGLE_TCP_RECOVERY_WINDOW_SECONDS:
                 tcp_recovery_window_started = now
@@ -1901,7 +1958,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     "single TCP recovery burst limit exceeded"
                 ) from error
 
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Aqara media single receiver fault; rebuilding receiver "
                 "and dropping stale PCM entity=%s session=%s generation=%s "
                 "host=%s pid=%s stage=%s cause=%s recovery=%s/%s error=%r",
@@ -1940,7 +1997,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             )
             primed_chunks = await _prefill_remote_receiver()
             consecutive_drain_timeouts = 0
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Aqara media single receiver resumed after stale PCM drop "
                 "entity=%s session=%s generation=%s host=%s pid=%s "
                 "dropped_ms=%s silence_ms=%s remote_prefill_ms=%s cause=%s",
@@ -1968,7 +2025,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             except asyncio.TimeoutError as err:
                 consecutive_drain_timeouts += 1
                 if consecutive_drain_timeouts < 2:
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "Aqara media first consecutive TCP drain timeout tolerated "
                         "entity=%s session=%s generation=%s host=%s pid=%s "
                         "stage=%s timeout=%ss consecutive_timeouts=%s "
@@ -1983,7 +2040,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         consecutive_drain_timeouts,
                     )
                     return
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Aqara media single TCP drain timeout; rebuilding "
                     "receiver entity=%s session=%s generation=%s host=%s pid=%s "
                     "stage=%s timeout=%ss consecutive_timeouts=%s "
@@ -2081,7 +2138,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                             >= SINGLE_CATCHUP_LOG_INTERVAL_SECONDS
                         ):
                             last_catchup_log = now
-                            _LOGGER.warning(
+                            _LOGGER.debug(
                                 "Aqara media playout catching up after HA stall "
                                 "entity=%s session=%s host=%s lag_ms=%s "
                                 "queued_ms=%s catchup_events=%s "
@@ -2110,7 +2167,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         self._last_receiver_health = health
                         if health.get("stale"):
                             cause = str(health.get("reason") or "receiver_stale")
-                            _LOGGER.warning(
+                            _LOGGER.debug(
                                 "Aqara media ALSA playout underrun detected; "
                                 "rebuilding receiver entity=%s session=%s "
                                 "generation=%s host=%s pid=%s cause=%s "
@@ -2149,7 +2206,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     low_queue_events += 1
                     if now - last_low_queue_log >= SINGLE_LOW_QUEUE_LOG_INTERVAL:
                         last_low_queue_log = now
-                        _LOGGER.warning(
+                        _LOGGER.debug(
                             "Aqara media single buffer low entity=%s session=%s host=%s "
                             "queued_ms=%s low_events=%s silence_fill_events=%s",
                             self.entity_id,
@@ -2316,6 +2373,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     await stderr_task
 
         runtime = max(0.0, time.monotonic() - started) if started else 0.0
+        expected_reason = self._expected_transport_stop(generation)
         self._stop_icy_metadata()
         self._ffmpeg = None
         self._ffmpeg_started_monotonic = None
@@ -2326,6 +2384,25 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         stable_task = self._watchdog_stable_task
         self._watchdog_stable_task = None
         await self._cancel_task(stable_task)
+
+        if expected_reason is not None:
+            _LOGGER.debug(
+                "Aqara media watcher ended during expected teardown "
+                "entity=%s session=%s generation=%s host=%s pid=%s "
+                "reason=%s returncode=%s runtime=%.1fs pump_error=%r",
+                self.entity_id,
+                session,
+                generation,
+                self.client.host,
+                process.pid,
+                expected_reason,
+                process.returncode,
+                runtime,
+                pump_error,
+            )
+            if self._watch_task is asyncio.current_task():
+                self._watch_task = None
+            return
 
         if not self.coordinator.last_update_success:
             failure_kind = "hub_offline"
@@ -2484,7 +2561,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 )
                 return
             self._watchdog_restart_attempts += 1
-            _LOGGER.warning(
+            _LOGGER.info(
                 "Aqara media watchdog restarting %s (%s/%s) "
                 "failure_kind=%s generation=%s delay=%.2fs",
                 self.entity_id, self._watchdog_restart_attempts,
@@ -2545,7 +2622,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                     self.entity_id, self.client.host, generation
                 )
                 return
-            _LOGGER.warning(
+            _LOGGER.info(
                 "Aqara media watchdog slow retry entity=%s failure_kind=%s "
                 "generation=%s source=%s",
                 self.entity_id, failure_kind, generation,
