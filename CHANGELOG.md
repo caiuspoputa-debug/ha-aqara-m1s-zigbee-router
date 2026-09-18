@@ -1,3 +1,11 @@
+## 0.20.10 - Device IP and friendlier sound batches
+
+- Append the configured hub host/IP to the Home Assistant device name and update existing registry entries on reload.
+- Show managed WAV files as a native checkbox list for one-step multi-delete instead of a repeated dropdown picker.
+- Keep ZIP as the batch format: archives are decoded by Home Assistant and only their WAV members are sent individually to the Linux hub.
+- Accept common Windows/browser ZIP MIME variants and identify generic uploaded ZIP data by archive contents.
+- Audio transport, buffering, synchronization and recovery behavior are unchanged from v0.20.9.
+
 ## 0.20.9 - Quiet expected handoff logging
 
 - Mark intentional single-player teardowns (group handoff, priority sound, explicit Stop and integration shutdown) so stale TCP/FFmpeg cleanup is not reported as an audio fault.

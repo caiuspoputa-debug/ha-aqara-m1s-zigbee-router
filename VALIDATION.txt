@@ -1,9 +1,9 @@
-v0.20.9
-PASS: Python compileall and AST parsing for all integration Python modules.
-PASS: manifest JSON parses and reports version 0.20.9.
-PASS: intentional group handoff, priority-sound preemption, explicit Stop and integration shutdown are marked as expected transport teardown.
-PASS: receiver faults racing with an expected teardown do not rebuild the individual receiver.
-PASS: expected writer-close/Broken pipe cleanup, superseded requests, receiver start, diagnostic snapshots and intermediate recovery details are DEBUG/INFO instead of WARNING.
-PASS: real unexpected FFmpeg/PCM termination, failed/exhausted recovery and unreaped process paths remain WARNING/ERROR.
-PASS: audio transport constants, PCM buffering values, ICY/Cast metadata paths, group synchronization and volume logic were not intentionally changed.
-LIMIT: no live Home Assistant/hub handoff test was available; validate with individual -> group and group -> individual transitions after install.
+v0.20.10
+PASS: Python compile/AST validation for every integration Python module.
+PASS: manifest JSON parses and reports version 0.20.10.
+PASS: ZIP batch parsing with two WAV files and an ignored non-WAV entry.
+PASS: standard ZIP MIME, Windows application/x-zip-compressed, generic MIME, filename-less content and Home Assistant file-id upload paths.
+PASS: delete selector remains multiple and now uses the native checkbox-list mode.
+PASS: configured hub host/IP is appended once to the device registry name and existing integration-provided names are updated on reload.
+PASS: audio transport, buffering, ICY/Cast metadata, synchronization, volume and recovery code are unchanged from v0.20.9.
+LIMIT: no live Home Assistant/hub upload test was available; validate one ZIP batch and one multi-delete after install.

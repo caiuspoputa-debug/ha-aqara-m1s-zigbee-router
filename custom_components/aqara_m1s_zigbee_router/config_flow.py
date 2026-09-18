@@ -218,7 +218,12 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             data_schema=vol.Schema(
                 {
                     vol.Required("source"): FileSelector(
-                        FileSelectorConfig(accept="audio/wav,.wav,application/zip,.zip")
+                        FileSelectorConfig(
+                            accept=(
+                                ".wav,.zip,audio/wav,audio/x-wav,"
+                                "application/zip,application/x-zip-compressed"
+                            )
+                        )
                     )
                 }
             ),
@@ -257,11 +262,11 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             )
         except (OSError, RuntimeError):
             sounds = []
-        managed_sounds = [
+        managed_sounds = sorted(
             path
             for path in sounds
             if path.startswith(f"{MANAGED_SOUND_ROOT}/")
-        ]
+        )
         if not managed_sounds:
             return await self.async_step_init()
 
@@ -273,7 +278,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                         SelectSelectorConfig(
                             options=managed_sounds,
                             multiple=True,
-                            mode=SelectSelectorMode.DROPDOWN,
+                            mode=SelectSelectorMode.LIST,
                         )
                     )
                 }

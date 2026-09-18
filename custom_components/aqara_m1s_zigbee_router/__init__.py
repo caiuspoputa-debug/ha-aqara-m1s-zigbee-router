@@ -53,6 +53,11 @@ PLATFORMS = [
 ]
 
 
+def _device_name_with_host(name: str, host: str) -> str:
+    """Keep the configured friendly name while making the hub address visible."""
+    base_name = str(name).strip() or "Aqara M1S Zigbee Router"
+    return base_name if host in base_name else f"{base_name} - {host}"
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -124,16 +129,19 @@ async def async_setup_entry(
     )
 
     device_registry = dr.async_get(hass)
-    device_registry.async_get_or_create(
+    device_name = _device_name_with_host(
+        entry.data.get("name", f"Aqara M1S Router {host}"),
+        host,
+    )
+    device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, host)},
-        name=entry.data.get(
-            "name",
-            f"Aqara M1S Router {host}",
-        ),
+        name=device_name,
         manufacturer="Aqara",
         model="M1S Gen 1 / JN5189 Router",
     )
+    if device.name != device_name:
+        device_registry.async_update_device(device.id, name=device_name)
 
     entity_registry = er.async_get(hass)
     obsolete_select_id = entity_registry.async_get_entity_id(

@@ -1,3 +1,7 @@
+## v0.20.10 - Device IP and friendlier sound batches
+
+The Home Assistant device name now includes the configured hub IP/host. Managed sounds are shown as a checkbox list for multi-delete. WAV batch upload remains ZIP-based because Home Assistant expands the archive before sending each WAV to the hub; common Windows/browser ZIP MIME variants are now accepted. Audio behavior is unchanged from v0.20.9.
+
 ## v0.20.9 — Quiet expected handoff logging
 
 Intentional individual → group handoff, priority-sound preemption, Stop and shutdown no longer emit false WARNING cascades for `Broken pipe`, receiver rebuild or expected FFmpeg exit. Routine recovery details are DEBUG/INFO; WARNING/ERROR remain for unexpected interruptions, failed recovery or processes that cannot be reaped. Audio transport and synchronization are unchanged.

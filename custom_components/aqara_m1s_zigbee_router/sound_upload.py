@@ -4,7 +4,7 @@ import base64
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from zipfile import BadZipFile, ZipFile
+from zipfile import BadZipFile, ZipFile, is_zipfile
 
 from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.core import HomeAssistant
@@ -17,6 +17,15 @@ MAX_BATCH_TOTAL_SIZE = 100 * 1024 * 1024
 MAX_BATCH_ARCHIVE_SIZE = 100 * 1024 * 1024
 
 
+def _infer_uploaded_filename(content: bytes) -> str:
+    """Identify an upload when an older selector omits the original filename."""
+    if content.startswith(b"RIFF") and content[8:12] == b"WAVE":
+        return "sound.wav"
+    if is_zipfile(BytesIO(content)):
+        return "sounds.zip"
+    raise ValueError("The uploaded data is not a readable WAV or ZIP file")
+
+
 def _read_selected_file(
     hass: HomeAssistant,
     source: Any,
@@ -26,22 +35,19 @@ def _read_selected_file(
     if isinstance(value, dict):
         if value.get("content"):
             encoded = str(value["content"]).split(",", 1)[-1]
-            filename = str(value.get("filename") or "sound.wav")
-            return Path(filename).name, base64.b64decode(encoded, validate=True)
+            content = base64.b64decode(encoded, validate=True)
+            if filename := value.get("filename"):
+                return Path(str(filename)).name, content
+            return _infer_uploaded_filename(content), content
         value = value.get("path") or value.get("file")
 
     if not isinstance(value, str):
         raise ValueError("The file selector did not return a readable file")
 
-    if value.startswith("data:audio/") and "," in value:
-        return "sound.wav", base64.b64decode(
-            value.split(",", 1)[1], validate=True
-        )
-
-    if value.startswith("data:application/zip") and "," in value:
-        return "sounds.zip", base64.b64decode(
-            value.split(",", 1)[1], validate=True
-        )
+    if value.startswith("data:") and "," in value:
+        _, encoded = value.split(",", 1)
+        content = base64.b64decode(encoded, validate=True)
+        return _infer_uploaded_filename(content), content
 
     try:
         with process_uploaded_file(hass, value) as uploaded_path:

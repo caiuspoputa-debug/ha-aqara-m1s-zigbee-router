@@ -1,3 +1,7 @@
+## v0.20.10 - IP vizibil și administrare WAV mai simplă
+
+Numele dispozitivului din Home Assistant include acum IP-ul/hostul configurat. Fișierele WAV administrate apar ca listă cu bife pentru ștergere multiplă. Încărcarea în lot rămâne pe ZIP: Home Assistant deschide arhiva și trimite separat fiecare WAV către hub, iar tipurile ZIP folosite uzual de Windows și browser sunt recunoscute. Comportamentul audio rămâne neschimbat față de v0.20.9.
+
 ## v0.20.9 — Log de alerte curățat
 
 Tranzițiile intenționate player individual → grup, sunet prioritar, Stop și shutdown nu mai generează cascade false de WARNING pentru `Broken pipe`, receiver rebuild sau FFmpeg închis. Etapele normale de recovery sunt DEBUG/INFO; WARNING/ERROR rămân pentru întreruperi neașteptate, recovery eșuat ori procese care nu pot fi oprite. Transportul audio și sincronizarea nu sunt schimbate.
@@ -1160,7 +1164,7 @@ Meniul curent oferă:
 
 Încărcare:
 
-1. alege un fișier WAV sau un ZIP care conține mai multe WAV-uri;
+1. alege un fișier WAV sau un ZIP care conține mai multe WAV-uri; ZIP-ul este deschis în Home Assistant, nu pe hub;
 2. pentru WAV rămâne limita de 20 MiB per fișier; un ZIP poate conține maximum 64 WAV-uri și maximum 100 MiB total;
 3. transferul principal folosește portul `12349`, verifică dimensiunea și MD5 înainte de înlocuirea destinației;
 4. dacă transferul TCP eșuează, există fallback BusyBox `base64`, tot cu verificare;
@@ -1170,7 +1174,7 @@ Meniul curent oferă:
 
 Ștergere:
 
-1. selectează unul sau mai multe fișiere oferite de meniu;
+1. bifează unul sau mai multe fișiere oferite în listă;
 2. confirmă o singură dată; toate fișierele selectate sunt șterse în aceeași operație;
 3. apasă **Finalizare și închidere**.
 
