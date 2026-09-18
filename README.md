@@ -1,3 +1,9 @@
+## v0.21.5 - Lock cleanup on the hub's minimal BusyBox
+
+Read-only diagnosis confirmed the hub has no rmdir applet, which left the old lock in place after the IPv4 calculation repair. This version uses the available rm -r command for the manager-owned lock. Static-IP submission repairs either the original known script or the calculation-only repair from 0.21.4.
+
+Install, restart Home Assistant and initiate the address change from the integration. No separate kit reinstall is required. Ten local regression tests pass, and the proposed transformation and syntax were checked with the real hub shell without modifying the hub. The actual address change remains for the user to test in Home Assistant.
+
 ## v0.21.4 - Repair the hub-side IPv4 calculation
 
 The v0.9 manager overwrote the requested final octet while validating the gateway, turning .200 into .1 and rejecting it. Static-IP submission now repairs only that known script using checksum verification, a backup and atomic replacement. The integration waits for the new active address and expected MAC before completing the flow. The field displays the actual subnet, such as 192.168.0.___, and defaults to the current final octet.

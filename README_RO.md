@@ -1,3 +1,9 @@
+## v0.21.5 - Eliminarea blocării pe BusyBox-ul hubului
+
+Verificarea directă a hubului a arătat că rmdir lipsește. De aceea, blocarea veche rămânea chiar după corecția calculului IP. Versiunea aceasta folosește comanda disponibilă rm -r pentru directorul de blocare deținut de manager. Repară automat scriptul cunoscut la trimiterea noului IP din integrare, inclusiv dacă v0.21.4 a aplicat deja prima corecție.
+
+Instalează această versiune, repornește Home Assistant și pornește schimbarea IP din integrare. Nu este necesară reinstalarea kitului. Zece teste locale au trecut, iar transformarea și sintaxa au fost verificate cu interpretul real al hubului fără modificarea acestuia. Testul efectiv de schimbare IP trebuie făcut din Home Assistant.
+
 ## v0.21.4 - Corecția calculului IP pe hub
 
 Managerul v0.9 suprascria ultimul număr ales la validarea gateway-ului: .200 devenea .1 și era respins. La trimiterea IP-ului static, integrarea corectează exclusiv versiunea cunoscută a scriptului, cu copie de siguranță și verificare înainte de înlocuire. Apoi verifică noul IP activ și MAC-ul înainte de finalizare. Câmpul afișează prefixul real, de exemplu 192.168.0.___, cu ultimul număr actual ca valoare inițială.

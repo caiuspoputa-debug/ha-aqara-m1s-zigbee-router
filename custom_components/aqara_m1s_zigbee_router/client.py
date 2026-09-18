@@ -358,9 +358,10 @@ class AqaraM1SClient:
         token = secrets.token_hex(12)
         output = self.run_command(
             "if [ -d /tmp/m1s_network.lock ] && "
+            "[ ! -L /tmp/m1s_network.lock ] && "
             "[ ! -r /tmp/m1s_network.pending ] && "
             "! ps w 2>/dev/null | grep -q '[n]etwork_manager.sh candidate'; "
-            "then rmdir /tmp/m1s_network.lock 2>/dev/null || true; fi; "
+            "then rm -r /tmp/m1s_network.lock; fi; "
             f"/data/m1s_network/network_manager.sh candidate {octet} {token}"
         )
         candidate_errors = {

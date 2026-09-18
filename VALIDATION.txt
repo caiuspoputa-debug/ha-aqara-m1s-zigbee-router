@@ -1,4 +1,8 @@
-v0.21.4
+v0.21.5
+PASS: Live read-only check confirmed rmdir is unavailable, rm -r is available, and the old lock persists despite the 0.21.4 calculation repair.
+PASS: Ten regression tests pass, including the missing-rmdir environment and the integration's real abandoned-lock cleanup command.
+PASS: Read-only transformation on the hub produced the exact expected checksum; the real /bin/sh syntax check passed.
+LIMIT: No live IP change or script installation was performed by Codex. User must initiate and verify the change through Home Assistant.
 PASS: Reproduced v0.9 shell defect locally: selecting .200 becomes the gateway .1 and is rejected with exit code 19.
 PASS: Read-only live check confirmed that hub .106 has the exact defective v0.9 script checksum.
 PASS: Shell regression tests exercise the actual repair and manager lifecycle with isolated OS resources: candidate, confirmation, activation, rollback, address occupied, unknown script and pending operation.

@@ -1,3 +1,11 @@
+## 0.21.5 - Support the hub's minimal BusyBox lock cleanup
+
+- Live read-only diagnosis confirmed that the hub has no rmdir applet; the old lock remained after the calculation repair in 0.21.4.
+- Use the available rm -r command for the owned candidate lock and for abandoned-lock cleanup. Preserve the pending-operation/process checks and refuse symlink cleanup.
+- Extend the checksum-gated repair to both the original v0.9 script and the calculation-only repair from 0.21.4. Apply only on static-IP submission and retain a backup.
+- Ten local regression tests pass, including missing-rmdir reproduction and stale-lock recovery through the actual integration command. The proposed transformation and syntax were also checked read-only with the hub's real shell.
+- No live network settings were changed during these checks. The user initiates the end-to-end test in Home Assistant.
+
 ## 0.21.4 - Correct the hub-side static address calculation
 
 - Repair the reproduced v0.9 shell bug: validating the gateway overwrote the requested final octet. A request for .200 became .1 and was rejected as the router address.
