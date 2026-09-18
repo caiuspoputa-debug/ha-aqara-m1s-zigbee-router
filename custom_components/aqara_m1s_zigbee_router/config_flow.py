@@ -195,6 +195,40 @@ class AqaraM1SZigbeeRouterOptionsFlow(
     def _client(self):
         return self.hass.data[DOMAIN][DATA_CLIENTS][self.config_entry.entry_id]
 
+    def _fresh_client(self) -> AqaraM1SClient:
+        """Create an isolated Telnet client for network-changing operations."""
+        data = self.config_entry.data
+        return AqaraM1SClient(
+            host=data[CONF_HOST],
+            port=data.get(CONF_PORT, DEFAULT_PORT),
+            username=data.get(CONF_USERNAME, DEFAULT_USERNAME),
+            password=data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+            timeout=15.0,
+        )
+
+    def _fresh_network_status(self) -> dict[str, str]:
+        client = self._fresh_client()
+        try:
+            return client.network_status()
+        finally:
+            client.disconnect()
+
+    def _fresh_static_change(self, last_octet: int) -> tuple[str, dict[str, str]]:
+        client = self._fresh_client()
+        try:
+            return client.set_static_ipv4(last_octet)
+        finally:
+            client.disconnect()
+
+    def _fresh_dhcp_change(self) -> dict[str, str]:
+        client = self._fresh_client()
+        try:
+            status = client.network_status()
+            client.return_to_dhcp()
+            return status
+        finally:
+            client.disconnect()
+
     async def async_step_init(self, user_input=None):
         menu_options = ["network_address", "change_wifi", "upload_sound"]
         try:
@@ -218,12 +252,13 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         data = dict(self.config_entry.data)
         if mode == "static":
             new_host, status = await self.hass.async_add_executor_job(
-                self._client.set_static_ipv4, last_octet
+                self._fresh_static_change, last_octet
             )
             data[CONF_HOST] = new_host
         else:
-            status = await self.hass.async_add_executor_job(self._client.network_status)
-            await self.hass.async_add_executor_job(self._client.return_to_dhcp)
+            status = await self.hass.async_add_executor_job(
+                self._fresh_dhcp_change
+            )
         data[CONF_DEVICE_MAC] = status["wifi_mac"]
         data[CONF_BUTTON_TOPIC_ID] = status.get("button_topic_id", "")
         self.hass.config_entries.async_update_entry(
@@ -261,8 +296,15 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             errors["base"] = "network_change_failed"
             self._network_error = False
         try:
-            status = await self.hass.async_add_executor_job(self._client.network_status)
-        except (OSError, RuntimeError, TimeoutError):
+            status = await self.hass.async_add_executor_job(
+                self._fresh_network_status
+            )
+        except (OSError, RuntimeError, TimeoutError) as err:
+            _LOGGER.exception(
+                "Aqara M1S network status failed for %s: %s",
+                self.config_entry.data.get(CONF_HOST),
+                err,
+            )
             errors["base"] = "network_manager_unavailable"
             status = {
                 "mode": "unknown",

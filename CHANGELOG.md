@@ -6,6 +6,7 @@
 - Return the hub to persistent DHCP mode automatically before every Wi-Fi network change.
 - Prefix every Home Assistant config-entry title with its current IPv4 address so hubs appear in address order (for example `.200`, `.201`, `.202`). Device names remain in the `friendly name - IP` form.
 - Detect the hub network manager only from its executed status frame; stock Telnet command echo can no longer create a false "manager missing" result.
+- Network-address operations use a fresh dedicated Telnet connection instead of the coordinator's long-lived session; failures now include the actual exception in the Home Assistant log.
 - Requires hub bundle v0.9. Audio, Zigbee and the v0.20.14 WAV upload paths are unchanged.
 
 ## 0.20.14 - Strict v0.20.13 base: single IP + complete progress + immediate upload reload
