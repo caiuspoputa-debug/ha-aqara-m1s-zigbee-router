@@ -92,7 +92,7 @@
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",
       "wifi_invalid": "SSID-ul sau parola Wi-Fi nu sunt valide.",
       "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery.",
-      "network_manager_unavailable": "v0.21.0 revizia 3: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
+      "network_manager_unavailable": "v0.21.1: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
       "network_confirmation_required": "Bifează confirmarea înainte de schimbarea adresei.",
       "network_invalid_octet": "Ultimul număr trebuie să fie între 2 și 254.",
       "network_change_failed": "Adresa nu a fost confirmată. Hubul păstrează sau revine automat la configurația anterioară."

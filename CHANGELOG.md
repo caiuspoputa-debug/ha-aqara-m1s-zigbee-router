@@ -1,3 +1,9 @@
+## 0.21.1 - Distinct network-manager detection build
+
+- Publish the corrected network manager detection as a distinct Home Assistant version so updates cannot be confused with an earlier cached 0.21.0 build.
+- Use a fresh dedicated Telnet connection for every network-address operation and log the exact failure in Home Assistant.
+- Keep safe static IPv4, MAC identity, frozen MQTT topic and IP-sorted entry titles from 0.21.0 unchanged.
+
 ## 0.21.0 - Safe static IPv4 and stable physical identity
 
 - Add DHCP/static address management in initial setup and Configure. Static changes accept only the final octet on the current /24, are applied temporarily, verified against the hub Wi-Fi MAC and confirmed before the config entry host changes.

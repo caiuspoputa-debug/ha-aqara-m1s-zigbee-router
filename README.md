@@ -1,3 +1,7 @@
+## v0.21.1 - Distinct network-manager detection build
+
+This version publishes the Telnet-echo correction separately and uses a fresh connection for network operations. Diagnostic messages explicitly show `v0.21.1`. The safe IPv4 behavior introduced in v0.21.0 is unchanged.
+
 ## v0.21.0 - Safe static IPv4 and MAC-based identity
 
 Requires hub bundle v0.9. Setup and **Configure > Network address** can keep DHCP or change only the final octet of the current IPv4 on a `/24` network. The hub exposes the address temporarily, Home Assistant verifies the same Wi-Fi MAC at that address, and only then confirms it and updates the existing config entry. An unconfirmed candidate is removed automatically after 120 seconds.

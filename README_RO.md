@@ -1,3 +1,7 @@
+## v0.21.1 - Build distinct pentru detectarea managerului
+
+Această versiune publică separat corecția pentru ecoul Telnet și folosește o conexiune nouă pentru operațiile de rețea. Mesajele de diagnostic afișează explicit `v0.21.1`. Funcțiile și regulile IP din v0.21.0 rămân neschimbate.
+
 ## v0.21.0 - IP static sigur, identitate stabilă după MAC
 
 Necesită bundle-ul de hub v0.9. La instalare și în **Configure > Adresă de rețea** poți păstra DHCP sau poți schimba numai ultimul număr al IPv4-ului curent într-o rețea `/24`. Hubul aplică adresa ca variantă temporară, Home Assistant verifică faptul că răspunde același MAC, apoi confirmă și actualizează aceeași intrare. Dacă validarea nu se termină în 120 de secunde, adresa temporară este eliminată automat.
