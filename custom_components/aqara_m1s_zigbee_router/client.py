@@ -24,7 +24,7 @@ UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
 UPLOAD_COMMAND_TIMEOUT = 30.0
 UPLOAD_FINALIZE_TIMEOUT = 45.0
 UPLOAD_BASE64_CHUNK_SIZE = 1024
-UPLOAD_SOCKET_CHUNK_SIZE = 64 * 1024
+UPLOAD_SOCKET_CHUNK_SIZE = 1024 * 1024
 
 
 def _upload_cleanup_command() -> str:
@@ -590,12 +590,8 @@ class AqaraM1SClient:
             sent = 0
             while sent < expected_size:
                 end = min(sent + UPLOAD_SOCKET_CHUNK_SIZE, expected_size)
-                count = upload_sock.send(view[sent:end])
-                if count <= 0:
-                    raise ConnectionError(
-                        "WAV upload socket closed before completion"
-                    )
-                sent += count
+                upload_sock.sendall(view[sent:end])
+                sent = end
                 if progress_callback is not None:
                     progress_callback(sent, expected_size)
             upload_sock.shutdown(socket.SHUT_WR)
