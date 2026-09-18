@@ -222,32 +222,15 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         uploaded_size = 0
         self.async_update_progress(0.0)
 
-        reported_progress = 0.0
         for filename, content in uploads:
             destination = destination_for_filename(filename)
-            base_uploaded = uploaded_size
-
-            def _report_file_progress(sent: int, file_size: int) -> None:
-                nonlocal reported_progress
-                current = base_uploaded + min(max(sent, 0), file_size)
-                # Exact 100% is reserved for successful size/MD5 confirmation.
-                progress = min(current / total_size, 0.999)
-                if progress <= reported_progress:
-                    return
-                reported_progress = progress
-                self.hass.loop.call_soon_threadsafe(
-                    self.async_update_progress, progress
-                )
-
             await self.hass.async_add_executor_job(
                 self._client.upload_sound,
                 destination,
                 content,
-                _report_file_progress,
             )
             uploaded_size += len(content)
-            reported_progress = min(uploaded_size / total_size, 1.0)
-            self.async_update_progress(reported_progress)
+            self.async_update_progress(min(uploaded_size / total_size, 1.0))
 
     async def async_step_upload_sound(self, user_input=None):
         errors = {}

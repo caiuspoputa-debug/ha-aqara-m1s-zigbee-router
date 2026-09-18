@@ -24,7 +24,6 @@ UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
 UPLOAD_COMMAND_TIMEOUT = 30.0
 UPLOAD_FINALIZE_TIMEOUT = 45.0
 UPLOAD_BASE64_CHUNK_SIZE = 1024
-UPLOAD_SOCKET_CHUNK_SIZE = 1024 * 1024
 
 
 def _upload_cleanup_command() -> str:
@@ -508,12 +507,7 @@ class AqaraM1SClient:
             checksum ^= value
         return checksum
 
-    def upload_sound(
-        self,
-        destination: str,
-        content: bytes,
-        progress_callback=None,
-    ) -> None:
+    def upload_sound(self, destination: str, content: bytes) -> None:
         destination = self._safe_sound_path(destination)
         try:
             with wave.open(io.BytesIO(content), "rb") as wav:
@@ -531,18 +525,12 @@ class AqaraM1SClient:
             )
         with self._lock:
             try:
-                self._upload_sound_tcp_locked(
-                    destination, content, progress_callback=progress_callback
-                )
+                self._upload_sound_tcp_locked(destination, content)
             except Exception:
-                # Keep the exact v0.20.13 fallback behavior; only report progress.
-                self._upload_sound_base64_locked(
-                    destination, content, progress_callback=progress_callback
-                )
+                # BusyBox base64 is slower but provides a proven fallback.
+                self._upload_sound_base64_locked(destination, content)
 
-    def _upload_sound_tcp_locked(
-        self, destination: str, content: bytes, progress_callback=None
-    ) -> None:
+    def _upload_sound_tcp_locked(self, destination: str, content: bytes) -> None:
         """Upload a WAV through a one-shot BusyBox nc listener and verify it."""
         parent = str(PurePosixPath(destination).parent)
         expected_size = len(content)
@@ -586,14 +574,7 @@ class AqaraM1SClient:
             raise ConnectionError("Could not connect to WAV upload port") from last_error
 
         try:
-            view = memoryview(content)
-            sent = 0
-            while sent < expected_size:
-                end = min(sent + UPLOAD_SOCKET_CHUNK_SIZE, expected_size)
-                upload_sock.sendall(view[sent:end])
-                sent = end
-                if progress_callback is not None:
-                    progress_callback(sent, expected_size)
+            upload_sock.sendall(content)
             upload_sock.shutdown(socket.SHUT_WR)
         finally:
             upload_sock.close()
@@ -633,9 +614,7 @@ class AqaraM1SClient:
             )
             raise IOError(f"WAV upload verification failed: {output}")
 
-    def _upload_sound_base64_locked(
-        self, destination: str, content: bytes, progress_callback=None
-    ) -> None:
+    def _upload_sound_base64_locked(self, destination: str, content: bytes) -> None:
         """Fallback upload over Telnet using small base64 chunks, with MD5 check."""
         parent = str(PurePosixPath(destination).parent)
         encoded = base64.b64encode(content).decode("ascii")
@@ -653,13 +632,6 @@ class AqaraM1SClient:
                 f"printf '%s' '{chunk}' >> {temp}",
                 timeout=UPLOAD_COMMAND_TIMEOUT,
             )
-            if progress_callback is not None and encoded:
-                encoded_done = min(start + len(chunk), len(encoded))
-                raw_done = min(
-                    expected_size,
-                    int(expected_size * encoded_done / len(encoded)),
-                )
-                progress_callback(raw_done, expected_size)
         output = self.run_command(
             f"base64 -d {temp} > {decoded} && "
             f"actual=$(wc -c < {decoded}); "
