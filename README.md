@@ -1,3 +1,9 @@
+## v0.21.0 - Safe static IPv4 and MAC-based identity
+
+Requires hub bundle v0.9. Setup and **Configure > Network address** can keep DHCP or change only the final octet of the current IPv4 on a `/24` network. The hub exposes the address temporarily, Home Assistant verifies the same Wi-Fi MAC at that address, and only then confirms it and updates the existing config entry. An unconfirmed candidate is removed automatically after 120 seconds.
+
+The Home Assistant device is now keyed by Wi-Fi MAC and the physical-button MQTT topic remains frozen to its original ID. A Wi-Fi network change automatically clears static mode before the new SSID is tested. Audio, Zigbee and the v0.20.14 WAV/ZIP upload paths are unchanged.
+
 ## v0.20.14 - Single IP + complete upload progress + immediate upload reload
 
 Built directly from the supplied v0.20.13. The device row shows one live wlan0 IP while the integration title stays without IP. The v0.20.13 TCP/Base64 upload methods are preserved; only progress reporting is added, with exact 100% after the existing verification succeeds, followed by immediate upload reload. Delete behavior is unchanged.

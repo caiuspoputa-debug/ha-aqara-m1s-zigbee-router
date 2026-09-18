@@ -16,6 +16,8 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .client import AqaraM1SClient
 from .const import (
+    CONF_BUTTON_TOPIC_ID,
+    CONF_DEVICE_MAC,
     DATA_CLIENTS,
     DATA_COORDINATORS,
     DATA_PLAYBACK_VOLUME,
@@ -37,6 +39,7 @@ from .const import (
     SERVICE_UPDATE_MEDIA_METADATA,
     sound_list_signal,
 )
+from .device import device_identifier, entry_title_with_host
 from .coordinator import AqaraM1SRouterCoordinator
 from .media_group import AqaraM1SMediaGroupManager
 from .media_player import AqaraM1SRadioPlayer
@@ -106,11 +109,13 @@ async def async_setup_entry(
         DEFAULT_PASSWORD,
     )
 
-    # Older experimental builds could append the IP to the config-entry title.
-    # Keep the IP only on the device row, as requested.
-    clean_entry_title = _remove_trailing_ip(entry.title)
-    if clean_entry_title != entry.title:
-        hass.config_entries.async_update_entry(entry, title=clean_entry_title)
+    # Prefix titles with the real address so the integration entries are shown
+    # in IP order. The device row separately keeps the friendly "name - IP".
+    sorted_entry_title = entry_title_with_host(
+        entry.data.get("name", entry.title), host
+    )
+    if sorted_entry_title != entry.title:
+        hass.config_entries.async_update_entry(entry, title=sorted_entry_title)
 
     client = AqaraM1SClient(
         host=host,
@@ -118,6 +123,20 @@ async def async_setup_entry(
         username=username,
         password=password,
     )
+    try:
+        network_status = await hass.async_add_executor_job(client.network_status)
+    except Exception:
+        network_status = None
+    if network_status is not None:
+        updated_data = dict(entry.data)
+        updated_data[CONF_DEVICE_MAC] = network_status["wifi_mac"]
+        updated_data[CONF_BUTTON_TOPIC_ID] = network_status.get("button_topic_id", "")
+        if updated_data != dict(entry.data) or entry.unique_id != f"mac:{network_status['wifi_mac']}":
+            hass.config_entries.async_update_entry(
+                entry,
+                data=updated_data,
+                unique_id=f"mac:{network_status['wifi_mac']}",
+            )
     coordinator = AqaraM1SRouterCoordinator(hass, client, entry)
 
     hass.data.setdefault(DOMAIN, {})
@@ -167,13 +186,20 @@ async def async_setup_entry(
     )
 
     device_registry = dr.async_get(hass)
+    stable_identifier = device_identifier(entry)
+    legacy_device = device_registry.async_get_device(identifiers={(DOMAIN, host)})
+    if legacy_device is not None and stable_identifier not in legacy_device.identifiers:
+        device_registry.async_update_device(
+            legacy_device.id,
+            new_identifiers={stable_identifier},
+        )
     device_name = _device_name_with_host(
         entry.data.get("name", f"Aqara M1S Router {host}"),
         host,
     )
     device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, host)},
+        identifiers={stable_identifier},
         name=device_name,
         manufacturer="Aqara",
         model="M1S Gen 1 / JN5189 Router",
@@ -237,7 +263,7 @@ async def async_setup_entry(
         except Exception:
             visible_ip = host
 
-    device = device_registry.async_get_device(identifiers={(DOMAIN, host)})
+    device = device_registry.async_get_device(identifiers={stable_identifier})
     if device is not None:
         device_updates = {}
         desired_name = _device_name_with_host(

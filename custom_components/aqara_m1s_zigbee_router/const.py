@@ -5,6 +5,8 @@ CONF_PORT = "port"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_NAME = "name"
+CONF_DEVICE_MAC = "device_mac"
+CONF_BUTTON_TOPIC_ID = "button_topic_id"
 DEFAULT_PORT = 23
 DEFAULT_USERNAME = "admin"
 DEFAULT_PASSWORD = ""
@@ -65,6 +67,14 @@ def button_topic_for_host(host: str) -> str:
     """Return the central MQTT topic installed by the hub button bridge."""
     suffix = str(host).strip().rsplit(".", 1)[-1]
     return f"m1s/{suffix}/button/action"
+
+
+def button_topic_for_entry(entry) -> str:
+    """Return the frozen button topic, with host fallback for older entries."""
+    topic_id = str(entry.data.get(CONF_BUTTON_TOPIC_ID, "")).strip()
+    if not topic_id.isdigit():
+        topic_id = str(entry.data.get(CONF_HOST, "")).strip().rsplit(".", 1)[-1]
+    return f"m1s/{topic_id}/button/action"
 
 
 def media_group_signal() -> str:

@@ -8,6 +8,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DATA_CLIENTS, DATA_COORDINATORS, DATA_MEDIA_GROUP, DOMAIN
+from .device import device_info
 
 
 async def async_setup_entry(
@@ -37,12 +38,7 @@ class AqaraM1SMediaGroupMemberSwitch(CoordinatorEntity, SwitchEntity, RestoreEnt
         self.manager = manager
         self._attr_unique_id = f"{entry.entry_id}_media_group_member"
         self._attr_is_on = True
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, client.host)},
-            "name": entry.data.get("name", f"Aqara M1S {client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

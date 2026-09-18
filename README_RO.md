@@ -1,3 +1,11 @@
+## v0.21.0 - IP static sigur, identitate stabilă după MAC
+
+Necesită bundle-ul de hub v0.9. La instalare și în **Configure > Adresă de rețea** poți păstra DHCP sau poți schimba numai ultimul număr al IPv4-ului curent într-o rețea `/24`. Hubul aplică adresa ca variantă temporară, Home Assistant verifică faptul că răspunde același MAC, apoi confirmă și actualizează aceeași intrare. Dacă validarea nu se termină în 120 de secunde, adresa temporară este eliminată automat.
+
+Identitatea dispozitivului este MAC-ul Wi-Fi, iar topicul butonului fizic rămâne cel original după schimbarea IP-ului. La schimbarea rețelei Wi-Fi, modul static este șters automat înainte de testarea noului SSID. Funcțiile audio, Zigbee și upload WAV/ZIP din v0.20.14 nu sunt modificate.
+
+Titlul fiecărei intrări începe cu IP-ul curent, de exemplu `192.168.0.200 - Aqara M1S ...`, astfel încât huburile `.200`, `.201`, `.202` să fie afișate în ordine. Rândul dispozitivului păstrează forma `Nume - IP`.
+
 ## v0.20.14 - IP unic + progres complet la upload + reload imediat
 
 Construit direct din pachetul v0.20.13 furnizat. Rândul dispozitivului arată un singur IP real wlan0, iar titlul integrării rămâne fără IP. Metodele TCP/Base64 din v0.20.13 sunt păstrate; se adaugă numai raportarea progresului, cu 100% exact după confirmarea existentă a uploadului, apoi reload imediat pentru upload. Ștergerea rămâne neschimbată.

@@ -1,3 +1,12 @@
+## 0.21.0 - Safe static IPv4 and stable physical identity
+
+- Add DHCP/static address management in initial setup and Configure. Static changes accept only the final octet on the current /24, are applied temporarily, verified against the hub Wi-Fi MAC and confirmed before the config entry host changes.
+- Keep the same Home Assistant config entry, entities and device by migrating device identity from host/IP to the Wi-Fi MAC.
+- Keep the physical-button MQTT topic frozen to its original hub ID, independent of later IP changes.
+- Return the hub to persistent DHCP mode automatically before every Wi-Fi network change.
+- Prefix every Home Assistant config-entry title with its current IPv4 address so hubs appear in address order (for example `.200`, `.201`, `.202`). Device names remain in the `friendly name - IP` form.
+- Requires hub bundle v0.9. Audio, Zigbee and the v0.20.14 WAV upload paths are unchanged.
+
 ## 0.20.14 - Strict v0.20.13 base: single IP + complete progress + immediate upload reload
 
 - Built directly from the supplied v0.20.13 package. No delete, radio, media, Zigbee, Wi-Fi or other unrelated behavior is changed.

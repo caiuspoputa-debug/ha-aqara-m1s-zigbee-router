@@ -11,6 +11,14 @@
           "password": "Password",
           "name": "Name"
         }
+      },
+      "network_setup": {
+        "title": "Adresă de rețea / Network address",
+        "description": "Adresa curentă este {current_ip}. Pentru IP static se schimbă numai ultimul număr; hubul testează adresa înainte de confirmare. / Current address is {current_ip}. Static mode changes only the final number and tests it before confirmation.",
+        "data": {
+          "mode": "Mod adresă / Address mode",
+          "last_octet": "Ultimul număr IPv4 / Final IPv4 number"
+        }
       }
     }
   },
@@ -25,6 +33,7 @@
           "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
           "finish": "Finalizare și închidere / Finish and close",
           "change_wifi": "Schimbă rețeaua Wi-Fi / Change Wi-Fi network"
+          ,"network_address": "Adresă de rețea / Network address"
         }
       },
       "upload_sound": {
@@ -50,16 +59,29 @@
       },
       "change_wifi": {
         "title": "Schimbă rețeaua Wi-Fi / Change Wi-Fi network",
-        "description": "Necesită modulul opțional Wi-Fi recovery instalat pe hub. Noua rețea este testată local; devine backup numai după obținerea unui IPv4 proaspăt. Dacă testul eșuează, hubul intră în mecanismul de recuperare. Rezervă în router același IP pentru MAC-ul hubului înainte de schimbare. Parola nu este salvată în configurația Home Assistant. / Requires the optional Wi-Fi recovery module on the hub. The new network is tested locally and is promoted only after a fresh IPv4 address is obtained. If the test fails, the hub enters recovery. Reserve the same IP for the hub MAC before changing networks. The password is not stored in Home Assistant configuration.",
+        "description": "Înainte de schimbarea rețelei, hubul revine automat la DHCP. Noua rețea este apoi testată prin modulul Wi-Fi recovery. Parola nu este salvată în Home Assistant. / Before changing networks, the hub automatically returns to DHCP. The new network is then tested by the Wi-Fi recovery module. The password is not stored in Home Assistant.",
         "data": {
           "ssid": "SSID nou / New SSID",
           "wifi_password": "Parolă Wi-Fi nouă / New Wi-Fi password",
           "confirm": "Confirm schimbarea rețelei / Confirm network change"
         }
+      },
+      "network_address": {
+        "title": "Adresă de rețea / Network address",
+        "description": "Curent: {current_ip}, mod {mode}, mască {netmask}, gateway {gateway}, MAC {wifi_mac}. În modul static poți schimba numai ultimul număr (2-254). Adresa este aplicată temporar, verificată după MAC și salvată doar după confirmarea hubului. / Current: {current_ip}, mode {mode}, mask {netmask}, gateway {gateway}, MAC {wifi_mac}. Static mode changes only the final number (2-254). The address is temporary until the same MAC is verified and the hub confirms it.",
+        "data": {
+          "mode": "Mod adresă / Address mode",
+          "last_octet": "Ultimul număr IPv4 / Final IPv4 number",
+          "confirm": "Confirm schimbarea / Confirm change"
+        }
+      },
+      "network_finish": {
+        "title": "Adresă confirmată / Address confirmed"
       }
     },
     "progress": {
-      "uploading_sounds": "Se încarcă fișierele WAV pe hub. Bara avansează după fiecare fișier finalizat. Nu închide fereastra. / Uploading WAV files to the hub. The bar advances after each completed file. Do not close this dialog."
+      "uploading_sounds": "Se încarcă fișierele WAV pe hub. Bara avansează după fiecare fișier finalizat. Nu închide fereastra. / Uploading WAV files to the hub. The bar advances after each completed file. Do not close this dialog.",
+      "changing_network": "Hubul testează adresa, verifică identitatea MAC și salvează numai după confirmare. / The hub is testing the address, verifying its MAC identity and saving only after confirmation."
     },
     "error": {
       "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
@@ -69,7 +91,11 @@
       "rejoin_failed": "The JN5189 did not acknowledge the rejoin command. Verify the hub connection and compatible firmware.",
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",
       "wifi_invalid": "SSID-ul sau parola Wi-Fi nu sunt valide.",
-      "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery."
+      "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery.",
+      "network_manager_unavailable": "Managerul de rețea v0.9 nu este instalat sau hubul nu răspunde.",
+      "network_confirmation_required": "Bifează confirmarea înainte de schimbarea adresei.",
+      "network_invalid_octet": "Ultimul număr trebuie să fie între 2 și 254.",
+      "network_change_failed": "Adresa nu a fost confirmată. Hubul păstrează sau revine automat la configurația anterioară."
     },
     "abort": {
       "no_managed_sounds": "No WAV files were found in /data/musics/music-ch.",

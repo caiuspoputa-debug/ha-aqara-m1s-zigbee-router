@@ -8,6 +8,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DATA_CLIENTS, DATA_COORDINATORS, DOMAIN
+from .device import device_info
 
 
 async def async_setup_entry(
@@ -43,12 +44,7 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
         self._online_generation = (coordinator.data or {}).get(
             "online_generation", 0
         )
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, client.host)},
-            "name": entry.data.get("name", f"Aqara M1S Router {client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

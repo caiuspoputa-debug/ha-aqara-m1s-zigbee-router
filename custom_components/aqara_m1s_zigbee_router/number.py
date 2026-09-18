@@ -15,6 +15,7 @@ from .const import (
     DATA_RADIO_PLAYERS,
     DOMAIN,
 )
+from .device import device_info
 
 
 async def async_setup_entry(
@@ -79,15 +80,7 @@ class AqaraM1SSoundPlaybackVolume(
 
         self._attr_unique_id = f"{entry.entry_id}_sound_playback_volume"
         self._attr_native_value = 50
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, self.client.host)},
-            "name": entry.data.get(
-                "name",
-                f"Aqara M1S {self.client.host}",
-            ),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -152,15 +145,7 @@ class AqaraM1SRadioFineVolumeTrim(
         # *_radio_fine_volume for a different absolute-volume control.
         self._attr_unique_id = f"{entry.entry_id}_radio_fine_trim"
         self._attr_native_value = 0.0
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, self.client.host)},
-            "name": entry.data.get(
-                "name",
-                f"Aqara M1S {self.client.host}",
-            ),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     @staticmethod
     def _normalize(value: float) -> float:

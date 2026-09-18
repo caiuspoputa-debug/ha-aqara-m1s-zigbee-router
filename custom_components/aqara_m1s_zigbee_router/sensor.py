@@ -17,6 +17,7 @@ from .const import (
     DATA_COORDINATORS,
     DOMAIN,
 )
+from .device import device_info
 
 
 @dataclass
@@ -117,12 +118,7 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{entry.entry_id}_{definition.key}"
         self._attr_native_unit_of_measurement = definition.unit
         self._attr_device_class = definition.device_class
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, client.host)},
-            "name": entry.data.get("name", f"Aqara M1S Router {client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     async def async_update(self) -> None:
         try:
@@ -162,12 +158,7 @@ class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
         # Preserve the v0.1.3 unique ID so the existing registry entity is
         # upgraded in place instead of leaving a duplicate orphan.
         self._attr_unique_id = f"{entry.entry_id}_illuminance_raw"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, client.host)},
-            "name": entry.data.get("name", f"Aqara M1S Router {client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
         self._apply_coordinator_data()
 
     def _apply_coordinator_data(self) -> None:

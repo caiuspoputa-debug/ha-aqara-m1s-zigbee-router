@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DATA_CLIENTS, DATA_COORDINATORS, DOMAIN
+from .device import device_info
 
 
 async def async_setup_entry(
@@ -33,12 +34,7 @@ class AqaraM1SHubConnectivity(CoordinatorEntity, BinarySensorEntity):
     def __init__(self, entry: ConfigEntry, client, coordinator) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_hub_connectivity"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, client.host)},
-            "name": entry.data.get("name", f"Aqara M1S {client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     @property
     def available(self) -> bool:

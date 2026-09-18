@@ -5,10 +5,12 @@ import base64
 import io
 import wave
 import hashlib
+import secrets
 from pathlib import PurePosixPath
 from dataclasses import dataclass, field
 
 from .const import MANAGED_SOUND_ROOT
+from .device import normalize_mac
 
 UART_PORT = 1886
 UART_FIFO = "/tmp/ha_m1s_uart_fifo"
@@ -146,6 +148,11 @@ class AqaraM1SClient:
                 self._run_command_locked(UART_STOP_COMMAND)
             except Exception:
                 pass
+            self._close_locked()
+
+    def disconnect(self) -> None:
+        """Close only this client's Telnet socket without changing hub services."""
+        with self._lock:
             self._close_locked()
 
     def _close_uart_locked(self) -> None:
@@ -294,6 +301,88 @@ class AqaraM1SClient:
         )
         return "__M1S_WIFI_READY__" in out
 
+    @staticmethod
+    def _parse_network_block(output: str, begin: str, end: str) -> dict[str, str]:
+        if begin not in output or end not in output:
+            raise RuntimeError("Hub network manager returned an invalid response")
+        body = output.split(begin, 1)[1].split(end, 1)[0]
+        values: dict[str, str] = {}
+        for line in body.splitlines():
+            key, separator, value = line.strip().partition("=")
+            if separator and key.replace("_", "").isalnum():
+                values[key] = value
+        return values
+
+    def network_status(self) -> dict[str, str]:
+        """Read safe network state without exposing Wi-Fi credentials."""
+        output = self.run_command(
+            "if [ -x /data/m1s_network/network_manager.sh ]; then "
+            "/data/m1s_network/network_manager.sh status; "
+            "else echo __M1S_NETWORK_MANAGER_MISSING__; fi"
+        )
+        if "__M1S_NETWORK_MANAGER_MISSING__" in output:
+            raise RuntimeError("Hub network manager is not installed")
+        values = self._parse_network_block(
+            output, "M1S_NETWORK_STATUS_BEGIN", "M1S_NETWORK_STATUS_END"
+        )
+        values["wifi_mac"] = normalize_mac(values.get("wifi_mac"))
+        if values.get("protocol") != "1" or not values["wifi_mac"]:
+            raise RuntimeError("Hub network identity is incomplete")
+        return values
+
+    def set_static_ipv4(self, last_octet: int) -> tuple[str, dict[str, str]]:
+        """Test a /24 address through an alias, verify MAC, then confirm it."""
+        octet = int(last_octet)
+        if octet < 2 or octet > 254:
+            raise ValueError("The final IPv4 octet must be between 2 and 254")
+        before = self.network_status()
+        token = secrets.token_hex(12)
+        output = self.run_command(
+            f"/data/m1s_network/network_manager.sh candidate {octet} {token}"
+        )
+        candidate = self._parse_network_block(
+            output, "M1S_NETWORK_CANDIDATE_BEGIN", "M1S_NETWORK_CANDIDATE_END"
+        )
+        new_host = candidate.get("candidate_ip", "")
+        if not new_host or candidate.get("token") != token:
+            raise RuntimeError("Hub did not return the tested IPv4 address")
+
+        verifier = AqaraM1SClient(
+            host=new_host,
+            port=self.port,
+            username=self.username,
+            password=self.password,
+            timeout=self.timeout,
+        )
+        try:
+            verified: dict[str, str] | None = None
+            last_error: Exception | None = None
+            for _ in range(12):
+                try:
+                    verified = verifier.network_status()
+                    break
+                except (OSError, RuntimeError, TimeoutError) as err:
+                    last_error = err
+                    time.sleep(0.5)
+            if verified is None:
+                raise ConnectionError("Candidate IPv4 could not be reached") from last_error
+            if verified.get("wifi_mac") != before.get("wifi_mac"):
+                raise RuntimeError("Candidate IPv4 belongs to a different device")
+            confirmed = verifier.run_command(
+                f"/data/m1s_network/network_manager.sh confirm {token}"
+            )
+            if "__M1S_NETWORK_CONFIRMED__" not in confirmed:
+                raise RuntimeError("Hub did not confirm the static IPv4 address")
+            return new_host, verified
+        finally:
+            verifier.disconnect()
+
+    def return_to_dhcp(self) -> None:
+        """Persist DHCP and let the hub renew its lease after the ACK."""
+        output = self.run_command("/data/m1s_network/network_manager.sh dhcp")
+        if "__M1S_NETWORK_DHCP_SCHEDULED__" not in output:
+            raise RuntimeError("Hub did not schedule DHCP mode")
+
     def start_wifi_change(self, ssid: str, password: str) -> None:
         """Stage a new Wi-Fi candidate and start the hub-side safe test.
 
@@ -312,6 +401,13 @@ class AqaraM1SClient:
 
         ssid_b64 = base64.b64encode(ssid.encode("utf-8")).decode("ascii")
         pass_b64 = base64.b64encode(password.encode("utf-8")).decode("ascii")
+        prepared = self.run_command(
+            "if [ -x /data/m1s_network/network_manager.sh ]; then "
+            "/data/m1s_network/network_manager.sh wifi-prepare; "
+            "else echo __M1S_NETWORK_MANAGER_MISSING__; fi"
+        )
+        if "__M1S_NETWORK_WIFI_DHCP_READY__" not in prepared:
+            raise RuntimeError("Hub could not return to DHCP before Wi-Fi change")
         command = (
             "BASE=/data/m1s_wifi; CAND=$BASE/candidate; "
             "LOCK=$BASE/ha_wifi_change.lock; "

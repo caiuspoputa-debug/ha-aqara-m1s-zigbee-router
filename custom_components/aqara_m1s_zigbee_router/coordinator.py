@@ -8,6 +8,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN
+from .device import device_identifier
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -199,7 +200,7 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
 
         device_registry = dr.async_get(self.hass)
         device = device_registry.async_get_device(
-            identifiers={(DOMAIN, self.client.host)}
+            identifiers={device_identifier(self.config_entry)}
         )
         if device is None or device.name is None:
             return

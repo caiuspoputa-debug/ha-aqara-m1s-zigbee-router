@@ -23,6 +23,7 @@ from .const import (
     DOMAIN,
     sound_list_signal,
 )
+from .device import device_info
 
 FALLBACK_SOUNDS = [
     "/data/musics/music-scene/door_bell_1.wav",
@@ -152,12 +153,7 @@ class AqaraM1SSoundButton(CoordinatorEntity, ButtonEntity):
             "respects_playback_volume": True,
             "light_effect": False,
         }
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, self.client.host)},
-            "name": entry.data.get("name", f"Aqara M1S {self.client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     async def async_press(self) -> None:
         volume = self.hass.data[DOMAIN][DATA_PLAYBACK_VOLUME].get(
@@ -189,12 +185,7 @@ class AqaraM1SRefreshSoundsButton(CoordinatorEntity, ButtonEntity):
         self._refresh_lock = asyncio.Lock()
         self._was_online = coordinator.last_update_success
         self._attr_unique_id = f"{entry.entry_id}_refresh_sounds"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, client.host)},
-            "name": entry.data.get("name", f"Aqara M1S Router {client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

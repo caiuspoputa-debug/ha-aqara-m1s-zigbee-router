@@ -9,6 +9,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN, DATA_CLIENTS, DATA_SELECTED_SOUND, DATA_SOUND_MAP
+from .device import device_info
 
 
 FALLBACK_SOUNDS = [
@@ -57,12 +58,7 @@ class AqaraM1SSoundSelect(SelectEntity):
         self._attr_options = labels
         self._attr_current_option = labels[0]
         hass.data[DOMAIN][DATA_SELECTED_SOUND][entry.entry_id] = mapping[labels[0]]
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, self.client.host)},
-            "name": entry.data.get("name", f"Aqara M1S {self.client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     async def async_select_option(self, option: str) -> None:
         if option not in self._mapping:

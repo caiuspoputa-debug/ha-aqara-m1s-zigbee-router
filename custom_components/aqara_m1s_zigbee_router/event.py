@@ -12,8 +12,9 @@ from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
     DOMAIN,
-    button_topic_for_host,
+    button_topic_for_entry,
 )
+from .device import device_info
 
 
 async def async_setup_entry(
@@ -39,14 +40,9 @@ class AqaraM1SPhysicalButtonEvent(CoordinatorEntity, EventEntity):
         super().__init__(coordinator)
         self.entry = entry
         self.client = client
-        self._topic = button_topic_for_host(client.host)
+        self._topic = button_topic_for_entry(entry)
         self._attr_unique_id = f"{entry.entry_id}_physical_button"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, client.host)},
-            "name": entry.data.get("name", f"Aqara M1S {client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

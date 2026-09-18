@@ -42,6 +42,7 @@ from .const import (
     DOMAIN,
     radio_volume_signal,
 )
+from .device import device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -262,12 +263,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # may touch the hub audio receiver (latest request wins).
         self._play_generation = 0
         self._last_superseded_generation: int | None = None
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, client.host)},
-            "name": entry.data.get("name", f"Aqara M1S {client.host}"),
-            "manufacturer": "Aqara",
-            "model": "M1S Gen 1 / JN5189 Router",
-        }
+        self._attr_device_info = device_info(entry)
 
     def set_group_manager(self, manager) -> None:
         """Attach the shared group arbiter without changing individual behavior."""
