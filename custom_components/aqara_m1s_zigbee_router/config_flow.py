@@ -160,7 +160,7 @@ class AqaraM1SZigbeeRouterConfigFlow(
         errors = {}
         current_ip = self._initial_network.get("current_ip", self._pending_user[CONF_HOST])
         current_octet = int(current_ip.rsplit(".", 1)[-1])
-        ip_field = f"{current_ip.rsplit('.', 1)[0]}.___"
+        ip_field = f"{current_ip.rsplit('.', 1)[0]}.xxx"
         if user_input is not None:
             data = dict(self._pending_user)
             network = self._initial_network
@@ -367,7 +367,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         current_ip = status.get(
             "current_ip", str(self.config_entry.data.get(CONF_HOST, ""))
         )
-        ip_field = f"{current_ip.rsplit('.', 1)[0]}.___"
+        ip_field = f"{current_ip.rsplit('.', 1)[0]}.xxx"
         try:
             current_octet = int(current_ip.rsplit(".", 1)[-1])
         except ValueError:
