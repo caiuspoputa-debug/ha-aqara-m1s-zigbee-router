@@ -1,3 +1,9 @@
+## 0.21.3 - Stale network-lock recovery and direct submit
+
+- Recover an abandoned `/tmp/m1s_network.lock` only when there is no pending candidate and no active candidate process, then continue the user-requested static-IP test.
+- Remove the extra IP confirmation switch. Static mode shows only the final IPv4 number; choosing DHCP or submitting the static number starts the existing safe workflow directly.
+- Report manager-busy, address-in-use, candidate-unreachable and MAC-identity failures explicitly in the Home Assistant form.
+
 ## 0.21.2 - Mode-specific network controls and proven Telnet session
 
 - Show only the DHCP/static selector on the network overview. The final IPv4 control and confirmation appear only after static mode is selected; DHCP has a confirmation-only page.

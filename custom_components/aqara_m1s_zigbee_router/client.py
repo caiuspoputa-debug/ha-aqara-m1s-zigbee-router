@@ -61,6 +61,14 @@ WONT = 252
 WILL = 251
 
 
+class NetworkChangeError(RuntimeError):
+    """Network change failed with a user-facing Home Assistant error key."""
+
+    def __init__(self, error_key: str, message: str) -> None:
+        super().__init__(message)
+        self.error_key = error_key
+
+
 @dataclass
 class AqaraM1SClient:
     host: str
@@ -337,8 +345,29 @@ class AqaraM1SClient:
         before = self.network_status()
         token = secrets.token_hex(12)
         output = self.run_command(
+            "if [ -d /tmp/m1s_network.lock ] && "
+            "[ ! -r /tmp/m1s_network.pending ] && "
+            "! ps w 2>/dev/null | grep -q '[n]etwork_manager.sh candidate'; "
+            "then rmdir /tmp/m1s_network.lock 2>/dev/null || true; fi; "
             f"/data/m1s_network/network_manager.sh candidate {octet} {token}"
         )
+        candidate_errors = {
+            "__M1S_NETWORK_BUSY__": (
+                "network_manager_busy",
+                "The hub network manager is already processing another change",
+            ),
+            "__M1S_NETWORK_ADDRESS_IN_USE__": (
+                "network_address_in_use",
+                "The selected IPv4 address is already in use",
+            ),
+            "__M1S_NETWORK_ALREADY_CURRENT__": (
+                "network_already_current",
+                "The selected IPv4 address is already active",
+            ),
+        }
+        for marker, (error_key, message) in candidate_errors.items():
+            if marker in output:
+                raise NetworkChangeError(error_key, message)
         candidate = self._parse_network_block(
             output, "M1S_NETWORK_CANDIDATE_BEGIN", "M1S_NETWORK_CANDIDATE_END"
         )
@@ -364,9 +393,15 @@ class AqaraM1SClient:
                     last_error = err
                     time.sleep(0.5)
             if verified is None:
-                raise ConnectionError("Candidate IPv4 could not be reached") from last_error
+                raise NetworkChangeError(
+                    "network_candidate_unreachable",
+                    "The candidate IPv4 address could not be reached",
+                ) from last_error
             if verified.get("wifi_mac") != before.get("wifi_mac"):
-                raise RuntimeError("Candidate IPv4 belongs to a different device")
+                raise NetworkChangeError(
+                    "network_identity_mismatch",
+                    "The candidate IPv4 address belongs to a different device",
+                )
             confirmed = verifier.run_command(
                 f"/data/m1s_network/network_manager.sh confirm {token}"
             )

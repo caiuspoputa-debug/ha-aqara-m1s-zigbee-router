@@ -34,7 +34,7 @@ from .const import (
     DOMAIN,
     MANAGED_SOUND_ROOT,
 )
-from .client import AqaraM1SClient
+from .client import AqaraM1SClient, NetworkChangeError
 from .device import entry_title_with_host
 from .sound_upload import destination_for_filename, read_uploaded_sounds
 
@@ -161,45 +161,43 @@ class AqaraM1SZigbeeRouterConfigFlow(
         current_ip = self._initial_network.get("current_ip", self._pending_user[CONF_HOST])
         current_octet = int(current_ip.rsplit(".", 1)[-1])
         if user_input is not None:
-            if not user_input.get("confirm", False):
-                errors["base"] = "network_confirmation_required"
-            else:
-                data = dict(self._pending_user)
-                network = self._initial_network
-                client = AqaraM1SClient(
-                    host=data[CONF_HOST],
-                    port=data.get(CONF_PORT, DEFAULT_PORT),
-                    username=data.get(CONF_USERNAME, DEFAULT_USERNAME),
-                    password=data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+            data = dict(self._pending_user)
+            network = self._initial_network
+            client = AqaraM1SClient(
+                host=data[CONF_HOST],
+                port=data.get(CONF_PORT, DEFAULT_PORT),
+                username=data.get(CONF_USERNAME, DEFAULT_USERNAME),
+                password=data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+            )
+            try:
+                new_host, network = await self.hass.async_add_executor_job(
+                    client.set_static_ipv4, user_input["last_octet"]
                 )
-                try:
-                    new_host, network = await self.hass.async_add_executor_job(
-                        client.set_static_ipv4, user_input["last_octet"]
-                    )
-                except ValueError:
-                    errors["base"] = "network_invalid_octet"
-                except (OSError, RuntimeError, TimeoutError):
-                    errors["base"] = "network_change_failed"
-                else:
-                    data[CONF_HOST] = new_host
-                    data[CONF_DEVICE_MAC] = network["wifi_mac"]
-                    data[CONF_BUTTON_TOPIC_ID] = network.get("button_topic_id", "")
-                    return self.async_create_entry(
-                        title=entry_title_with_host(
-                            data.get("name", "Aqara M1S Zigbee Router"), new_host
-                        ),
-                        data=data,
-                    )
-                finally:
-                    await self.hass.async_add_executor_job(client.disconnect)
+            except ValueError:
+                errors["base"] = "network_invalid_octet"
+            except NetworkChangeError as err:
+                errors["base"] = err.error_key
+            except (OSError, RuntimeError, TimeoutError):
+                errors["base"] = "network_change_failed"
+            else:
+                data[CONF_HOST] = new_host
+                data[CONF_DEVICE_MAC] = network["wifi_mac"]
+                data[CONF_BUTTON_TOPIC_ID] = network.get("button_topic_id", "")
+                return self.async_create_entry(
+                    title=entry_title_with_host(
+                        data.get("name", "Aqara M1S Zigbee Router"), new_host
+                    ),
+                    data=data,
+                )
+            finally:
+                await self.hass.async_add_executor_job(client.disconnect)
         return self.async_show_form(
             step_id="network_setup_static",
             data_schema=vol.Schema(
                 {
                     vol.Required("last_octet", default=current_octet): vol.All(
                         vol.Coerce(int), vol.Range(min=2, max=254)
-                    ),
-                    vol.Required("confirm", default=False): BooleanSelector(),
+                    )
                 }
             ),
             description_placeholders={"current_ip": current_ip},
@@ -217,7 +215,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         self._upload_task: asyncio.Task[None] | None = None
         self._upload_error = False
         self._network_task: asyncio.Task | None = None
-        self._network_error = False
+        self._network_error: str | None = None
         self._network_status_cache: dict[str, str] | None = None
 
     @property
@@ -280,7 +278,9 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                 await self._network_task
             except Exception as err:
                 _LOGGER.exception("Safe IPv4 change failed: %s", err)
-                self._network_error = True
+                self._network_error = getattr(
+                    err, "error_key", "network_change_failed"
+                )
                 next_step_id = "network_address"
             else:
                 next_step_id = "network_finish"
@@ -289,8 +289,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             return self.async_show_progress_done(next_step_id=next_step_id)
 
         if self._network_error:
-            errors["base"] = "network_change_failed"
-            self._network_error = False
+            errors["base"] = self._network_error
+            self._network_error = None
         try:
             status = await self.hass.async_add_executor_job(
                 self._client.network_status
@@ -314,7 +314,15 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             self._network_status_cache = status
             if user_input["mode"] == "static":
                 return await self.async_step_network_static()
-            return await self.async_step_network_dhcp()
+            self._network_task = self.hass.async_create_task(
+                self._async_apply_network("dhcp", 0),
+                f"{DOMAIN} DHCP change",
+            )
+            return self.async_show_progress(
+                step_id="network_address",
+                progress_action="changing_network",
+                progress_task=self._network_task,
+            )
 
         return self.async_show_form(
             step_id="network_address",
@@ -353,7 +361,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     self._client.network_status
                 )
             except (OSError, RuntimeError, TimeoutError):
-                self._network_error = True
+                self._network_error = "network_manager_unavailable"
                 return await self.async_step_network_address()
         current_ip = status.get(
             "current_ip", str(self.config_entry.data.get(CONF_HOST, ""))
@@ -364,26 +372,22 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             current_octet = 100
         errors = {}
         if user_input is not None:
-            if not user_input.get("confirm", False):
-                errors["base"] = "network_confirmation_required"
-            else:
-                self._network_task = self.hass.async_create_task(
-                    self._async_apply_network("static", user_input["last_octet"]),
-                    f"{DOMAIN} safe static IPv4 change",
-                )
-                return self.async_show_progress(
-                    step_id="network_address",
-                    progress_action="changing_network",
-                    progress_task=self._network_task,
-                )
+            self._network_task = self.hass.async_create_task(
+                self._async_apply_network("static", user_input["last_octet"]),
+                f"{DOMAIN} safe static IPv4 change",
+            )
+            return self.async_show_progress(
+                step_id="network_address",
+                progress_action="changing_network",
+                progress_task=self._network_task,
+            )
         return self.async_show_form(
             step_id="network_static",
             data_schema=vol.Schema(
                 {
                     vol.Required("last_octet", default=current_octet): vol.All(
                         vol.Coerce(int), vol.Range(min=2, max=254)
-                    ),
-                    vol.Required("confirm", default=False): BooleanSelector(),
+                    )
                 }
             ),
             description_placeholders={"current_ip": current_ip},
@@ -391,27 +395,20 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         )
 
     async def async_step_network_dhcp(self, user_input=None):
-        """Confirm DHCP without showing the static-address control."""
-        errors = {}
+        """Apply DHCP directly without an extra confirmation checkbox."""
         if user_input is not None:
-            if not user_input.get("confirm", False):
-                errors["base"] = "network_confirmation_required"
-            else:
-                self._network_task = self.hass.async_create_task(
-                    self._async_apply_network("dhcp", 0),
-                    f"{DOMAIN} DHCP change",
-                )
-                return self.async_show_progress(
-                    step_id="network_address",
-                    progress_action="changing_network",
-                    progress_task=self._network_task,
-                )
+            self._network_task = self.hass.async_create_task(
+                self._async_apply_network("dhcp", 0),
+                f"{DOMAIN} DHCP change",
+            )
+            return self.async_show_progress(
+                step_id="network_address",
+                progress_action="changing_network",
+                progress_task=self._network_task,
+            )
         return self.async_show_form(
             step_id="network_dhcp",
-            data_schema=vol.Schema(
-                {vol.Required("confirm", default=False): BooleanSelector()}
-            ),
-            errors=errors,
+            data_schema=vol.Schema({}),
         )
 
     async def async_step_network_finish(self, user_input=None):

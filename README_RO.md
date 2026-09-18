@@ -1,3 +1,7 @@
+## v0.21.3 - Recuperare blocare IP și formular simplificat
+
+Schimbarea IP static recuperează automat numai o blocare abandonată, când nu mai există nici operație activă, nici adresă în așteptare. Formularul static afișează doar ultimul număr IPv4, fără comutatorul suplimentar de confirmare; butonul Trimite pornește testarea sigură. Erorile pentru adresă ocupată, manager ocupat, candidat inaccesibil și identitate diferită sunt afișate explicit.
+
 ## v0.21.2 - Controale separate și sesiunea Telnet activă
 
 Pagina de rețea arată întâi numai alegerea DHCP/IP static. Controlul pentru ultimul număr și confirmarea apar numai după alegerea IP static; revenirea DHCP are o pagină separată fără control IP. Comenzile folosesc sesiunea Telnet deja funcțională a integrării.

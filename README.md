@@ -1,3 +1,7 @@
+## v0.21.3 - Stale IP lock recovery and simpler form
+
+Static-IP changes automatically recover only an abandoned lock when no operation or candidate address is active. The static form now shows only the final IPv4 number, without an additional confirmation switch; Submit starts the safe test. Address-in-use, busy-manager, unreachable-candidate and identity-mismatch failures are reported explicitly.
+
 ## v0.21.2 - Mode-specific controls and proven Telnet session
 
 The network page first shows only the DHCP/static choice. The final-octet control appears only after static mode is selected, while DHCP uses a separate confirmation-only page. Commands use the integration's existing working Telnet session.

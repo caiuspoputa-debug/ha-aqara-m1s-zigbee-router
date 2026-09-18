@@ -1,6 +1,9 @@
-v0.21.2
+v0.21.3
 PASS: Built directly from the user-supplied resolved v0.20.14 package.
 PASS: Adds only network management, stable identity and related display/topic plumbing; audio, Zigbee and WAV transfer logic is unchanged.
+PASS: Static and DHCP address forms contain no extra confirmation switch; Submit starts the selected operation.
+PASS: An abandoned network lock is removed only when no pending candidate and no active candidate process exist.
+PASS: Read-only live diagnosis on 192.168.0.106 confirmed DHCP mode, the expected MAC identity and an abandoned lock with no pending operation; Codex did not request or apply an address change.
 PASS: Static IPv4 is restricted to the final octet on the current /24 and is confirmed only after the candidate answers with the same Wi-Fi MAC.
 PASS: Hub candidate rollback is scheduled for 120 seconds and does not stop the current address before confirmation.
 PASS: Wi-Fi network changes clear persistent static mode before the existing Wi-Fi recovery flow starts.
@@ -8,7 +11,7 @@ PASS: Device registry identity and config-entry unique ID migrate to the normali
 PASS: The MQTT button topic uses the frozen button_topic_id returned by hub bundle v0.9.
 PASS: Config-entry titles use `IPv4 - friendly name`, so `.200`, `.201`, `.202` entries sort by their visible address while device rows keep `friendly name - IPv4`.
 PASS: Network-manager detection ignores stock Telnet command echo and requires the executed BEGIN/END status frame.
-LIMIT: no live M1S hub test was available. Install on one hub and complete the documented DHCP/static/reboot/DHCP/Wi-Fi test sequence before wider deployment.
+LIMIT: The repaired static-IP path has not been activated by Codex. Complete the change from the Home Assistant integration, then verify static persistence after reboot and return to DHCP.
 
 Previous v0.20.14 validation:
 PASS: Built directly from the user-supplied v0.20.13 FAST-UPLOAD-PROGRESS package.

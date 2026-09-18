@@ -23,8 +23,7 @@
         "title": "IP static / Static IP",
         "description": "Adresa curentă este {current_ip}. Schimbă numai ultimul număr; hubul testează adresa înainte de confirmare. / Current address is {current_ip}. Change only the final number; the hub tests the address before confirmation.",
         "data": {
-          "last_octet": "Ultimul număr IPv4 / Final IPv4 number",
-          "confirm": "Confirm IP-ul static / Confirm static IP"
+          "last_octet": "Ultimul număr IPv4 / Final IPv4 number"
         }
       }
     },
@@ -89,16 +88,13 @@
         "title": "IP static / Static IP",
         "description": "IP actual: {current_ip}. Alege numai ultimul număr (2-254). Adresa este temporară până când același MAC este verificat și hubul o confirmă. / Current IP: {current_ip}. Choose only the final number (2-254). The address remains temporary until the same MAC is verified and the hub confirms it.",
         "data": {
-          "last_octet": "Ultimul număr IPv4 / Final IPv4 number",
-          "confirm": "Confirm IP-ul static / Confirm static IP"
+          "last_octet": "Ultimul număr IPv4 / Final IPv4 number"
         }
       },
       "network_dhcp": {
         "title": "Revenire la DHCP / Return to DHCP",
         "description": "Hubul va elimina configurația statică și va solicita automat adresa de la router. / The hub will remove its static configuration and request an address from the router.",
-        "data": {
-          "confirm": "Confirm revenirea la DHCP / Confirm return to DHCP"
-        }
+        "data": {}
       },
       "network_finish": {
         "title": "Adresă confirmată / Address confirmed"
@@ -117,10 +113,15 @@
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",
       "wifi_invalid": "SSID-ul sau parola Wi-Fi nu sunt valide.",
       "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery.",
-      "network_manager_unavailable": "v0.21.2: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
+      "network_manager_unavailable": "v0.21.3: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
       "network_confirmation_required": "Bifează confirmarea înainte de schimbarea adresei.",
       "network_invalid_octet": "Ultimul număr trebuie să fie între 2 și 254.",
       "network_change_failed": "Adresa nu a fost confirmată. Hubul păstrează sau revine automat la configurația anterioară."
+      ,"network_manager_busy": "Managerul de rețea este ocupat cu o altă schimbare. Încearcă din nou după finalizarea ei."
+      ,"network_address_in_use": "Adresa IPv4 aleasă este deja folosită de alt dispozitiv."
+      ,"network_already_current": "Adresa IPv4 aleasă este deja adresa curentă a hubului."
+      ,"network_candidate_unreachable": "Adresa IPv4 temporară nu a putut fi verificată. Hubul revine automat la adresa anterioară."
+      ,"network_identity_mismatch": "Adresa IPv4 aleasă răspunde, dar aparține altui dispozitiv."
     },
     "abort": {
       "no_managed_sounds": "No WAV files were found in /data/musics/music-ch.",
