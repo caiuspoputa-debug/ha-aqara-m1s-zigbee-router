@@ -315,13 +315,12 @@ class AqaraM1SClient:
 
     def network_status(self) -> dict[str, str]:
         """Read safe network state without exposing Wi-Fi credentials."""
+        # Do not put a literal "missing" marker in this command. The stock
+        # Telnet shell echoes input and that marker would appear even when its
+        # conditional branch was not executed.
         output = self.run_command(
-            "if [ -x /data/m1s_network/network_manager.sh ]; then "
-            "/data/m1s_network/network_manager.sh status; "
-            "else echo __M1S_NETWORK_MANAGER_MISSING__; fi"
+            "/data/m1s_network/network_manager.sh status 2>/dev/null"
         )
-        if "__M1S_NETWORK_MANAGER_MISSING__" in output:
-            raise RuntimeError("Hub network manager is not installed")
         values = self._parse_network_block(
             output, "M1S_NETWORK_STATUS_BEGIN", "M1S_NETWORK_STATUS_END"
         )

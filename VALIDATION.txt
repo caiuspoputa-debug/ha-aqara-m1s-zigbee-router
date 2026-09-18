@@ -7,6 +7,7 @@ PASS: Wi-Fi network changes clear persistent static mode before the existing Wi-
 PASS: Device registry identity and config-entry unique ID migrate to the normalized Wi-Fi MAC; entity unique IDs remain unchanged.
 PASS: The MQTT button topic uses the frozen button_topic_id returned by hub bundle v0.9.
 PASS: Config-entry titles use `IPv4 - friendly name`, so `.200`, `.201`, `.202` entries sort by their visible address while device rows keep `friendly name - IPv4`.
+PASS: Network-manager detection ignores stock Telnet command echo and requires the executed BEGIN/END status frame.
 LIMIT: no live M1S hub test was available. Install on one hub and complete the documented DHCP/static/reboot/DHCP/Wi-Fi test sequence before wider deployment.
 
 Previous v0.20.14 validation:
