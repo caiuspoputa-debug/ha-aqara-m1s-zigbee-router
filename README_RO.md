@@ -1,3 +1,7 @@
+## v0.20.12 - Popup închis înainte de reload
+
+Pentru un ZIP, fiecare WAV este trimis numai prin TCP, cu o pauză scurtă între fișiere; fallback-ul Base64, prea greu pentru un lot mare, este dezactivat. La final, hubul oprește listenerul de upload, rulează `sync`, verifică dimensiunea fiecărui fișier și trimite un ACK unic. Numai după ACK, rezultatul de finalizare este trimis către Home Assistant, popup-ul se închide, iar reloadul pornește separat după o secundă. Modificările audio, IP și ștergere multiplă din v0.20.11 rămân neschimbate.
+
 ## v0.20.11 - Stop curat la căderea radioului și reload automat
 
 La o întrerupere accidentală a fluxului radio individual, receptorul audio de pe hub este oprit imediat pentru a elimina coada rămasă în `aplay`. După ce FFmpeg primește din nou audio și reface bufferul, receptorul este reconstruit și redarea continuă fără repetarea sacadată a finalului. IP-ul este adăugat acum și numelui personalizat deja salvat în Home Assistant. După upload WAV/ZIP sau ștergere multiplă, fereastra se închide și integrarea se reîncarcă automat. ZIP rămâne formatul de lot; arhiva este deschisă în Home Assistant, deci hubul nu are nevoie de TAR sau unzip.
@@ -36,7 +40,7 @@ Numele postului continuă să fie obținut prin mecanismul existent și este exp
 
 Cititorul asincron folosește o conexiune HTTP separată (consum suplimentar de trafic), fără modificări în fluxul audio, sincronizare sau comenzile STOP/PLAY. Nu activează adaptive/per-buffer sync. Se oprește odată cu transportul și își reîncearcă separat conexiunea la erori. Funcționează pentru URL-uri HTTP(S) directe cu ICY; nu adaugă interpretare playlist/HLS. Momentul metadata este decis de post și poate diferi de sunetul auzit.
 
-**Pachet curent: v0.20.11 + kit hub v0.8**
+**Pachet curent: v0.20.12 + kit hub v0.8**
 
 [**Română**](README_RO.md) | [English](README.md)
 
@@ -53,8 +57,8 @@ Integrarea poate fi folosită împreună cu add-on-ul opțional **M1S YouTube Ca
 
 # Aqara M1S Gen 1 — conversie completă în Zigbee Router + integrare Home Assistant
 
-Versiune documentație: **2026-09-18 - v0.20.11 + kit hub v0.8**  
-Integrare Home Assistant inclusă: **0.20.11**  
+Versiune documentație: **2026-09-18 - v0.20.12 + kit hub v0.8**
+Integrare Home Assistant inclusă: **0.20.12**
 Model țintă: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 Acesta este ghidul principal pentru refacerea unui hub stock în configurația folosită de proiect:

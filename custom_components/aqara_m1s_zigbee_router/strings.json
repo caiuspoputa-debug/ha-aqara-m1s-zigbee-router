@@ -29,7 +29,7 @@
       },
       "upload_sound": {
         "title": "Încărcare WAV / ZIP / Upload WAV / ZIP",
-        "description": "Selectează un WAV sau un ZIP cu până la 64 de fișiere WAV. Fiecare WAV are limita de 20 MiB, iar lotul ZIP are limita totală de 100 MiB. După succes, fereastra se închide și integrarea se reîncarcă automat. / Select one WAV or a ZIP containing up to 64 WAV files. Each WAV is limited to 20 MiB and the ZIP batch to 100 MiB total. After success, the dialog closes and the integration reloads automatically.",
+        "description": "Selectează un WAV sau un ZIP cu până la 64 de fișiere WAV. Așteaptă confirmarea finală a hubului; numai după verificare fereastra se închide și integrarea se reîncarcă automat. / Select one WAV or a ZIP containing up to 64 WAV files. Wait for the hub's final confirmation; only after verification does the dialog close and the integration reload automatically.",
         "data": {
           "source": "Fișier WAV sau ZIP / WAV or ZIP file"
         }

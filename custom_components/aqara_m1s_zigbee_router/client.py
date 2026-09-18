@@ -1,12 +1,13 @@
+import base64
+import hashlib
+import io
+import shlex
 import socket
 import threading
 import time
-import base64
-import io
 import wave
-import hashlib
-from pathlib import PurePosixPath
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 
 from .const import MANAGED_SOUND_ROOT
 
@@ -23,6 +24,8 @@ UPLOAD_TEMP = "/tmp/ha_m1s_sound_upload.wav"
 UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
 UPLOAD_COMMAND_TIMEOUT = 30.0
 UPLOAD_FINALIZE_TIMEOUT = 45.0
+UPLOAD_BATCH_CONFIRM_TIMEOUT = 90.0
+UPLOAD_BATCH_SETTLE_SECONDS = 0.25
 UPLOAD_BASE64_CHUNK_SIZE = 1024
 
 
@@ -70,6 +73,9 @@ class AqaraM1SClient:
     _uart_sock: socket.socket | None = field(default=None, init=False, repr=False)
     _uart_rx: bytearray = field(default_factory=bytearray, init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
+    _upload_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False
+    )
     _command_id: int = field(default=0, init=False, repr=False)
 
     def _negotiate(self, data: bytes) -> bytes:
@@ -507,8 +513,9 @@ class AqaraM1SClient:
             checksum ^= value
         return checksum
 
-    def upload_sound(self, destination: str, content: bytes) -> None:
-        destination = self._safe_sound_path(destination)
+    @staticmethod
+    def _validate_sound_content(content: bytes) -> None:
+        """Reject audio that the hub cannot play before opening a transfer."""
         try:
             with wave.open(io.BytesIO(content), "rb") as wav:
                 valid = (
@@ -523,16 +530,97 @@ class AqaraM1SClient:
             raise ValueError(
                 "WAV must be uncompressed PCM, mono, 32000 Hz, 32-bit little-endian"
             )
-        with self._lock:
-            try:
-                self._upload_sound_tcp_locked(destination, content)
-            except Exception:
-                # BusyBox base64 is slower but provides a proven fallback.
-                self._upload_sound_base64_locked(destination, content)
+
+    def upload_sound(self, destination: str, content: bytes) -> None:
+        destination = self._safe_sound_path(destination)
+        self._validate_sound_content(content)
+        if not self._upload_lock.acquire(blocking=False):
+            raise RuntimeError("Another sound upload is already in progress")
+        try:
+            with self._lock:
+                try:
+                    self._upload_sound_tcp_locked(destination, content)
+                except Exception:
+                    try:
+                        self.run_command(
+                            _upload_cleanup_command(),
+                            timeout=UPLOAD_COMMAND_TIMEOUT,
+                        )
+                    except Exception:
+                        pass
+                    # BusyBox base64 is slower but provides a proven fallback.
+                    self._upload_sound_base64_locked(destination, content)
+        finally:
+            self._upload_lock.release()
+
+    def upload_sound_batch(
+        self,
+        uploads: list[tuple[str, bytes]],
+    ) -> None:
+        """Upload a ZIP batch over TCP and wait for one final hub ACK."""
+        prepared: list[tuple[str, bytes]] = []
+        for destination, content in uploads:
+            safe_destination = self._safe_sound_path(destination)
+            self._validate_sound_content(content)
+            prepared.append((safe_destination, content))
+        if not prepared:
+            raise ValueError("Sound batch is empty")
+
+        if not self._upload_lock.acquire(blocking=False):
+            raise RuntimeError("Another sound upload is already in progress")
+        try:
+            for destination, content in prepared:
+                with self._lock:
+                    try:
+                        self._upload_sound_tcp_locked(destination, content)
+                    except Exception:
+                        try:
+                            self.run_command(
+                                _upload_cleanup_command(),
+                                timeout=UPLOAD_COMMAND_TIMEOUT,
+                            )
+                        except Exception:
+                            pass
+                        # Never fall back to thousands of Telnet/Base64 commands
+                        # for a ZIP batch; that can starve this low-resource hub.
+                        raise
+                time.sleep(UPLOAD_BATCH_SETTLE_SECONDS)
+
+            with self._lock:
+                self._confirm_sound_batch_locked(prepared)
+        finally:
+            self._upload_lock.release()
+
+    def _confirm_sound_batch_locked(
+        self,
+        uploads: list[tuple[str, bytes]],
+    ) -> None:
+        """Ask the hub to flush and confirm every final file before returning."""
+        checks = " && ".join(
+            f'[ "$(wc -c < {shlex.quote(destination)} 2>/dev/null)" = "{len(content)}" ]'
+            for destination, content in uploads
+        )
+        marker = f"__M1S_BATCH_UPLOAD_OK__:{len(uploads)}"
+        command = (
+            f"for p in $(ps w | grep '[n]c -l -p {UPLOAD_PORT}' | "
+            "awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "
+            f'[ -f {UPLOAD_PID} ] && kill -9 "$(cat {UPLOAD_PID})" 2>/dev/null; '
+            f"rm -f {UPLOAD_PID} {UPLOAD_TEMP}; "
+            f"if sync && {checks}; then echo {marker}; "
+            "else echo __M1S_BATCH_UPLOAD_VERIFY_ERROR__; fi"
+        )
+        output = self.run_command(
+            command,
+            timeout=UPLOAD_BATCH_CONFIRM_TIMEOUT,
+        )
+        if marker not in output:
+            raise IOError(f"WAV batch confirmation failed: {output}")
 
     def _upload_sound_tcp_locked(self, destination: str, content: bytes) -> None:
         """Upload a WAV through a one-shot BusyBox nc listener and verify it."""
         parent = str(PurePosixPath(destination).parent)
+        quoted_destination = shlex.quote(destination)
+        quoted_parent = shlex.quote(parent)
         expected_size = len(content)
         expected_md5 = hashlib.md5(content).hexdigest()
 
@@ -542,7 +630,7 @@ class AqaraM1SClient:
             f"for p in $(ps w | grep '[n]c -l -p {UPLOAD_PORT}' | "
             "awk '{print $1}'); do kill -9 \"$p\" 2>/dev/null; done; "
             f'[ -f {UPLOAD_PID} ] && kill -9 "$(cat {UPLOAD_PID})" 2>/dev/null; '
-            f"rm -f {UPLOAD_PID} {UPLOAD_TEMP}; mkdir -p '{parent}'; "
+            f"rm -f {UPLOAD_PID} {UPLOAD_TEMP}; mkdir -p {quoted_parent}; "
             f"nc -l -p {UPLOAD_PORT} > {UPLOAD_TEMP} "
             "2>/tmp/ha_m1s_sound_upload.log & "
             f"echo $! > {UPLOAD_PID}; "
@@ -579,21 +667,25 @@ class AqaraM1SClient:
         finally:
             upload_sock.close()
 
-        # nc is one-shot. Wait for it to close the file, then verify both size
-        # and MD5 before replacing any existing destination file.
+        # Wait for all expected bytes, then stop the exact one-shot listener
+        # before hashing or starting the next file in a ZIP batch.
         finalize = (
             "i=0; while [ $i -lt 100 ]; do "
             f"pid=$(cat {UPLOAD_PID} 2>/dev/null); "
             f"size=$(wc -c < {UPLOAD_TEMP} 2>/dev/null || echo 0); "
-            "[ -z \"$pid\" ] || ! kill -0 \"$pid\" 2>/dev/null || "
             f"[ \"${{size:-0}}\" -ge {expected_size} ] && break; "
+            "[ -n \"$pid\" ] && ! kill -0 \"$pid\" 2>/dev/null && break; "
             "sleep 0.2; i=$((i+1)); done; "
             f"actual=$(wc -c < {UPLOAD_TEMP} 2>/dev/null); "
+            f"pid=$(cat {UPLOAD_PID} 2>/dev/null); "
+            "[ -z \"$pid\" ] || kill -9 \"$pid\" 2>/dev/null; "
+            f"rm -f {UPLOAD_PID}; "
             f"actual_md5=$(md5sum {UPLOAD_TEMP} 2>/dev/null | awk '{{print $1}}'); "
             f"if [ \"$actual\" = \"{expected_size}\" ] && "
             f"[ \"$actual_md5\" = \"{expected_md5}\" ]; then "
-            f"mv {UPLOAD_TEMP} '{destination}'; chmod 664 '{destination}' 2>/dev/null; "
-            f"rm -f {UPLOAD_PID}; echo __M1S_UPLOAD_OK__; "
+            f"mv {UPLOAD_TEMP} {quoted_destination}; "
+            f"chmod 664 {quoted_destination} 2>/dev/null; "
+            "echo __M1S_UPLOAD_OK__; "
             "else echo __M1S_UPLOAD_VERIFY_ERROR__:$actual:$actual_md5; fi"
         )
         try:
@@ -617,13 +709,15 @@ class AqaraM1SClient:
     def _upload_sound_base64_locked(self, destination: str, content: bytes) -> None:
         """Fallback upload over Telnet using small base64 chunks, with MD5 check."""
         parent = str(PurePosixPath(destination).parent)
+        quoted_destination = shlex.quote(destination)
+        quoted_parent = shlex.quote(parent)
         encoded = base64.b64encode(content).decode("ascii")
         expected_size = len(content)
         expected_md5 = hashlib.md5(content).hexdigest()
         temp = "/tmp/ha_sound_upload.b64"
         decoded = "/tmp/ha_sound_upload_decoded.wav"
         self.run_command(
-            f"mkdir -p '{parent}'; rm -f {temp} {decoded}; : > {temp}",
+            f"mkdir -p {quoted_parent}; rm -f {temp} {decoded}; : > {temp}",
             timeout=UPLOAD_COMMAND_TIMEOUT,
         )
         for start in range(0, len(encoded), UPLOAD_BASE64_CHUNK_SIZE):
@@ -638,7 +732,8 @@ class AqaraM1SClient:
             f"actual_md5=$(md5sum {decoded} | awk '{{print $1}}'); "
             f"if [ \"$actual\" = \"{expected_size}\" ] && "
             f"[ \"$actual_md5\" = \"{expected_md5}\" ]; then "
-            f"mv {decoded} '{destination}'; chmod 664 '{destination}' 2>/dev/null; "
+            f"mv {decoded} {quoted_destination}; "
+            f"chmod 664 {quoted_destination} 2>/dev/null; "
             "echo __M1S_UPLOAD_OK__; "
             "else echo __M1S_UPLOAD_VERIFY_ERROR__:$actual:$actual_md5; fi; "
             f"rm -f {temp} {decoded}",

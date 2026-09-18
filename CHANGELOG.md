@@ -1,3 +1,12 @@
+## 0.20.12 - Close sound dialog before reload
+
+- Return the completed options-flow result immediately after a successful upload or delete, allowing the Home Assistant popup and spinner to close.
+- Run the config-entry reload as a separate delayed Home Assistant task so reload can no longer block the frontend response.
+- Upload ZIP batches through TCP only, with a short per-file settling interval; never start the resource-heavy Telnet/Base64 fallback for a batch.
+- Require a final hub ACK after stopping the upload listener, flushing storage with `sync` and verifying every destination size. Only then close the popup and schedule reload.
+- Reject overlapping upload attempts and release the shared hub command lock between batch files so normal status checks can still run.
+- Keep all v0.20.11 audio-drop, visible-IP, ZIP and multi-delete changes unchanged.
+
 ## 0.20.11 - Clean radio-drop recovery and automatic sound reload
 
 - Stop the hub's individual audio receiver as soon as a radio source underruns, clearing the buffered audio tail instead of feeding silence while FFmpeg reconnects.

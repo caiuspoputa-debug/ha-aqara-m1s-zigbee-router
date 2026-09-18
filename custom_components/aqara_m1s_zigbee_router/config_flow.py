@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import voluptuous as vol
@@ -34,6 +35,7 @@ from .const import (
 from .sound_upload import destination_for_filename, read_uploaded_sounds
 
 _LOGGER = logging.getLogger(__name__)
+SOUND_RELOAD_DELAY_SECONDS = 1.0
 
 
 class AqaraM1SZigbeeRouterConfigFlow(
@@ -171,10 +173,22 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             errors=errors,
         )
 
+    async def _async_reload_after_flow_close(self, entry_id: str) -> None:
+        """Reload only after the frontend has received the close response."""
+        await asyncio.sleep(SOUND_RELOAD_DELAY_SECONDS)
+        try:
+            await self.hass.config_entries.async_reload(entry_id)
+        except Exception:
+            _LOGGER.exception(
+                "Aqara M1S automatic reload failed after sound management"
+            )
+
     async def async_step_finish(self, user_input=None):
-        """Close sound management and reload the config entry."""
-        await self.hass.config_entries.async_reload(
-            self.config_entry.entry_id
+        """Close sound management now and reload the config entry afterward."""
+        entry_id = self.config_entry.entry_id
+        self.hass.async_create_task(
+            self._async_reload_after_flow_close(entry_id),
+            f"{DOMAIN} reload after sound management",
         )
         return self.async_create_entry(title="", data={})
 
@@ -187,12 +201,19 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     self.hass,
                     user_input["source"],
                 )
-                for filename, content in uploads:
-                    destination = destination_for_filename(filename)
+                prepared_uploads = [
+                    (destination_for_filename(filename), content)
+                    for filename, content in uploads
+                ]
+                if len(prepared_uploads) > 1:
                     await self.hass.async_add_executor_job(
-                        self._client.upload_sound,
-                        destination,
-                        content,
+                        self._client.upload_sound_batch,
+                        prepared_uploads,
+                    )
+                else:
+                    destination, content = prepared_uploads[0]
+                    await self.hass.async_add_executor_job(
+                        self._client.upload_sound, destination, content
                     )
             except (OSError, ValueError, RuntimeError) as err:
                 _LOGGER.exception("WAV upload failed: %s", err)

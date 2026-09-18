@@ -1,3 +1,7 @@
+## v0.20.12 - Close the sound dialog before reload
+
+For a ZIP, every WAV is sent through TCP only with a short settling interval; the resource-heavy Base64 fallback is disabled for batches. At the end, the hub stops the upload listener, runs `sync`, verifies every file size and returns one final ACK. Only after that ACK does Home Assistant close the popup and start the integration reload as a separate delayed task. All v0.20.11 audio-drop, visible-IP and multi-delete changes remain unchanged.
+
 ## v0.20.11 - Clean radio-drop recovery and automatic sound reload
 
 When an individual radio source drops, the hub audio receiver is stopped immediately to clear the remaining `aplay` tail. Once FFmpeg receives audio again and rebuilds its buffer, the receiver is recreated and playback resumes without repeating the end of the previous audio. The IP is now also appended to an existing Home Assistant user-renamed device. After a successful WAV/ZIP upload or multi-file delete, the dialog closes and the integration reloads automatically. ZIP remains the batch format and is extracted in Home Assistant, so the hub does not need TAR or unzip.
@@ -43,14 +47,14 @@ Intentional individual → group handoff, priority-sound preemption, Stop and sh
 - This uses one additional radio HTTP connection and its bandwidth. Stations must expose ICY directly on the resolved HTTP(S) URL; playlist/HLS parsing is not added. Servers without `icy-metaint` are closed immediately. Metadata timing is station-dependent and is not aligned to buffered audio.
 - Validation: Python syntax, JSON parsing, synthetic ICY stream and lifecycle/regression checks. No live Home Assistant/hub playback test was available.
 
-**Current package: v0.20.11 + hub kit v0.8**
+**Current package: v0.20.12 + hub kit v0.8**
 
 [Romana](README_RO.md) | **English**
 
 # Aqara M1S Gen 1 - stock hub to Zigbee Router + Home Assistant integration
 
-Documentation version: **2026-09-18 - v0.20.11 + hub kit v0.8**  
-Home Assistant integration version: **0.20.11**  
+Documentation version: **2026-09-18 - v0.20.12 + hub kit v0.8**
+Home Assistant integration version: **0.20.12**
 Target model: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 This README is the current English operational guide for the packaged kit. The Romanian file `README_RO.md` is the long detailed reference; this file keeps the same current facts and the practical stock-hub flow.
