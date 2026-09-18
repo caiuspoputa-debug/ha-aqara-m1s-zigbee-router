@@ -1,4 +1,10 @@
-v0.21.3
+v0.21.4
+PASS: Reproduced v0.9 shell defect locally: selecting .200 becomes the gateway .1 and is rejected with exit code 19.
+PASS: Read-only live check confirmed that hub .106 has the exact defective v0.9 script checksum.
+PASS: Shell regression tests exercise the actual repair and manager lifecycle with isolated OS resources: candidate, confirmation, activation, rollback, address occupied, unknown script and pending operation.
+PASS: Client regression tests require the requested active address and reject a different candidate before confirmation.
+PASS: Script repair uses a checksum gate, backup and atomic replacement; repeated preparation is idempotent.
+PASS: The IP field uses the current subnet prefix and starts with the current final octet.
 PASS: Built directly from the user-supplied resolved v0.20.14 package.
 PASS: Adds only network management, stable identity and related display/topic plumbing; audio, Zigbee and WAV transfer logic is unchanged.
 PASS: Static and DHCP address forms contain no extra confirmation switch; Submit starts the selected operation.

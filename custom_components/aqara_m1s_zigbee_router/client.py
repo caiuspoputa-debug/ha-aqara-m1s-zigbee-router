@@ -6,7 +6,7 @@ import io
 import wave
 import hashlib
 import secrets
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from dataclasses import dataclass, field
 
 from .const import MANAGED_SOUND_ROOT
@@ -321,14 +321,21 @@ class AqaraM1SClient:
                 values[key] = value
         return values
 
-    def network_status(self) -> dict[str, str]:
+    def network_status(self, *, single_attempt: bool = False) -> dict[str, str]:
         """Read safe network state without exposing Wi-Fi credentials."""
         # Do not put a literal "missing" marker in this command. The stock
         # Telnet shell echoes input and that marker would appear even when its
         # conditional branch was not executed.
-        output = self.run_command(
-            "/data/m1s_network/network_manager.sh status 2>/dev/null"
-        )
+        command = "/data/m1s_network/network_manager.sh status 2>/dev/null"
+        if single_attempt:
+            with self._lock:
+                try:
+                    output = self._run_command_locked(command)
+                except (OSError, TimeoutError):
+                    self._close_locked()
+                    raise
+        else:
+            output = self.run_command(command)
         values = self._parse_network_block(
             output, "M1S_NETWORK_STATUS_BEGIN", "M1S_NETWORK_STATUS_END"
         )
@@ -343,6 +350,11 @@ class AqaraM1SClient:
         if octet < 2 or octet > 254:
             raise ValueError("The final IPv4 octet must be between 2 and 254")
         before = self.network_status()
+        if before.get("pending") == "yes":
+            raise NetworkChangeError(
+                "network_manager_busy", "The hub already has an unconfirmed candidate"
+            )
+        self._prepare_network_manager()
         token = secrets.token_hex(12)
         output = self.run_command(
             "if [ -d /tmp/m1s_network.lock ] && "
@@ -364,6 +376,18 @@ class AqaraM1SClient:
                 "network_already_current",
                 "The selected IPv4 address is already active",
             ),
+            "__M1S_NETWORK_IS_GATEWAY__": (
+                "network_is_gateway", "The selected address is the router address",
+            ),
+            "__M1S_NETWORK_NOT_SLASH24__": (
+                "network_subnet_unsupported", "The hub subnet must use mask 255.255.255.0",
+            ),
+            "__M1S_NETWORK_ALIAS_FAILED__": (
+                "network_alias_failed", "The hub could not add the temporary address",
+            ),
+            "__M1S_NETWORK_ALIAS_VERIFY_FAILED__": (
+                "network_alias_failed", "The hub could not verify the temporary address",
+            ),
         }
         for marker, (error_key, message) in candidate_errors.items():
             if marker in output:
@@ -372,7 +396,8 @@ class AqaraM1SClient:
             output, "M1S_NETWORK_CANDIDATE_BEGIN", "M1S_NETWORK_CANDIDATE_END"
         )
         new_host = candidate.get("candidate_ip", "")
-        if not new_host or candidate.get("token") != token:
+        expected_host = f"{before['current_ip'].rsplit('.', 1)[0]}.{octet}"
+        if new_host != expected_host or candidate.get("token") != token:
             raise RuntimeError("Hub did not return the tested IPv4 address")
 
         verifier = AqaraM1SClient(
@@ -385,9 +410,12 @@ class AqaraM1SClient:
         try:
             verified: dict[str, str] | None = None
             last_error: Exception | None = None
-            for _ in range(12):
+            deadline = time.monotonic() + 35.0
+            for _ in range(3):
+                if time.monotonic() >= deadline:
+                    break
                 try:
-                    verified = verifier.network_status()
+                    verified = verifier.network_status(single_attempt=True)
                     break
                 except (OSError, RuntimeError, TimeoutError) as err:
                     last_error = err
@@ -407,9 +435,54 @@ class AqaraM1SClient:
             )
             if "__M1S_NETWORK_CONFIRMED__" not in confirmed:
                 raise RuntimeError("Hub did not confirm the static IPv4 address")
-            return new_host, verified
+            # Confirmation schedules activation; it is not proof of application.
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                try:
+                    active = verifier.network_status(single_attempt=True)
+                except (OSError, RuntimeError, TimeoutError):
+                    pass
+                else:
+                    if active.get("wifi_mac") != before.get("wifi_mac"):
+                        raise NetworkChangeError(
+                            "network_identity_mismatch", "The active address changed identity"
+                        )
+                    if (
+                        active.get("current_ip") == new_host
+                        and active.get("mode") == "static"
+                        and active.get("pending") == "no"
+                    ):
+                        return new_host, active
+                time.sleep(0.5)
+            raise NetworkChangeError(
+                "network_activation_unconfirmed",
+                f"The hub accepted {new_host} but its activation was not verified",
+            )
         finally:
             verifier.disconnect()
+
+    def _prepare_network_manager(self) -> None:
+        """Repair the known v0.9 calculation bug only on explicit static submit."""
+        script = Path(__file__).with_name("network_manager_compat.sh").read_text(
+            encoding="utf-8"
+        )
+        encoded = base64.b64encode(script.encode()).decode("ascii")
+        chunks = "\n".join(
+            f"printf '%s' '{encoded[index:index + 512]}'"
+            for index in range(0, len(encoded), 512)
+        )
+        output = self.run_command(
+            "{\n" + chunks + "\n} | base64 -d | /bin/sh", timeout=15.0
+        )
+        lines = {line.strip() for line in output.splitlines()}
+        if "M1S_NETWORK_COMPAT_READY" in lines:
+            return
+        if "M1S_NETWORK_COMPAT_BUSY" in lines:
+            raise NetworkChangeError("network_manager_busy", "A candidate is already active")
+        raise NetworkChangeError(
+            "network_manager_update_required",
+            "The known network-manager repair could not be verified",
+        )
 
     def return_to_dhcp(self) -> None:
         """Persist DHCP and let the hub renew its lease after the ACK."""

@@ -29,6 +29,16 @@
     },
     "error": {
       "network_confirmation_required": "Bifează confirmarea înainte de schimbarea adresei.",
+      "network_manager_update_required": "Corecția managerului de rețea nu a putut fi verificată. / Network manager repair could not be verified.",
+      "network_manager_busy": "Există deja o schimbare IP în curs. / Another address change is already in progress.",
+      "network_address_in_use": "Adresa este deja folosită. / This address is already in use.",
+      "network_already_current": "Ai ales adresa curentă a hubului. / You selected the hub's current address.",
+      "network_candidate_unreachable": "Adresa temporară nu poate fi verificată. / The temporary address cannot be verified.",
+      "network_identity_mismatch": "Adresa aparține altui dispozitiv. / The address belongs to a different device.",
+      "network_is_gateway": "Adresa aleasă aparține routerului. / The selected address belongs to the router.",
+      "network_subnet_unsupported": "Masca trebuie să fie 255.255.255.0. / The subnet mask must be 255.255.255.0.",
+      "network_alias_failed": "Hubul nu a putut crea adresa temporară. / The hub could not create the temporary address.",
+      "network_activation_unconfirmed": "Configurația a fost acceptată, dar noul IP activ nu a fost confirmat. Verifică starea hubului. / Configuration was accepted, but the active address could not be confirmed. Check hub status.",
       "network_invalid_octet": "Ultimul număr trebuie să fie între 2 și 254.",
       "network_change_failed": "Adresa nu a fost confirmată. Hubul revine automat la configurația anterioară."
     }
@@ -113,8 +123,13 @@
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",
       "wifi_invalid": "SSID-ul sau parola Wi-Fi nu sunt valide.",
       "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery.",
-      "network_manager_unavailable": "v0.21.3: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
+      "network_manager_unavailable": "v0.21.4: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
       "network_confirmation_required": "Bifează confirmarea înainte de schimbarea adresei.",
+      "network_manager_update_required": "Corecția managerului de rețea nu a putut fi verificată. Adresa nu a fost schimbată. / The network manager repair could not be verified. No address change was requested.",
+      "network_is_gateway": "Adresa aleasă aparține routerului. Alege alt ultim număr. / This address is the router address. Choose a different final number.",
+      "network_subnet_unsupported": "Masca rețelei trebuie să fie 255.255.255.0. / This operation requires subnet mask 255.255.255.0.",
+      "network_alias_failed": "Hubul nu a putut crea sau verifica adresa temporară. / The hub could not create or verify its temporary address.",
+      "network_activation_unconfirmed": "Hubul a acceptat configurația, dar noul IP activ nu a putut fi confirmat. Verifică starea hubului înainte de o nouă încercare. / The hub accepted the configuration, but the active address could not be confirmed. Check hub status before retrying.",
       "network_invalid_octet": "Ultimul număr trebuie să fie între 2 și 254.",
       "network_change_failed": "Adresa nu a fost confirmată. Hubul păstrează sau revine automat la configurația anterioară."
       ,"network_manager_busy": "Managerul de rețea este ocupat cu o altă schimbare. Încearcă din nou după finalizarea ei."

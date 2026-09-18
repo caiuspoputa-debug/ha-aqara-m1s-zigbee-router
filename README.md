@@ -1,3 +1,9 @@
+## v0.21.4 - Repair the hub-side IPv4 calculation
+
+The v0.9 manager overwrote the requested final octet while validating the gateway, turning .200 into .1 and rejecting it. Static-IP submission now repairs only that known script using checksum verification, a backup and atomic replacement. The integration waits for the new active address and expected MAC before completing the flow. The field displays the actual subnet, such as 192.168.0.___, and defaults to the current final octet.
+
+Install and restart Home Assistant, then submit from Configure > Network address > Static IP. The integration repairs the hub script on submission; a separate kit reinstall is unnecessary. Local regression tests pass; the actual address change must still be verified from Home Assistant.
+
 ## v0.21.3 - Stale IP lock recovery and simpler form
 
 Static-IP changes automatically recover only an abandoned lock when no operation or candidate address is active. The static form now shows only the final IPv4 number, without an additional confirmation switch; Submit starts the safe test. Address-in-use, busy-manager, unreachable-candidate and identity-mismatch failures are reported explicitly.

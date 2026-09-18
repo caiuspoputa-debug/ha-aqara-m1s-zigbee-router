@@ -1,3 +1,9 @@
+## v0.21.4 - Corecția calculului IP pe hub
+
+Managerul v0.9 suprascria ultimul număr ales la validarea gateway-ului: .200 devenea .1 și era respins. La trimiterea IP-ului static, integrarea corectează exclusiv versiunea cunoscută a scriptului, cu copie de siguranță și verificare înainte de înlocuire. Apoi verifică noul IP activ și MAC-ul înainte de finalizare. Câmpul afișează prefixul real, de exemplu 192.168.0.___, cu ultimul număr actual ca valoare inițială.
+
+Instalează integrarea și repornește Home Assistant. Pornește schimbarea din Configure > Adresă de rețea > IP static. Corecția hubului este aplicată de integrare când trimiți noua adresă. Nu este necesară reinstalarea separată a kitului. Testele locale au trecut; schimbarea efectivă trebuie verificată din Home Assistant.
+
 ## v0.21.3 - Recuperare blocare IP și formular simplificat
 
 Schimbarea IP static recuperează automat numai o blocare abandonată, când nu mai există nici operație activă, nici adresă în așteptare. Formularul static afișează doar ultimul număr IPv4, fără comutatorul suplimentar de confirmare; butonul Trimite pornește testarea sigură. Erorile pentru adresă ocupată, manager ocupat, candidat inaccesibil și identitate diferită sunt afișate explicit.

@@ -1,3 +1,12 @@
+## 0.21.4 - Correct the hub-side static address calculation
+
+- Repair the reproduced v0.9 shell bug: validating the gateway overwrote the requested final octet. A request for .200 became .1 and was rejected as the router address.
+- On static-IP submission, repair only the known v0.9 script with checksum verification, a backup and atomic replacement. Unknown scripts and pending candidates are not overwritten.
+- Verify the requested candidate exactly; after confirmation wait for the same MAC to report static mode and the new active address before completing the flow.
+- Limit candidate verification attempts and report activation failures explicitly.
+- Label the field with the current subnet, such as 192.168.0.___, and default to the current final octet. No additional confirmation switch.
+- Local regression tests cover the original defect, corrected lifecycle, rollback and client verification. A live address change remains for the user to initiate from Home Assistant.
+
 ## 0.21.3 - Stale network-lock recovery and direct submit
 
 - Recover an abandoned `/tmp/m1s_network.lock` only when there is no pending candidate and no active candidate process, then continue the user-requested static-IP test.

@@ -160,6 +160,7 @@ class AqaraM1SZigbeeRouterConfigFlow(
         errors = {}
         current_ip = self._initial_network.get("current_ip", self._pending_user[CONF_HOST])
         current_octet = int(current_ip.rsplit(".", 1)[-1])
+        ip_field = f"{current_ip.rsplit('.', 1)[0]}.___"
         if user_input is not None:
             data = dict(self._pending_user)
             network = self._initial_network
@@ -171,7 +172,7 @@ class AqaraM1SZigbeeRouterConfigFlow(
             )
             try:
                 new_host, network = await self.hass.async_add_executor_job(
-                    client.set_static_ipv4, user_input["last_octet"]
+                    client.set_static_ipv4, user_input[ip_field]
                 )
             except ValueError:
                 errors["base"] = "network_invalid_octet"
@@ -195,7 +196,7 @@ class AqaraM1SZigbeeRouterConfigFlow(
             step_id="network_setup_static",
             data_schema=vol.Schema(
                 {
-                    vol.Required("last_octet", default=current_octet): vol.All(
+                    vol.Required(ip_field, default=current_octet): vol.All(
                         vol.Coerce(int), vol.Range(min=2, max=254)
                     )
                 }
@@ -366,6 +367,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         current_ip = status.get(
             "current_ip", str(self.config_entry.data.get(CONF_HOST, ""))
         )
+        ip_field = f"{current_ip.rsplit('.', 1)[0]}.___"
         try:
             current_octet = int(current_ip.rsplit(".", 1)[-1])
         except ValueError:
@@ -373,7 +375,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         errors = {}
         if user_input is not None:
             self._network_task = self.hass.async_create_task(
-                self._async_apply_network("static", user_input["last_octet"]),
+                self._async_apply_network("static", user_input[ip_field]),
                 f"{DOMAIN} safe static IPv4 change",
             )
             return self.async_show_progress(
@@ -385,7 +387,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             step_id="network_static",
             data_schema=vol.Schema(
                 {
-                    vol.Required("last_octet", default=current_octet): vol.All(
+                    vol.Required(ip_field, default=current_octet): vol.All(
                         vol.Coerce(int), vol.Range(min=2, max=254)
                     )
                 }
