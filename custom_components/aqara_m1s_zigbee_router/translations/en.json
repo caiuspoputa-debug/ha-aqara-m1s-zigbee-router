@@ -29,14 +29,14 @@
       },
       "upload_sound": {
         "title": "Încărcare WAV / ZIP / Upload WAV / ZIP",
-        "description": "Select one WAV or a ZIP containing up to 64 WAV files. Wait for the hub's final confirmation; only after verification does the dialog close and the integration reload automatically.",
+        "description": "Select one WAV or a ZIP containing up to 64 WAV files. Home Assistant shows progress, then closes the dialog and reloads the integration automatically.",
         "data": {
           "source": "Fișier WAV sau ZIP / WAV or ZIP file"
         }
       },
       "delete_sound": {
         "title": "Ștergere multiplă WAV / Delete multiple WAV files",
-        "description": "Select one or more files from /data/musics/music-ch. After deletion, the dialog closes and the integration reloads automatically.",
+        "description": "Select one or more files from /data/musics/music-ch. No file is selected by default. After deletion, the dialog closes and the integration reloads automatically.",
         "data": {
           "path": "Fișiere audio / Sound files"
         }
@@ -58,9 +58,13 @@
         }
       }
     },
+    "progress": {
+      "uploading_sounds": "Uploading WAV files to the hub. The bar advances after each completed file. Do not close this dialog."
+    },
     "error": {
       "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
       "delete_failed": "Delete failed. Verify the hub connection.",
+      "no_files_selected": "Select at least one file to delete.",
       "rejoin_confirmation_required": "Confirmation is required before clearing the current Zigbee association.",
       "rejoin_failed": "The JN5189 did not acknowledge the rejoin command. Verify the hub connection and compatible firmware.",
       "wifi_confirmation_required": "Confirmation is required before changing the Wi-Fi network.",

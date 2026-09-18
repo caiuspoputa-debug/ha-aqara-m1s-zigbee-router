@@ -29,14 +29,14 @@
       },
       "upload_sound": {
         "title": "Încărcare WAV / ZIP / Upload WAV / ZIP",
-        "description": "Selectează un WAV sau un ZIP cu până la 64 de fișiere WAV. Așteaptă confirmarea finală a hubului; numai după verificare fereastra se închide și integrarea se reîncarcă automat. / Select one WAV or a ZIP containing up to 64 WAV files. Wait for the hub's final confirmation; only after verification does the dialog close and the integration reload automatically.",
+        "description": "Selectează un WAV sau un ZIP cu până la 64 de fișiere WAV. Progresul apare în Home Assistant, iar după finalizare fereastra se închide și integrarea se reîncarcă automat.",
         "data": {
           "source": "Fișier WAV sau ZIP / WAV or ZIP file"
         }
       },
       "delete_sound": {
         "title": "Ștergere multiplă WAV / Delete multiple WAV files",
-        "description": "Selectează unul sau mai multe fișiere din /data/musics/music-ch. După ștergere, fereastra se închide și integrarea se reîncarcă automat. / Select one or more files from /data/musics/music-ch. After deletion, the dialog closes and the integration reloads automatically.",
+        "description": "Selectează unul sau mai multe fișiere din /data/musics/music-ch. Niciun fișier nu este bifat implicit. După ștergere, fereastra se închide și integrarea se reîncarcă automat.",
         "data": {
           "path": "Fișiere audio / Sound files"
         }
@@ -58,9 +58,13 @@
         }
       }
     },
+    "progress": {
+      "uploading_sounds": "Se încarcă fișierele WAV pe hub. Bara avansează după fiecare fișier finalizat. Nu închide fereastra."
+    },
     "error": {
       "upload_failed": "Încărcarea a eșuat. Verifică formatul WAV și conexiunea cu hubul.",
       "delete_failed": "Ștergerea a eșuat. Verifică legătura cu hubul.",
+      "no_files_selected": "Selectează cel puțin un fișier pentru ștergere.",
       "rejoin_confirmation_required": "Confirmarea este obligatorie înainte de ștergerea asocierii Zigbee actuale.",
       "rejoin_failed": "JN5189 nu a confirmat comanda de reconectare. Verifică legătura cu hubul și firmware-ul compatibil.",
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",

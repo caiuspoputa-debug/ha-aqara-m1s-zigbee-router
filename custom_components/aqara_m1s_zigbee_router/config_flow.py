@@ -109,6 +109,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         super().__init__(config_entry)
+        self._upload_task: asyncio.Task[None] | None = None
+        self._upload_error = False
 
     @property
     def _client(self):
@@ -192,8 +194,53 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         )
         return self.async_create_entry(title="", data={})
 
+    async def _async_upload_sounds(
+        self,
+        uploads: list[tuple[str, bytes]],
+    ) -> None:
+        """Upload validated WAV files and report HA-side batch progress."""
+        total_size = sum(len(content) for _, content in uploads) or 1
+        uploaded_size = 0
+        self.async_update_progress(0.0)
+
+        for filename, content in uploads:
+            destination = destination_for_filename(filename)
+            await self.hass.async_add_executor_job(
+                self._client.upload_sound,
+                destination,
+                content,
+            )
+            uploaded_size += len(content)
+            self.async_update_progress(min(uploaded_size / total_size, 1.0))
+
     async def async_step_upload_sound(self, user_input=None):
         errors = {}
+
+        if self._upload_task is not None:
+            if not self._upload_task.done():
+                return self.async_show_progress(
+                    step_id="upload_sound",
+                    progress_action="uploading_sounds",
+                    progress_task=self._upload_task,
+                )
+
+            try:
+                await self._upload_task
+            except Exception as err:
+                _LOGGER.exception("WAV upload failed: %s", err)
+                self._upload_error = True
+                next_step_id = "upload_sound"
+            else:
+                next_step_id = "finish"
+            finally:
+                self._upload_task = None
+
+            return self.async_show_progress_done(next_step_id=next_step_id)
+
+        if self._upload_error:
+            errors["base"] = "upload_failed"
+            self._upload_error = False
+
         if user_input is not None:
             try:
                 uploads = await self.hass.async_add_executor_job(
@@ -201,25 +248,19 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     self.hass,
                     user_input["source"],
                 )
-                prepared_uploads = [
-                    (destination_for_filename(filename), content)
-                    for filename, content in uploads
-                ]
-                if len(prepared_uploads) > 1:
-                    await self.hass.async_add_executor_job(
-                        self._client.upload_sound_batch,
-                        prepared_uploads,
-                    )
-                else:
-                    destination, content = prepared_uploads[0]
-                    await self.hass.async_add_executor_job(
-                        self._client.upload_sound, destination, content
-                    )
             except (OSError, ValueError, RuntimeError) as err:
                 _LOGGER.exception("WAV upload failed: %s", err)
                 errors["base"] = "upload_failed"
             else:
-                return await self.async_step_finish()
+                self._upload_task = self.hass.async_create_task(
+                    self._async_upload_sounds(uploads),
+                    f"{DOMAIN} WAV upload",
+                )
+                return self.async_show_progress(
+                    step_id="upload_sound",
+                    progress_action="uploading_sounds",
+                    progress_task=self._upload_task,
+                )
 
         return self.async_show_form(
             step_id="upload_sound",
@@ -241,19 +282,22 @@ class AqaraM1SZigbeeRouterOptionsFlow(
     async def async_step_delete_sound(self, user_input=None):
         errors = {}
         if user_input is not None:
-            try:
-                selected_paths = user_input["path"]
+            selected_paths = user_input.get("path", [])
+            if not selected_paths:
+                errors["base"] = "no_files_selected"
+            else:
                 if isinstance(selected_paths, str):
                     selected_paths = [selected_paths]
-                for path in selected_paths:
-                    await self.hass.async_add_executor_job(
-                        self._client.delete_sound,
-                        path,
-                    )
-            except (OSError, ValueError, RuntimeError):
-                errors["base"] = "delete_failed"
-            else:
-                return await self.async_step_finish()
+                try:
+                    for path in selected_paths:
+                        await self.hass.async_add_executor_job(
+                            self._client.delete_sound,
+                            path,
+                        )
+                except (OSError, ValueError, RuntimeError):
+                    errors["base"] = "delete_failed"
+                else:
+                    return await self.async_step_finish()
 
         try:
             sounds = await self.hass.async_add_executor_job(
@@ -273,7 +317,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             step_id="delete_sound",
             data_schema=vol.Schema(
                 {
-                    vol.Required("path"): SelectSelector(
+                    vol.Optional("path", default=[]): SelectSelector(
                         SelectSelectorConfig(
                             options=managed_sounds,
                             multiple=True,

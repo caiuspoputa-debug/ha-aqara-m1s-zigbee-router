@@ -1,3 +1,11 @@
+## 0.20.13 - Restore fast upload and show real progress
+
+- Revert the ZIP transfer changes from v0.20.12 and restore the proven v0.20.11 client upload path exactly, with no batch delay, final `sync`, batch-size verification or extra hub command.
+- Show Home Assistant's native determinate progress bar while the already validated WAV files are uploaded sequentially. Progress is calculated in Home Assistant from completed WAV bytes and adds no work on the hub.
+- Close the completed progress flow first, then keep the delayed automatic integration reload introduced in v0.20.12.
+- Open multi-delete with zero selected files and reject an empty submission, preventing the first sound from being deleted accidentally.
+- Keep the v0.20.11 accidental radio-drop recovery, visible device IP and all unrelated behavior unchanged.
+
 ## 0.20.12 - Close sound dialog before reload
 
 - Return the completed options-flow result immediately after a successful upload or delete, allowing the Home Assistant popup and spinner to close.
