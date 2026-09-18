@@ -1,4 +1,6 @@
-## v0.20.13 - Fast ZIP upload with visible progress
+> **v0.20.15:** visible hub names use the live `wlan0` IPv4 (same source as WiFi IP sensor), and WAV/ZIP upload finalization accepts a file already installed with matching size + MD5 instead of stalling/retrying after a lost final ACK.
+
+## v0.20.14 - Fast ZIP upload with visible progress
 
 ZIP upload again uses the exact proven v0.20.11 client transfer path, once for each WAV extracted by Home Assistant. The v0.20.12 batch delay, final `sync`, repeated size verification and extra hub work are removed. A native Home Assistant progress bar now advances from the WAV bytes that have actually completed, without sending progress commands to the hub. On success, the popup closes and the integration reload remains delayed by one second. Multi-delete starts with no file selected and refuses an empty selection, so the first sound cannot be deleted implicitly.
 
@@ -51,14 +53,14 @@ Intentional individual → group handoff, priority-sound preemption, Stop and sh
 - This uses one additional radio HTTP connection and its bandwidth. Stations must expose ICY directly on the resolved HTTP(S) URL; playlist/HLS parsing is not added. Servers without `icy-metaint` are closed immediately. Metadata timing is station-dependent and is not aligned to buffered audio.
 - Validation: Python syntax, JSON parsing, synthetic ICY stream and lifecycle/regression checks. No live Home Assistant/hub playback test was available.
 
-**Current package: v0.20.13 + hub kit v0.8**
+**Current package: v0.20.14 + hub kit v0.8**
 
 [Romana](README_RO.md) | **English**
 
 # Aqara M1S Gen 1 - stock hub to Zigbee Router + Home Assistant integration
 
-Documentation version: **2026-09-18 - v0.20.13 + hub kit v0.8**
-Home Assistant integration version: **0.20.13**
+Documentation version: **2026-09-18 - v0.20.14 + hub kit v0.8**
+Home Assistant integration version: **0.20.14**
 Target model: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 This README is the current English operational guide for the packaged kit. The Romanian file `README_RO.md` is the long detailed reference; this file keeps the same current facts and the practical stock-hub flow.

@@ -1,3 +1,18 @@
+## 0.20.15 - Consistent live IP names and upload finalization recovery
+
+- Read the hub's current `wlan0` IPv4 address from the same source as the existing WiFi IP sensor and use that address in the visible Home Assistant device/config-entry name.
+- Re-apply the IP-bearing device name after all platforms are forwarded, preventing entity `device_info` registration from restoring a friendly name without the IP on only some hubs. Existing user-renamed devices keep their friendly name, replace an old trailing IPv4 instead of stacking addresses, and retain the unavailable marker behavior.
+- Keep the v0.20.14 continuous TCP upload progress and fast-only Configure path with no silent Base64 batch fallback.
+- If the TCP final ACK is lost after a WAV was already moved into its final path, verify final size + MD5 and accept the installed file instead of retrying an already successful transfer and leaving the progress dialog apparently stuck.
+- Keep progress monotonic across a TCP retry and log the WAV index/name at start and completion for easier diagnosis.
+
+## 0.20.14 - Continuous upload progress and no slow fallback stall
+
+- Update the Home Assistant progress bar during each TCP WAV transfer instead of only after a complete WAV, so a large current file no longer leaves the percentage apparently frozen.
+- Keep Configure WAV/ZIP uploads on the fast TCP path. If the first TCP transfer attempt fails, clean up and retry TCP once; do not silently fall into the extremely slow per-1-KiB Telnet/base64 fallback.
+- Preserve the legacy base64 fallback for other callers that use `upload_sound` directly without the fast-only Configure option.
+- Keep v0.20.13 automatic close/reload, zero-default multi-delete, radio-drop recovery, visible device IP and ZIP extraction behavior unchanged.
+
 ## 0.20.13 - Restore fast upload and show real progress
 
 - Revert the ZIP transfer changes from v0.20.12 and restore the proven v0.20.11 client upload path exactly, with no batch delay, final `sync`, batch-size verification or extra hub command.

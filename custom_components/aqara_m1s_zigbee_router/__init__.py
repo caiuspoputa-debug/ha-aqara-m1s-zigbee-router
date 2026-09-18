@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_HOST,
@@ -53,10 +55,37 @@ PLATFORMS = [
 ]
 
 
+_OFFLINE_SUFFIXES = (" (🔴 Indisponibil)", " (Indisponibil)")
+_TRAILING_IPV4_RE = re.compile(
+    r"(?:\s+-\s+|\s+)(?:\d{1,3}\.){3}\d{1,3}$"
+)
+
+
+def _strip_visual_suffixes(name: str) -> str:
+    base_name = str(name).strip()
+    for suffix in _OFFLINE_SUFFIXES:
+        if base_name.endswith(suffix):
+            base_name = base_name[: -len(suffix)].rstrip()
+            break
+    # Replace a previously appended IP instead of stacking addresses after a
+    # DHCP change or an upgrade from an older release.
+    base_name = _TRAILING_IPV4_RE.sub("", base_name).rstrip(" -")
+    return base_name or "Aqara M1S Zigbee Router"
+
+
 def _device_name_with_host(name: str, host: str) -> str:
-    """Keep the configured friendly name while making the hub address visible."""
-    base_name = str(name).strip() or "Aqara M1S Zigbee Router"
-    return base_name if host in base_name else f"{base_name} - {host}"
+    """Keep the friendly name and append exactly one current hub IPv4 address."""
+    base_name = _strip_visual_suffixes(name)
+    return f"{base_name} - {host}" if host else base_name
+
+
+def _availability_name(name: str, online: bool) -> str:
+    base_name = str(name)
+    for suffix in _OFFLINE_SUFFIXES:
+        if base_name.endswith(suffix):
+            base_name = base_name[: -len(suffix)]
+            break
+    return base_name if online else f"{base_name}{_OFFLINE_SUFFIXES[0]}"
 
 
 async def async_setup_entry(
@@ -129,26 +158,16 @@ async def async_setup_entry(
     )
 
     device_registry = dr.async_get(hass)
-    device_name = _device_name_with_host(
-        entry.data.get("name", f"Aqara M1S Router {host}"),
-        host,
-    )
+    # Register the device first with the friendly name only. The authoritative
+    # live-IP name is applied after the hub is probed and all entity platforms
+    # have registered their device_info, so a later platform cannot remove it.
     device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, host)},
-        name=device_name,
+        name=entry.data.get("name", f"Aqara M1S Router {host}"),
         manufacturer="Aqara",
         model="M1S Gen 1 / JN5189 Router",
     )
-    device_updates = {}
-    if device.name != device_name:
-        device_updates["name"] = device_name
-    if device.name_by_user:
-        visible_name = _device_name_with_host(device.name_by_user, host)
-        if device.name_by_user != visible_name:
-            device_updates["name_by_user"] = visible_name
-    if device_updates:
-        device_registry.async_update_device(device.id, **device_updates)
 
     entity_registry = er.async_get(hass)
     obsolete_select_id = entity_registry.async_get_entity_id(
@@ -180,10 +199,56 @@ async def async_setup_entry(
     # a long delay or a manual Reload.  A normal refresh records the initial
     # availability state without aborting the config entry setup.
     await coordinator.async_refresh()
+
+    # Use the hub's real wlan0 address -- the exact same source used by the
+    # WiFi IP sensor -- for the visible Home Assistant name. Fall back to the
+    # configured host only when the hub is currently offline or the command is
+    # unavailable.
+    visible_ip = host
+    if coordinator.last_update_success:
+        try:
+            visible_ip = (
+                await hass.async_add_executor_job(client.get_wifi_ip)
+            ) or host
+        except Exception:
+            visible_ip = host
+
     await hass.config_entries.async_forward_entry_setups(
         entry,
         PLATFORMS,
     )
+
+    # Entity device_info is registered while platforms are forwarded and may
+    # write the integration-provided friendly name again. Apply the IP-bearing
+    # name *after* all platforms are loaded so every hub ends up consistent.
+    online = bool(coordinator.last_update_success)
+    device = device_registry.async_get_device(identifiers={(DOMAIN, host)})
+    if device is not None:
+        final_device_name = _availability_name(
+            _device_name_with_host(
+                entry.data.get("name", f"Aqara M1S Router {host}"),
+                visible_ip,
+            ),
+            online,
+        )
+        device_updates = {}
+        if device.name != final_device_name:
+            device_updates["name"] = final_device_name
+        if device.name_by_user:
+            final_user_name = _device_name_with_host(
+                device.name_by_user, visible_ip
+            )
+            if device.name_by_user != final_user_name:
+                device_updates["name_by_user"] = final_user_name
+        if device_updates:
+            device_registry.async_update_device(device.id, **device_updates)
+
+    final_title = _availability_name(
+        _device_name_with_host(entry.title, visible_ip),
+        online,
+    )
+    if entry.title != final_title:
+        hass.config_entries.async_update_entry(entry, title=final_title)
 
     # Run an explicit connectivity watchdog that is independent of coordinator
     # listeners.  This guarantees power-off detection and automatic recovery

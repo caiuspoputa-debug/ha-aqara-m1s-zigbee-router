@@ -1,4 +1,6 @@
-## v0.20.13 - Upload ZIP rapid, cu progres vizibil
+> **v0.20.15:** numele vizibil al hubului folosește IPv4-ul real de pe `wlan0` (aceeași sursă ca senzorul WiFi IP), iar finalizarea uploadului WAV/ZIP acceptă fișierul deja instalat dacă dimensiunea + MD5 corespund, fără blocare/reîncercare după pierderea ACK-ului final.
+
+## v0.20.14 - Upload ZIP rapid, cu progres vizibil
 
 Uploadul ZIP folosește din nou exact transportul client verificat din v0.20.11, separat pentru fiecare WAV extras de Home Assistant. Sunt eliminate pauza de lot, `sync`-ul final, verificările repetate de dimensiune și comenzile suplimentare pe hub adăugate în v0.20.12. O bară nativă Home Assistant avansează după volumul WAV încărcat efectiv, fără trafic de progres către hub. La succes, popup-ul se închide, iar integrarea se reîncarcă după o secundă. Ștergerea multiplă pornește fără niciun fișier bifat și refuză o selecție goală, astfel încât primul sunet nu mai poate fi șters implicit.
 
@@ -44,7 +46,7 @@ Numele postului continuă să fie obținut prin mecanismul existent și este exp
 
 Cititorul asincron folosește o conexiune HTTP separată (consum suplimentar de trafic), fără modificări în fluxul audio, sincronizare sau comenzile STOP/PLAY. Nu activează adaptive/per-buffer sync. Se oprește odată cu transportul și își reîncearcă separat conexiunea la erori. Funcționează pentru URL-uri HTTP(S) directe cu ICY; nu adaugă interpretare playlist/HLS. Momentul metadata este decis de post și poate diferi de sunetul auzit.
 
-**Pachet curent: v0.20.13 + kit hub v0.8**
+**Pachet curent: v0.20.14 + kit hub v0.8**
 
 [**Română**](README_RO.md) | [English](README.md)
 
@@ -61,8 +63,8 @@ Integrarea poate fi folosită împreună cu add-on-ul opțional **M1S YouTube Ca
 
 # Aqara M1S Gen 1 — conversie completă în Zigbee Router + integrare Home Assistant
 
-Versiune documentație: **2026-09-18 - v0.20.13 + kit hub v0.8**
-Integrare Home Assistant inclusă: **0.20.13**
+Versiune documentație: **2026-09-18 - v0.20.14 + kit hub v0.8**
+Integrare Home Assistant inclusă: **0.20.14**
 Model țintă: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 Acesta este ghidul principal pentru refacerea unui hub stock în configurația folosită de proiect:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from functools import partial
 
 import voluptuous as vol
 
@@ -203,15 +204,39 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         uploaded_size = 0
         self.async_update_progress(0.0)
 
-        for filename, content in uploads:
+        for index, (filename, content) in enumerate(uploads, start=1):
             destination = destination_for_filename(filename)
+            base_uploaded = uploaded_size
+            max_reported = base_uploaded
+            _LOGGER.info(
+                "Uploading WAV %d/%d: %s", index, len(uploads), filename
+            )
+
+            def _report_file_progress(sent: int, file_size: int) -> None:
+                nonlocal max_reported
+                current = base_uploaded + min(max(sent, 0), file_size)
+                # A TCP retry starts sent from zero. Never move HA's progress
+                # bar backwards while retrying the same WAV.
+                max_reported = max(max_reported, current)
+                progress = min(max_reported / total_size, 0.999)
+                self.hass.loop.call_soon_threadsafe(
+                    self.async_update_progress, progress
+                )
+
             await self.hass.async_add_executor_job(
-                self._client.upload_sound,
-                destination,
-                content,
+                partial(
+                    self._client.upload_sound,
+                    destination,
+                    content,
+                    progress_callback=_report_file_progress,
+                    allow_base64_fallback=False,
+                )
             )
             uploaded_size += len(content)
             self.async_update_progress(min(uploaded_size / total_size, 1.0))
+            _LOGGER.info(
+                "Completed WAV %d/%d: %s", index, len(uploads), filename
+            )
 
     async def async_step_upload_sound(self, user_input=None):
         errors = {}

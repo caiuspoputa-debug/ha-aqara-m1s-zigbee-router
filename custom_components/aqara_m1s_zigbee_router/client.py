@@ -5,6 +5,7 @@ import base64
 import io
 import wave
 import hashlib
+import re
 from pathlib import PurePosixPath
 from dataclasses import dataclass, field
 
@@ -24,6 +25,7 @@ UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
 UPLOAD_COMMAND_TIMEOUT = 30.0
 UPLOAD_FINALIZE_TIMEOUT = 45.0
 UPLOAD_BASE64_CHUNK_SIZE = 1024
+UPLOAD_SOCKET_CHUNK_SIZE = 64 * 1024
 
 
 def _upload_cleanup_command() -> str:
@@ -286,6 +288,39 @@ class AqaraM1SClient:
             raise last_error
 
 
+    def get_wifi_ip(self) -> str | None:
+        """Return the hub's current wlan0 IPv4 address from the same source as WiFi IP sensor."""
+        output = self.run_command(
+            "ifconfig wlan0 | grep 'inet addr'",
+            timeout=UPLOAD_COMMAND_TIMEOUT,
+        )
+        for address in re.findall(
+            r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)", output
+        ):
+            if address.startswith("127."):
+                continue
+            if all(0 <= int(part) <= 255 for part in address.split(".")):
+                return address
+        return None
+
+    def _sound_file_matches_locked(
+        self, destination: str, expected_size: int, expected_md5: str
+    ) -> bool:
+        """Confirm that the final destination already contains the intended WAV."""
+        command = (
+            f"if [ -f '{destination}' ]; then "
+            f"actual=$(wc -c < '{destination}' 2>/dev/null); "
+            f"actual_md5=$(md5sum '{destination}' 2>/dev/null | awk '{{print $1}}'); "
+            f"if [ \"$actual\" = \"{expected_size}\" ] && "
+            f"[ \"$actual_md5\" = \"{expected_md5}\" ]; then "
+            "echo __M1S_UPLOAD_DEST_OK__; fi; fi"
+        )
+        try:
+            output = self.run_command(command, timeout=UPLOAD_COMMAND_TIMEOUT)
+        except Exception:
+            return False
+        return "__M1S_UPLOAD_DEST_OK__" in output
+
     def wifi_recovery_available(self) -> bool:
         """Return True when the safe Wi-Fi recovery module is installed."""
         out = self.run_command(
@@ -507,7 +542,13 @@ class AqaraM1SClient:
             checksum ^= value
         return checksum
 
-    def upload_sound(self, destination: str, content: bytes) -> None:
+    def upload_sound(
+        self,
+        destination: str,
+        content: bytes,
+        progress_callback=None,
+        allow_base64_fallback: bool = True,
+    ) -> None:
         destination = self._safe_sound_path(destination)
         try:
             with wave.open(io.BytesIO(content), "rb") as wav:
@@ -525,12 +566,34 @@ class AqaraM1SClient:
             )
         with self._lock:
             try:
-                self._upload_sound_tcp_locked(destination, content)
+                self._upload_sound_tcp_locked(
+                    destination, content, progress_callback=progress_callback
+                )
             except Exception:
-                # BusyBox base64 is slower but provides a proven fallback.
+                if not allow_base64_fallback:
+                    # The Configure flow is intentionally fast-only. Clean up a
+                    # stale listener/temp file and retry TCP once, then surface
+                    # the real error instead of appearing frozen in the very
+                    # slow Telnet/base64 fallback.
+                    try:
+                        self.run_command(
+                            _upload_cleanup_command(),
+                            timeout=UPLOAD_COMMAND_TIMEOUT,
+                        )
+                    except Exception:
+                        pass
+                    self._upload_sound_tcp_locked(
+                        destination, content, progress_callback=progress_callback
+                    )
+                    return
+
+                # Keep the proven compatibility fallback for legacy/service
+                # callers that do not request the fast-only Configure path.
                 self._upload_sound_base64_locked(destination, content)
 
-    def _upload_sound_tcp_locked(self, destination: str, content: bytes) -> None:
+    def _upload_sound_tcp_locked(
+        self, destination: str, content: bytes, progress_callback=None
+    ) -> None:
         """Upload a WAV through a one-shot BusyBox nc listener and verify it."""
         parent = str(PurePosixPath(destination).parent)
         expected_size = len(content)
@@ -574,7 +637,16 @@ class AqaraM1SClient:
             raise ConnectionError("Could not connect to WAV upload port") from last_error
 
         try:
-            upload_sock.sendall(content)
+            view = memoryview(content)
+            sent = 0
+            while sent < expected_size:
+                end = min(sent + UPLOAD_SOCKET_CHUNK_SIZE, expected_size)
+                count = upload_sock.send(view[sent:end])
+                if count <= 0:
+                    raise ConnectionError("WAV upload socket closed before completion")
+                sent += count
+                if progress_callback is not None:
+                    progress_callback(sent, expected_size)
             upload_sock.shutdown(socket.SHUT_WR)
         finally:
             upload_sock.close()
@@ -599,6 +671,21 @@ class AqaraM1SClient:
         try:
             output = self.run_command(finalize, timeout=UPLOAD_FINALIZE_TIMEOUT)
         except Exception:
+            # A Telnet ACK can be lost after nc has already written and moved
+            # the complete WAV.  Verify the final destination before treating
+            # that as a failed transfer; otherwise Configure retries a file
+            # which is already installed and the progress dialog appears stuck.
+            if self._sound_file_matches_locked(
+                destination, expected_size, expected_md5
+            ):
+                try:
+                    self.run_command(
+                        _upload_cleanup_command(),
+                        timeout=UPLOAD_COMMAND_TIMEOUT,
+                    )
+                except Exception:
+                    pass
+                return
             try:
                 self.run_command(
                     _upload_cleanup_command(),
@@ -607,7 +694,23 @@ class AqaraM1SClient:
             except Exception:
                 pass
             raise
+
         if "__M1S_UPLOAD_OK__" not in output:
+            # run_command itself retries after a timeout.  The first command
+            # may therefore have completed the mv while the retry sees no temp
+            # file and returns a verification error.  The destination is the
+            # authoritative result in that case.
+            if self._sound_file_matches_locked(
+                destination, expected_size, expected_md5
+            ):
+                try:
+                    self.run_command(
+                        _upload_cleanup_command(),
+                        timeout=UPLOAD_COMMAND_TIMEOUT,
+                    )
+                except Exception:
+                    pass
+                return
             self.run_command(
                 _upload_cleanup_command(),
                 timeout=UPLOAD_COMMAND_TIMEOUT,
