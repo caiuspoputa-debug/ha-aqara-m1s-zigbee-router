@@ -1,10 +1,12 @@
-Version: 0.20.17
-PASS: Python compile validation.
-PASS: manifest.json and strings.json parse correctly.
-PASS: package is based on the working v0.20.15 code, not v0.20.16.
-PASS: individual WAV and ZIP upload retain v0.20.15 progress_done -> finish lifecycle.
-PASS: upload reload has no configured delay, but yields one event-loop turn after flow close.
-PASS: delete retains the v0.20.15 one-second close-before-reload delay.
-PASS: upload transport/final verification are unchanged from v0.20.15.
-PASS: config-entry title no longer duplicates the IP; device name keeps live Wi-Fi IP.
-LIMIT: live Home Assistant/M1S behavior must be confirmed on the hub.
+v0.20.14
+PASS: Built directly from the user-supplied v0.20.13 FAST-UPLOAD-PROGRESS package.
+PASS: Python AST/syntax validation passes for every integration Python module.
+PASS: manifest and translation JSON parse; manifest reports version 0.20.14.
+PASS: async_step_delete_sound is AST-identical to supplied v0.20.13.
+PASS: client.delete_sound is AST-identical to supplied v0.20.13.
+PASS: every integration code/data file except __init__.py, client.py, config_flow.py and manifest.json is byte-identical to supplied v0.20.13.
+PASS: v0.20.13 upload transport semantics are preserved: TCP first, same Base64 fallback on TCP/finalization exception, same size/MD5 verification and same upload paths.
+PASS: progress callbacks are added to the existing TCP and Base64 transfer paths; Home Assistant progress is monotonic and exact 100% is emitted only after upload_sound returns successfully after verification.
+PASS: successful upload uses a dedicated upload_finish step with zero-second scheduling before config-entry reload; the original one-second finish path used by delete remains unchanged.
+PASS: config-entry title has any stale trailing integration-added IPv4 removed; the device name is re-applied after platform setup with one wlan0 IPv4 from the same command used by the WiFi IP sensor.
+LIMIT: no live M1S hub test was available in this environment. Validate device naming, one WAV upload, one ZIP upload and one delete on the real hub.

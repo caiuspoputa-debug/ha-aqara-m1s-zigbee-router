@@ -1,3 +1,10 @@
+## v0.20.14 - Single IP + complete upload progress + immediate upload reload
+
+Built directly from the supplied v0.20.13. The device row shows one live wlan0 IP while the integration title stays without IP. The v0.20.13 TCP/Base64 upload methods are preserved; only progress reporting is added, with exact 100% after the existing verification succeeds, followed by immediate upload reload. Delete behavior is unchanged.
+
+## v0.20.13 - Fast ZIP upload with visible progress
+
+ZIP upload again uses the exact proven v0.20.11 client transfer path, once for each WAV extracted by Home Assistant. The v0.20.12 batch delay, final `sync`, repeated size verification and extra hub work are removed. A native Home Assistant progress bar now advances from the WAV bytes that have actually completed, without sending progress commands to the hub. On success, the popup closes and the integration reload remains delayed by one second. Multi-delete starts with no file selected and refuses an empty selection, so the first sound cannot be deleted implicitly.
 
 ## v0.20.12 - Close the sound dialog before reload
 

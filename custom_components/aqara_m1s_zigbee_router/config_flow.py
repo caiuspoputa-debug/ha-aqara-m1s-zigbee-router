@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from functools import partial
 
 import voluptuous as vol
 
@@ -37,7 +36,6 @@ from .sound_upload import destination_for_filename, read_uploaded_sounds
 
 _LOGGER = logging.getLogger(__name__)
 SOUND_RELOAD_DELAY_SECONDS = 1.0
-SOUND_UPLOAD_RELOAD_DELAY_SECONDS = 0.0
 
 
 class AqaraM1SZigbeeRouterConfigFlow(
@@ -177,13 +175,9 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             errors=errors,
         )
 
-    async def _async_reload_after_flow_close(
-        self, entry_id: str, delay_seconds: float
-    ) -> None:
+    async def _async_reload_after_flow_close(self, entry_id: str) -> None:
         """Reload only after the frontend has received the close response."""
-        # Even a zero-delay upload reload yields one event-loop turn so the
-        # successful options-flow close can be delivered before unloading.
-        await asyncio.sleep(max(delay_seconds, 0.0))
+        await asyncio.sleep(SOUND_RELOAD_DELAY_SECONDS)
         try:
             await self.hass.config_entries.async_reload(entry_id)
         except Exception:
@@ -191,15 +185,30 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                 "Aqara M1S automatic reload failed after sound management"
             )
 
+    async def async_step_upload_finish(self, user_input=None):
+        """Close confirmed upload and reload immediately afterward."""
+        entry_id = self.config_entry.entry_id
+
+        async def _reload_after_close() -> None:
+            await asyncio.sleep(0)
+            try:
+                await self.hass.config_entries.async_reload(entry_id)
+            except Exception:
+                _LOGGER.exception(
+                    "Aqara M1S automatic reload failed after WAV upload"
+                )
+
+        self.hass.async_create_task(
+            _reload_after_close(),
+            f"{DOMAIN} reload after WAV upload",
+        )
+        return self.async_create_entry(title="", data={})
+
     async def async_step_finish(self, user_input=None):
         """Close sound management now and reload the config entry afterward."""
         entry_id = self.config_entry.entry_id
-        delay_seconds = getattr(
-            self, "_sound_reload_delay_seconds", SOUND_RELOAD_DELAY_SECONDS
-        )
-        self._sound_reload_delay_seconds = SOUND_RELOAD_DELAY_SECONDS
         self.hass.async_create_task(
-            self._async_reload_after_flow_close(entry_id, delay_seconds),
+            self._async_reload_after_flow_close(entry_id),
             f"{DOMAIN} reload after sound management",
         )
         return self.async_create_entry(title="", data={})
@@ -213,39 +222,32 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         uploaded_size = 0
         self.async_update_progress(0.0)
 
-        for index, (filename, content) in enumerate(uploads, start=1):
+        reported_progress = 0.0
+        for filename, content in uploads:
             destination = destination_for_filename(filename)
             base_uploaded = uploaded_size
-            max_reported = base_uploaded
-            _LOGGER.info(
-                "Uploading WAV %d/%d: %s", index, len(uploads), filename
-            )
 
             def _report_file_progress(sent: int, file_size: int) -> None:
-                nonlocal max_reported
+                nonlocal reported_progress
                 current = base_uploaded + min(max(sent, 0), file_size)
-                # A TCP retry starts sent from zero. Never move HA's progress
-                # bar backwards while retrying the same WAV.
-                max_reported = max(max_reported, current)
-                progress = min(max_reported / total_size, 0.999)
+                # Exact 100% is reserved for successful size/MD5 confirmation.
+                progress = min(current / total_size, 0.999)
+                if progress <= reported_progress:
+                    return
+                reported_progress = progress
                 self.hass.loop.call_soon_threadsafe(
                     self.async_update_progress, progress
                 )
 
             await self.hass.async_add_executor_job(
-                partial(
-                    self._client.upload_sound,
-                    destination,
-                    content,
-                    progress_callback=_report_file_progress,
-                    allow_base64_fallback=False,
-                )
+                self._client.upload_sound,
+                destination,
+                content,
+                _report_file_progress,
             )
             uploaded_size += len(content)
-            self.async_update_progress(min(uploaded_size / total_size, 1.0))
-            _LOGGER.info(
-                "Completed WAV %d/%d: %s", index, len(uploads), filename
-            )
+            reported_progress = min(uploaded_size / total_size, 1.0)
+            self.async_update_progress(reported_progress)
 
     async def async_step_upload_sound(self, user_input=None):
         errors = {}
@@ -265,12 +267,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                 self._upload_error = True
                 next_step_id = "upload_sound"
             else:
-                next_step_id = "finish"
-                # Do not bypass Home Assistant's progress_done -> finish
-                # transition. Only the reload delay is removed for upload.
-                self._sound_reload_delay_seconds = (
-                    SOUND_UPLOAD_RELOAD_DELAY_SECONDS
-                )
+                next_step_id = "upload_finish"
             finally:
                 self._upload_task = None
 

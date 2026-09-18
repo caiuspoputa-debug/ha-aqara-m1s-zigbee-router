@@ -1,20 +1,9 @@
-v0.20.17 - Restore proven individual upload/delete flow; immediate upload reload; single IP display
-The v0.20.16 direct jump from the upload progress step into reload was reverted. Successful WAV/ZIP upload again uses Home Assistant's proven progress_done -> finish transition from v0.20.15, so individual WAV upload remains functional. Upload reload is queued with zero configured delay but yields one event-loop turn after the flow closes. Delete keeps the proven one-second close-before-reload delay. The hub IP remains only in the device name and is stripped from the config-entry title. Upload transport and final verification are unchanged from v0.20.15.
+## 0.20.14 - Strict v0.20.13 base: single IP + complete progress + immediate upload reload
 
-## 0.20.15 - Consistent live IP names and upload finalization recovery
-
-- Read the hub's current `wlan0` IPv4 address from the same source as the existing WiFi IP sensor and use that address in the visible Home Assistant device/config-entry name.
-- Re-apply the IP-bearing device name after all platforms are forwarded, preventing entity `device_info` registration from restoring a friendly name without the IP on only some hubs. Existing user-renamed devices keep their friendly name, replace an old trailing IPv4 instead of stacking addresses, and retain the unavailable marker behavior.
-- Keep the v0.20.14 continuous TCP upload progress and fast-only Configure path with no silent Base64 batch fallback.
-- If the TCP final ACK is lost after a WAV was already moved into its final path, verify final size + MD5 and accept the installed file instead of retrying an already successful transfer and leaving the progress dialog apparently stuck.
-- Keep progress monotonic across a TCP retry and log the WAV index/name at start and completion for easier diagnosis.
-
-## 0.20.14 - Continuous upload progress and no slow fallback stall
-
-- Update the Home Assistant progress bar during each TCP WAV transfer instead of only after a complete WAV, so a large current file no longer leaves the percentage apparently frozen.
-- Keep Configure WAV/ZIP uploads on the fast TCP path. If the first TCP transfer attempt fails, clean up and retry TCP once; do not silently fall into the extremely slow per-1-KiB Telnet/base64 fallback.
-- Preserve the legacy base64 fallback for other callers that use `upload_sound` directly without the fast-only Configure option.
-- Keep v0.20.13 automatic close/reload, zero-default multi-delete, radio-drop recovery, visible device IP and ZIP extraction behavior unchanged.
+- Built directly from the supplied v0.20.13 package. No delete, radio, media, Zigbee, Wi-Fi or other unrelated behavior is changed.
+- Show the hub IP in one place only: the Home Assistant device row. A stale IP in the config-entry title is removed, and the device name is re-applied after platform setup from the same wlan0 source used by the WiFi IP sensor.
+- Preserve the v0.20.13 TCP upload and Base64 fallback paths. Only progress reporting is added inside those existing paths; exact 100% is emitted only after the existing upload verification returns successfully.
+- After confirmed 100%, the upload flow queues reload immediately with no one-second upload delay. The delete/normal Finish path is unchanged.
 
 ## 0.20.13 - Restore fast upload and show real progress
 

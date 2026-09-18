@@ -56,36 +56,39 @@ PLATFORMS = [
 
 
 _OFFLINE_SUFFIXES = (" (🔴 Indisponibil)", " (Indisponibil)")
-_TRAILING_IPV4_RE = re.compile(
-    r"(?:\s+-\s+|\s+)(?:\d{1,3}\.){3}\d{1,3}$"
-)
+_TRAILING_IPV4_RE = re.compile(r"\s+-\s+(?:\d{1,3}\.){3}\d{1,3}$")
 
 
-def _strip_visual_suffixes(name: str) -> str:
-    base_name = str(name).strip()
+def _split_availability_suffix(name: str) -> tuple[str, str]:
+    value = str(name).strip()
     for suffix in _OFFLINE_SUFFIXES:
-        if base_name.endswith(suffix):
-            base_name = base_name[: -len(suffix)].rstrip()
-            break
-    # Replace a previously appended IP instead of stacking addresses after a
-    # DHCP change or an upgrade from an older release.
-    base_name = _TRAILING_IPV4_RE.sub("", base_name).rstrip(" -")
-    return base_name or "Aqara M1S Zigbee Router"
+        if value.endswith(suffix):
+            return value[: -len(suffix)].rstrip(), suffix
+    return value, ""
+
+
+def _remove_trailing_ip(name: str) -> str:
+    """Remove only an IP previously appended by this integration."""
+    base_name, suffix = _split_availability_suffix(name)
+    base_name = _TRAILING_IPV4_RE.sub("", base_name).rstrip()
+    return f"{base_name}{suffix}"
 
 
 def _device_name_with_host(name: str, host: str) -> str:
-    """Keep the friendly name and append exactly one current hub IPv4 address."""
-    base_name = _strip_visual_suffixes(name)
-    return f"{base_name} - {host}" if host else base_name
+    """Keep the friendly name while appending exactly one hub IPv4 address."""
+    base_name, suffix = _split_availability_suffix(name)
+    base_name = _TRAILING_IPV4_RE.sub("", base_name).rstrip()
+    base_name = base_name or "Aqara M1S Zigbee Router"
+    return f"{base_name} - {host}{suffix}" if host else f"{base_name}{suffix}"
 
 
-def _availability_name(name: str, online: bool) -> str:
-    base_name = str(name)
-    for suffix in _OFFLINE_SUFFIXES:
-        if base_name.endswith(suffix):
-            base_name = base_name[: -len(suffix)]
-            break
-    return base_name if online else f"{base_name}{_OFFLINE_SUFFIXES[0]}"
+def _parse_wifi_ipv4(text: str) -> str | None:
+    for address in re.findall(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)", text):
+        if not address.startswith("127.") and all(
+            0 <= int(part) <= 255 for part in address.split(".")
+        ):
+            return address
+    return None
 
 
 async def async_setup_entry(
@@ -102,6 +105,12 @@ async def async_setup_entry(
         CONF_PASSWORD,
         DEFAULT_PASSWORD,
     )
+
+    # Older experimental builds could append the IP to the config-entry title.
+    # Keep the IP only on the device row, as requested.
+    clean_entry_title = _remove_trailing_ip(entry.title)
+    if clean_entry_title != entry.title:
+        hass.config_entries.async_update_entry(entry, title=clean_entry_title)
 
     client = AqaraM1SClient(
         host=host,
@@ -158,16 +167,26 @@ async def async_setup_entry(
     )
 
     device_registry = dr.async_get(hass)
-    # Register the device first with the friendly name only. The authoritative
-    # live-IP name is applied after the hub is probed and all entity platforms
-    # have registered their device_info, so a later platform cannot remove it.
+    device_name = _device_name_with_host(
+        entry.data.get("name", f"Aqara M1S Router {host}"),
+        host,
+    )
     device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, host)},
-        name=entry.data.get("name", f"Aqara M1S Router {host}"),
+        name=device_name,
         manufacturer="Aqara",
         model="M1S Gen 1 / JN5189 Router",
     )
+    device_updates = {}
+    if device.name != device_name:
+        device_updates["name"] = device_name
+    if device.name_by_user:
+        visible_name = _device_name_with_host(device.name_by_user, host)
+        if device.name_by_user != visible_name:
+            device_updates["name_by_user"] = visible_name
+    if device_updates:
+        device_registry.async_update_device(device.id, **device_updates)
 
     entity_registry = er.async_get(hass)
     obsolete_select_id = entity_registry.async_get_entity_id(
@@ -199,58 +218,42 @@ async def async_setup_entry(
     # a long delay or a manual Reload.  A normal refresh records the initial
     # availability state without aborting the config entry setup.
     await coordinator.async_refresh()
-
-    # Use the hub's real wlan0 address -- the exact same source used by the
-    # WiFi IP sensor -- for the visible Home Assistant name. Fall back to the
-    # configured host only when the hub is currently offline or the command is
-    # unavailable.
-    visible_ip = host
-    if coordinator.last_update_success:
-        try:
-            visible_ip = (
-                await hass.async_add_executor_job(client.get_wifi_ip)
-            ) or host
-        except Exception:
-            visible_ip = host
-
     await hass.config_entries.async_forward_entry_setups(
         entry,
         PLATFORMS,
     )
 
-    # Entity device_info is registered while platforms are forwarded and may
-    # write the integration-provided friendly name again. Apply the IP-bearing
-    # name *after* all platforms are loaded so every hub ends up consistent.
-    online = bool(coordinator.last_update_success)
+    # Entity platforms can write their plain device_info name during setup.
+    # Re-apply one live wlan0 IP after all platforms are loaded; the integration
+    # title above deliberately stays without an IP.
+    visible_ip = host
+    if coordinator.last_update_success:
+        try:
+            wifi_output = await hass.async_add_executor_job(
+                client.run_command,
+                "ifconfig wlan0 | grep 'inet addr'",
+            )
+            visible_ip = _parse_wifi_ipv4(wifi_output) or host
+        except Exception:
+            visible_ip = host
+
     device = device_registry.async_get_device(identifiers={(DOMAIN, host)})
     if device is not None:
-        final_device_name = _availability_name(
-            _device_name_with_host(
-                entry.data.get("name", f"Aqara M1S Router {host}"),
-                visible_ip,
-            ),
-            online,
-        )
         device_updates = {}
-        if device.name != final_device_name:
-            device_updates["name"] = final_device_name
+        desired_name = _device_name_with_host(
+            entry.data.get("name", f"Aqara M1S Router {host}"),
+            visible_ip,
+        )
+        if device.name != desired_name:
+            device_updates["name"] = desired_name
         if device.name_by_user:
-            final_user_name = _device_name_with_host(
+            desired_user_name = _device_name_with_host(
                 device.name_by_user, visible_ip
             )
-            if device.name_by_user != final_user_name:
-                device_updates["name_by_user"] = final_user_name
+            if device.name_by_user != desired_user_name:
+                device_updates["name_by_user"] = desired_user_name
         if device_updates:
             device_registry.async_update_device(device.id, **device_updates)
-
-    # Keep the IP in one place only: the device name. Strip any IP that an
-    # earlier release appended to the config-entry title.
-    final_title = _availability_name(
-        _strip_visual_suffixes(entry.title),
-        online,
-    )
-    if entry.title != final_title:
-        hass.config_entries.async_update_entry(entry, title=final_title)
 
     # Run an explicit connectivity watchdog that is independent of coordinator
     # listeners.  This guarantees power-off detection and automatic recovery
