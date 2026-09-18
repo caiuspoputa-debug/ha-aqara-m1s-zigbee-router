@@ -1,7 +1,6 @@
+> **v0.20.17:** restores the proven individual upload/delete flow from v0.20.15. Upload closes through Home Assistant progress_done -> finish and then queues reload immediately; delete keeps the proven 1-second safe close-before-reload delay. IP is shown only in the device name.
+
 > **v0.20.15:** visible hub names use the live `wlan0` IPv4 (same source as WiFi IP sensor), and WAV/ZIP upload finalization accepts a file already installed with matching size + MD5 instead of stalling/retrying after a lost final ACK.
-
-> v0.20.16: after a verified 100% WAV/ZIP upload, reload starts immediately; the hub IP is shown only in the device name, not duplicated in the integration title.
-
 
 ## v0.20.14 - Fast ZIP upload with visible progress
 

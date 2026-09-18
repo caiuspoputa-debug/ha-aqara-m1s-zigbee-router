@@ -36,7 +36,8 @@ from .const import (
 from .sound_upload import destination_for_filename, read_uploaded_sounds
 
 _LOGGER = logging.getLogger(__name__)
-SOUND_RELOAD_DELAY_SECONDS = 0.0
+SOUND_RELOAD_DELAY_SECONDS = 1.0
+SOUND_UPLOAD_RELOAD_DELAY_SECONDS = 0.0
 
 
 class AqaraM1SZigbeeRouterConfigFlow(
@@ -176,10 +177,13 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             errors=errors,
         )
 
-    async def _async_reload_after_flow_close(self, entry_id: str) -> None:
-        """Reload as soon as the successful sound flow has been closed."""
-        if SOUND_RELOAD_DELAY_SECONDS > 0:
-            await asyncio.sleep(SOUND_RELOAD_DELAY_SECONDS)
+    async def _async_reload_after_flow_close(
+        self, entry_id: str, delay_seconds: float
+    ) -> None:
+        """Reload only after the frontend has received the close response."""
+        # Even a zero-delay upload reload yields one event-loop turn so the
+        # successful options-flow close can be delivered before unloading.
+        await asyncio.sleep(max(delay_seconds, 0.0))
         try:
             await self.hass.config_entries.async_reload(entry_id)
         except Exception:
@@ -190,8 +194,12 @@ class AqaraM1SZigbeeRouterOptionsFlow(
     async def async_step_finish(self, user_input=None):
         """Close sound management now and reload the config entry afterward."""
         entry_id = self.config_entry.entry_id
+        delay_seconds = getattr(
+            self, "_sound_reload_delay_seconds", SOUND_RELOAD_DELAY_SECONDS
+        )
+        self._sound_reload_delay_seconds = SOUND_RELOAD_DELAY_SECONDS
         self.hass.async_create_task(
-            self._async_reload_after_flow_close(entry_id),
+            self._async_reload_after_flow_close(entry_id, delay_seconds),
             f"{DOMAIN} reload after sound management",
         )
         return self.async_create_entry(title="", data={})
@@ -255,14 +263,18 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             except Exception as err:
                 _LOGGER.exception("WAV upload failed: %s", err)
                 self._upload_error = True
+                next_step_id = "upload_sound"
+            else:
+                next_step_id = "finish"
+                # Do not bypass Home Assistant's progress_done -> finish
+                # transition. Only the reload delay is removed for upload.
+                self._sound_reload_delay_seconds = (
+                    SOUND_UPLOAD_RELOAD_DELAY_SECONDS
+                )
+            finally:
                 self._upload_task = None
-                return self.async_show_progress_done(next_step_id="upload_sound")
 
-            self._upload_task = None
-            # At this point 100% means every WAV has been verified on the hub.
-            # Close the flow and queue the config-entry reload immediately,
-            # without an extra frontend transition through a separate finish step.
-            return await self.async_step_finish()
+            return self.async_show_progress_done(next_step_id=next_step_id)
 
         if self._upload_error:
             errors["base"] = "upload_failed"

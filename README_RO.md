@@ -1,7 +1,6 @@
+> **v0.20.17:** revine la fluxul verificat pentru upload individual și ștergere din v0.20.15. Uploadul se închide prin tranziția Home Assistant progress_done -> finish și apoi pornește imediat reload-ul; ștergerea păstrează întârzierea sigură de 1 secundă înainte de reload. IP-ul apare doar în numele dispozitivului.
+
 > **v0.20.15:** numele vizibil al hubului folosește IPv4-ul real de pe `wlan0` (aceeași sursă ca senzorul WiFi IP), iar finalizarea uploadului WAV/ZIP acceptă fișierul deja instalat dacă dimensiunea + MD5 corespund, fără blocare/reîncercare după pierderea ACK-ului final.
-
-> v0.20.16: after a verified 100% WAV/ZIP upload, reload starts immediately; the hub IP is shown only in the device name, not duplicated in the integration title.
-
 
 ## v0.20.14 - Upload ZIP rapid, cu progres vizibil
 

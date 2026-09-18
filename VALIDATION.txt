@@ -1,4 +1,10 @@
-Version: 0.20.16
-Python syntax: OK (20 files)
-Manifest JSON: OK
-Package structure: OK
+Version: 0.20.17
+PASS: Python compile validation.
+PASS: manifest.json and strings.json parse correctly.
+PASS: package is based on the working v0.20.15 code, not v0.20.16.
+PASS: individual WAV and ZIP upload retain v0.20.15 progress_done -> finish lifecycle.
+PASS: upload reload has no configured delay, but yields one event-loop turn after flow close.
+PASS: delete retains the v0.20.15 one-second close-before-reload delay.
+PASS: upload transport/final verification are unchanged from v0.20.15.
+PASS: config-entry title no longer duplicates the IP; device name keeps live Wi-Fi IP.
+LIMIT: live Home Assistant/M1S behavior must be confirmed on the hub.

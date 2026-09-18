@@ -1,5 +1,5 @@
-v0.20.16 - Immediate reload at confirmed 100% and single IP display
-When Configure upload reaches a confirmed 100%, the options flow now closes and queues the config-entry reload immediately, without the extra one-second delay or an additional frontend finish transition. The hub IP remains on the device name only; any IP appended to the config-entry title by v0.20.15 is stripped automatically on load, eliminating the duplicate IP display. Upload transport/verification behavior from v0.20.15 is unchanged.
+v0.20.17 - Restore proven individual upload/delete flow; immediate upload reload; single IP display
+The v0.20.16 direct jump from the upload progress step into reload was reverted. Successful WAV/ZIP upload again uses Home Assistant's proven progress_done -> finish transition from v0.20.15, so individual WAV upload remains functional. Upload reload is queued with zero configured delay but yields one event-loop turn after the flow closes. Delete keeps the proven one-second close-before-reload delay. The hub IP remains only in the device name and is stripped from the config-entry title. Upload transport and final verification are unchanged from v0.20.15.
 
 ## 0.20.15 - Consistent live IP names and upload finalization recovery
 
