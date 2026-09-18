@@ -1,3 +1,7 @@
+## v0.21.2 - Controale separate și sesiunea Telnet activă
+
+Pagina de rețea arată întâi numai alegerea DHCP/IP static. Controlul pentru ultimul număr și confirmarea apar numai după alegerea IP static; revenirea DHCP are o pagină separată fără control IP. Comenzile folosesc sesiunea Telnet deja funcțională a integrării.
+
 ## v0.21.1 - Build distinct pentru detectarea managerului
 
 Această versiune publică separat corecția pentru ecoul Telnet și folosește o conexiune nouă pentru operațiile de rețea. Mesajele de diagnostic afișează explicit `v0.21.1`. Funcțiile și regulile IP din v0.21.0 rămân neschimbate.

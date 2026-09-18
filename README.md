@@ -1,3 +1,7 @@
+## v0.21.2 - Mode-specific controls and proven Telnet session
+
+The network page first shows only the DHCP/static choice. The final-octet control appears only after static mode is selected, while DHCP uses a separate confirmation-only page. Commands use the integration's existing working Telnet session.
+
 ## v0.21.1 - Distinct network-manager detection build
 
 This version publishes the Telnet-echo correction separately and uses a fresh connection for network operations. Diagnostic messages explicitly show `v0.21.1`. The safe IPv4 behavior introduced in v0.21.0 is unchanged.

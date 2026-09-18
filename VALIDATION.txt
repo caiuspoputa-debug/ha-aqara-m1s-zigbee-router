@@ -1,4 +1,4 @@
-v0.21.1
+v0.21.2
 PASS: Built directly from the user-supplied resolved v0.20.14 package.
 PASS: Adds only network management, stable identity and related display/topic plumbing; audio, Zigbee and WAV transfer logic is unchanged.
 PASS: Static IPv4 is restricted to the final octet on the current /24 and is confirmed only after the candidate answers with the same Wi-Fi MAC.

@@ -14,12 +14,24 @@
       },
       "network_setup": {
         "title": "Adresă de rețea / Network address",
-        "description": "Adresa curentă este {current_ip}. Pentru IP static se schimbă numai ultimul număr; hubul testează adresa înainte de confirmare. / Current address is {current_ip}. Static mode changes only the final number and tests it before confirmation.",
+        "description": "Adresa curentă este {current_ip}. Alege modul de adresare; câmpul IP apare numai pentru modul static. / Current address is {current_ip}. Choose the address mode; the IP field appears only for static mode.",
         "data": {
-          "mode": "Mod adresă / Address mode",
-          "last_octet": "Ultimul număr IPv4 / Final IPv4 number"
+          "mode": "Mod adresă / Address mode"
+        }
+      },
+      "network_setup_static": {
+        "title": "IP static / Static IP",
+        "description": "Adresa curentă este {current_ip}. Schimbă numai ultimul număr; hubul testează adresa înainte de confirmare. / Current address is {current_ip}. Change only the final number; the hub tests the address before confirmation.",
+        "data": {
+          "last_octet": "Ultimul număr IPv4 / Final IPv4 number",
+          "confirm": "Confirm IP-ul static / Confirm static IP"
         }
       }
+    },
+    "error": {
+      "network_confirmation_required": "Bifează confirmarea înainte de schimbarea adresei.",
+      "network_invalid_octet": "Ultimul număr trebuie să fie între 2 și 254.",
+      "network_change_failed": "Adresa nu a fost confirmată. Hubul revine automat la configurația anterioară."
     }
   },
   "options": {
@@ -68,11 +80,24 @@
       },
       "network_address": {
         "title": "Adresă de rețea / Network address",
-        "description": "Curent: {current_ip}, mod {mode}, mască {netmask}, gateway {gateway}, MAC {wifi_mac}. În modul static poți schimba numai ultimul număr (2-254). Adresa este aplicată temporar, verificată după MAC și salvată doar după confirmarea hubului. / Current: {current_ip}, mode {mode}, mask {netmask}, gateway {gateway}, MAC {wifi_mac}. Static mode changes only the final number (2-254). The address is temporary until the same MAC is verified and the hub confirms it.",
+        "description": "Curent: {current_ip}, mod {mode}, mască {netmask}, gateway {gateway}, MAC {wifi_mac}. Alege modul; controlul pentru IP apare numai după alegerea modului static. / Current: {current_ip}, mode {mode}, mask {netmask}, gateway {gateway}, MAC {wifi_mac}. Choose the mode; the IP control appears only after selecting static mode.",
         "data": {
-          "mode": "Mod adresă / Address mode",
+          "mode": "Mod adresă / Address mode"
+        }
+      },
+      "network_static": {
+        "title": "IP static / Static IP",
+        "description": "IP actual: {current_ip}. Alege numai ultimul număr (2-254). Adresa este temporară până când același MAC este verificat și hubul o confirmă. / Current IP: {current_ip}. Choose only the final number (2-254). The address remains temporary until the same MAC is verified and the hub confirms it.",
+        "data": {
           "last_octet": "Ultimul număr IPv4 / Final IPv4 number",
-          "confirm": "Confirm schimbarea / Confirm change"
+          "confirm": "Confirm IP-ul static / Confirm static IP"
+        }
+      },
+      "network_dhcp": {
+        "title": "Revenire la DHCP / Return to DHCP",
+        "description": "Hubul va elimina configurația statică și va solicita automat adresa de la router. / The hub will remove its static configuration and request an address from the router.",
+        "data": {
+          "confirm": "Confirm revenirea la DHCP / Confirm return to DHCP"
         }
       },
       "network_finish": {
@@ -92,7 +117,7 @@
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",
       "wifi_invalid": "SSID-ul sau parola Wi-Fi nu sunt valide.",
       "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery.",
-      "network_manager_unavailable": "v0.21.1: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
+      "network_manager_unavailable": "v0.21.2: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
       "network_confirmation_required": "Bifează confirmarea înainte de schimbarea adresei.",
       "network_invalid_octet": "Ultimul număr trebuie să fie între 2 și 254.",
       "network_change_failed": "Adresa nu a fost confirmată. Hubul păstrează sau revine automat la configurația anterioară."

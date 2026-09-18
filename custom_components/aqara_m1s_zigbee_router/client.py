@@ -351,7 +351,7 @@ class AqaraM1SClient:
             port=self.port,
             username=self.username,
             password=self.password,
-            timeout=self.timeout,
+            timeout=min(self.timeout, 3.0),
         )
         try:
             verified: dict[str, str] | None = None

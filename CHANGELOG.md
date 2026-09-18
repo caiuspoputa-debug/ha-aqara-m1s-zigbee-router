@@ -1,3 +1,9 @@
+## 0.21.2 - Mode-specific network controls and proven Telnet session
+
+- Show only the DHCP/static selector on the network overview. The final IPv4 control and confirmation appear only after static mode is selected; DHCP has a confirmation-only page.
+- Send network commands through the integration's already authenticated Telnet client so the candidate reaches the hub.
+- Keep the Telnet-echo fix and bound candidate verification to finish before the hub's 120-second rollback deadline.
+
 ## 0.21.1 - Distinct network-manager detection build
 
 - Publish the corrected network manager detection as a distinct Home Assistant version so updates cannot be confused with an earlier cached 0.21.0 build.
