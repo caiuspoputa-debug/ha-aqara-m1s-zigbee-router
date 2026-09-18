@@ -1,5 +1,8 @@
 > **v0.20.15:** numele vizibil al hubului folosește IPv4-ul real de pe `wlan0` (aceeași sursă ca senzorul WiFi IP), iar finalizarea uploadului WAV/ZIP acceptă fișierul deja instalat dacă dimensiunea + MD5 corespund, fără blocare/reîncercare după pierderea ACK-ului final.
 
+> v0.20.16: after a verified 100% WAV/ZIP upload, reload starts immediately; the hub IP is shown only in the device name, not duplicated in the integration title.
+
+
 ## v0.20.14 - Upload ZIP rapid, cu progres vizibil
 
 Uploadul ZIP folosește din nou exact transportul client verificat din v0.20.11, separat pentru fiecare WAV extras de Home Assistant. Sunt eliminate pauza de lot, `sync`-ul final, verificările repetate de dimensiune și comenzile suplimentare pe hub adăugate în v0.20.12. O bară nativă Home Assistant avansează după volumul WAV încărcat efectiv, fără trafic de progres către hub. La succes, popup-ul se închide, iar integrarea se reîncarcă după o secundă. Ștergerea multiplă pornește fără niciun fișier bifat și refuză o selecție goală, astfel încât primul sunet nu mai poate fi șters implicit.

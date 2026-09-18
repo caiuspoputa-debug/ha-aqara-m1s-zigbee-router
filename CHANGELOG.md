@@ -1,3 +1,6 @@
+v0.20.16 - Immediate reload at confirmed 100% and single IP display
+When Configure upload reaches a confirmed 100%, the options flow now closes and queues the config-entry reload immediately, without the extra one-second delay or an additional frontend finish transition. The hub IP remains on the device name only; any IP appended to the config-entry title by v0.20.15 is stripped automatically on load, eliminating the duplicate IP display. Upload transport/verification behavior from v0.20.15 is unchanged.
+
 ## 0.20.15 - Consistent live IP names and upload finalization recovery
 
 - Read the hub's current `wlan0` IPv4 address from the same source as the existing WiFi IP sensor and use that address in the visible Home Assistant device/config-entry name.

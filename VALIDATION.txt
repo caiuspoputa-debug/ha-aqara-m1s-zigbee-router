@@ -1,12 +1,4 @@
-v0.20.15
-PASS: Python compile validation for every integration Python module.
-PASS: manifest.json and strings.json parse as JSON; manifest reports version 0.20.15.
-PASS: Configure WAV/ZIP upload keeps the v0.20.14 fast TCP-only batch path; no silent Base64 fallback is used by the Configure flow.
-PASS: Home Assistant progress is updated continuously from TCP bytes and is monotonic across a TCP retry.
-PASS: after a missing/ambiguous final ACK, the client verifies the final destination by exact byte size + MD5 and accepts an already-installed WAV instead of retrying it.
-PASS: WAV upload still requires uncompressed PCM, mono, 32000 Hz, 32-bit little-endian.
-PASS: the visible IP is read from wlan0 using the same ifconfig source as the existing WiFi IP sensor, with configured host as offline/failure fallback.
-PASS: IP-bearing device naming is applied after all entity platforms are forwarded, preventing platform device_info registration from removing the IP on only some hubs.
-PASS: an old trailing IPv4 is replaced rather than duplicated; user-renamed device names keep their friendly-name portion.
-PASS: config-entry title is updated to the same visible IP and keeps the existing unavailable suffix behavior.
-LIMIT: no live M1S/Home Assistant instance is available in this environment; confirm device names and one real ZIP upload after installation.
+Version: 0.20.16
+Python syntax: OK (20 files)
+Manifest JSON: OK
+Package structure: OK

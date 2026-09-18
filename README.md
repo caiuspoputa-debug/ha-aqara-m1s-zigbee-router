@@ -1,5 +1,8 @@
 > **v0.20.15:** visible hub names use the live `wlan0` IPv4 (same source as WiFi IP sensor), and WAV/ZIP upload finalization accepts a file already installed with matching size + MD5 instead of stalling/retrying after a lost final ACK.
 
+> v0.20.16: after a verified 100% WAV/ZIP upload, reload starts immediately; the hub IP is shown only in the device name, not duplicated in the integration title.
+
+
 ## v0.20.14 - Fast ZIP upload with visible progress
 
 ZIP upload again uses the exact proven v0.20.11 client transfer path, once for each WAV extracted by Home Assistant. The v0.20.12 batch delay, final `sync`, repeated size verification and extra hub work are removed. A native Home Assistant progress bar now advances from the WAV bytes that have actually completed, without sending progress commands to the hub. On success, the popup closes and the integration reload remains delayed by one second. Multi-delete starts with no file selected and refuses an empty selection, so the first sound cannot be deleted implicitly.

@@ -243,8 +243,11 @@ async def async_setup_entry(
         if device_updates:
             device_registry.async_update_device(device.id, **device_updates)
 
+    # Keep the IP in one place only: the device name.  v0.20.15 also
+    # appended it to the config-entry title, which made Home Assistant show
+    # the same address twice.  Strip a previously-added IP during upgrade.
     final_title = _availability_name(
-        _device_name_with_host(entry.title, visible_ip),
+        _strip_visual_suffixes(entry.title),
         online,
     )
     if entry.title != final_title:

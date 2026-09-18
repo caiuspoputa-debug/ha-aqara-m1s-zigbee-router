@@ -36,7 +36,7 @@ from .const import (
 from .sound_upload import destination_for_filename, read_uploaded_sounds
 
 _LOGGER = logging.getLogger(__name__)
-SOUND_RELOAD_DELAY_SECONDS = 1.0
+SOUND_RELOAD_DELAY_SECONDS = 0.0
 
 
 class AqaraM1SZigbeeRouterConfigFlow(
@@ -177,8 +177,9 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         )
 
     async def _async_reload_after_flow_close(self, entry_id: str) -> None:
-        """Reload only after the frontend has received the close response."""
-        await asyncio.sleep(SOUND_RELOAD_DELAY_SECONDS)
+        """Reload as soon as the successful sound flow has been closed."""
+        if SOUND_RELOAD_DELAY_SECONDS > 0:
+            await asyncio.sleep(SOUND_RELOAD_DELAY_SECONDS)
         try:
             await self.hass.config_entries.async_reload(entry_id)
         except Exception:
@@ -254,13 +255,14 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             except Exception as err:
                 _LOGGER.exception("WAV upload failed: %s", err)
                 self._upload_error = True
-                next_step_id = "upload_sound"
-            else:
-                next_step_id = "finish"
-            finally:
                 self._upload_task = None
+                return self.async_show_progress_done(next_step_id="upload_sound")
 
-            return self.async_show_progress_done(next_step_id=next_step_id)
+            self._upload_task = None
+            # At this point 100% means every WAV has been verified on the hub.
+            # Close the flow and queue the config-entry reload immediately,
+            # without an extra frontend transition through a separate finish step.
+            return await self.async_step_finish()
 
         if self._upload_error:
             errors["base"] = "upload_failed"
