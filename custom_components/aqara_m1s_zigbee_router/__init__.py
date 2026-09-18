@@ -140,8 +140,15 @@ async def async_setup_entry(
         manufacturer="Aqara",
         model="M1S Gen 1 / JN5189 Router",
     )
+    device_updates = {}
     if device.name != device_name:
-        device_registry.async_update_device(device.id, name=device_name)
+        device_updates["name"] = device_name
+    if device.name_by_user:
+        visible_name = _device_name_with_host(device.name_by_user, host)
+        if device.name_by_user != visible_name:
+            device_updates["name_by_user"] = visible_name
+    if device_updates:
+        device_registry.async_update_device(device.id, **device_updates)
 
     entity_registry = er.async_get(hass)
     obsolete_select_id = entity_registry.async_get_entity_id(

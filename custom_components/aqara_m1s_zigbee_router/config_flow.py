@@ -23,17 +23,13 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
-from homeassistant.helpers.dispatcher import async_dispatcher_send
-
 from .const import (
     DEFAULT_PASSWORD,
     DEFAULT_PORT,
     DEFAULT_USERNAME,
     DATA_CLIENTS,
-    DATA_COORDINATORS,
     DOMAIN,
     MANAGED_SOUND_ROOT,
-    sound_list_signal,
 )
 from .sound_upload import destination_for_filename, read_uploaded_sounds
 
@@ -202,16 +198,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                 _LOGGER.exception("WAV upload failed: %s", err)
                 errors["base"] = "upload_failed"
             else:
-                async_dispatcher_send(
-                    self.hass,
-                    sound_list_signal(self.config_entry.entry_id),
-                )
-                coordinator = self.hass.data[DOMAIN][DATA_COORDINATORS].get(
-                    self.config_entry.entry_id
-                )
-                if coordinator is not None:
-                    await coordinator.async_request_refresh()
-                return await self.async_step_init()
+                return await self.async_step_finish()
 
         return self.async_show_form(
             step_id="upload_sound",
@@ -245,16 +232,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             except (OSError, ValueError, RuntimeError):
                 errors["base"] = "delete_failed"
             else:
-                async_dispatcher_send(
-                    self.hass,
-                    sound_list_signal(self.config_entry.entry_id),
-                )
-                coordinator = self.hass.data[DOMAIN][DATA_COORDINATORS].get(
-                    self.config_entry.entry_id
-                )
-                if coordinator is not None:
-                    await coordinator.async_request_refresh()
-                return await self.async_step_init()
+                return await self.async_step_finish()
 
         try:
             sounds = await self.hass.async_add_executor_job(

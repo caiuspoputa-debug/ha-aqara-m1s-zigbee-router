@@ -1,9 +1,10 @@
-v0.20.10
+v0.20.11
 PASS: Python compile/AST validation for every integration Python module.
-PASS: manifest JSON parses and reports version 0.20.10.
+PASS: manifest JSON parses and reports version 0.20.11.
 PASS: ZIP batch parsing with two WAV files and an ignored non-WAV entry.
 PASS: standard ZIP MIME, Windows application/x-zip-compressed, generic MIME, filename-less content and Home Assistant file-id upload paths.
 PASS: delete selector remains multiple and now uses the native checkbox-list mode.
-PASS: configured hub host/IP is appended once to the device registry name and existing integration-provided names are updated on reload.
-PASS: audio transport, buffering, ICY/Cast metadata, synchronization, volume and recovery code are unchanged from v0.20.9.
-LIMIT: no live Home Assistant/hub upload test was available; validate one ZIP batch and one multi-delete after install.
+PASS: configured hub host/IP is appended once to both integration and user-renamed device registry names.
+PASS: successful upload and delete paths invoke config-entry reload and close the options flow without an extra coordinator refresh.
+PASS: individual source rebuffer stops the remote receiver, sends no filler PCM, waits for source progress and rebuilds/prefills before resuming.
+LIMIT: no live Home Assistant/hub test was available; validate one radio interruption, ZIP upload, multi-delete and existing custom device name after install.

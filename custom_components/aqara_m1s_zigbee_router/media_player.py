@@ -1859,11 +1859,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         last_catchup_log = 0.0
         last_low_queue_log = 0.0
         last_real_pcm_monotonic = time.monotonic()
+        last_source_progress_monotonic = time.monotonic()
+        receiver_stopped_for_rebuffer = False
         health_task: asyncio.Task | None = None
         last_health_probe = 0.0
 
         async def _produce_pcm() -> None:
-            nonlocal producer_error
+            nonlocal last_source_progress_monotonic, producer_error
             buffer = bytearray()
             try:
                 if process.stdout is None:
@@ -1886,6 +1888,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         ):
                             try:
                                 await asyncio.wait_for(queue.put(raw_chunk), timeout=0.05)
+                                last_source_progress_monotonic = time.monotonic()
                                 break
                             except asyncio.TimeoutError:
                                 continue
@@ -1926,6 +1929,40 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 )
                 consecutive_drain_timeouts = 0
             return primed_chunks
+
+        async def _stop_receiver_for_source_rebuffer() -> None:
+            """Clear the hub audio tail while FFmpeg reconnects its source."""
+            nonlocal health_task, receiver_stopped_for_rebuffer
+            if receiver_stopped_for_rebuffer:
+                return
+
+            if health_task is not None:
+                if not health_task.done():
+                    health_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await health_task
+                health_task = None
+
+            if self._stream_writer is writer:
+                self._stream_writer = None
+            await self._close_writer_bounded(
+                writer, reason="source_rebuffer_stop"
+            )
+            try:
+                await self.hass.async_add_executor_job(
+                    self.client.run_command, REMOTE_STOP_COMMAND
+                )
+            except Exception as err:
+                _LOGGER.debug(
+                    "Could not stop Aqara receiver during source rebuffer "
+                    "entity=%s session=%s generation=%s host=%s error=%s",
+                    self.entity_id,
+                    session,
+                    generation,
+                    self.client.host,
+                    err,
+                )
+            receiver_stopped_for_rebuffer = True
 
         async def _rebuild_receiver_and_resync(
             *, stage: str, cause: str, error: Exception | None = None
@@ -2193,6 +2230,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
                 if (
                     health_task is None
+                    and not rebuffering
+                    and not receiver_stopped_for_rebuffer
                     and now - last_health_probe >= SINGLE_RECEIVER_HEALTH_INTERVAL_SECONDS
                     and self._generation_is_current(generation)
                 ):
@@ -2220,36 +2259,55 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 if not rebuffering and queue.empty() and not producer_done.is_set():
                     rebuffering = True
                     rebuffer_events += 1
+                    await _stop_receiver_for_source_rebuffer()
+                    last_source_progress_monotonic = time.monotonic()
+                    next_send_monotonic = time.monotonic()
                     _LOGGER.warning(
                         "Aqara media single rebuffer started entity=%s session=%s "
-                        "host=%s rebuffer_events=%s silence_fill_events=%s",
+                        "host=%s rebuffer_events=%s action=stop_receiver",
                         self.entity_id,
                         session,
                         self.client.host,
                         rebuffer_events,
-                        silence_fill_events,
                     )
 
                 if rebuffering:
                     if producer_done.is_set() or queue.qsize() >= SINGLE_REBUFFER_RESUME_CHUNKS:
+                        queued_before_resume = queue.qsize()
+                        primed_chunks = 0
+                        if receiver_stopped_for_rebuffer:
+                            writer = await self._recover_single_tcp_writer(
+                                process,
+                                writer,
+                                generation,
+                                session,
+                                reason="source_rebuffer",
+                            )
+                            self._reset_live_gain()
+                            primed_chunks = await _prefill_remote_receiver()
+                            receiver_stopped_for_rebuffer = False
                         rebuffering = False
+                        last_real_pcm_monotonic = time.monotonic()
+                        next_send_monotonic = time.monotonic()
                         _LOGGER.info(
                             "Aqara media single rebuffer ended entity=%s session=%s "
-                            "host=%s queued_ms=%s",
+                            "host=%s queued_ms=%s remote_prefill_ms=%s "
+                            "action=resume_receiver",
                             self.entity_id,
                             session,
                             self.client.host,
-                            int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
+                            int(queued_before_resume * PCM_CHUNK_SECONDS * 1000),
+                            int(primed_chunks * PCM_CHUNK_SECONDS * 1000),
                         )
-                    elif time.monotonic() - last_real_pcm_monotonic > SINGLE_SOURCE_STALL_TIMEOUT:
+                    elif (
+                        time.monotonic() - last_source_progress_monotonic
+                        > SINGLE_SOURCE_STALL_TIMEOUT
+                    ):
                         raise RuntimeError(
                             f"PCM source stalled for more than {SINGLE_SOURCE_STALL_TIMEOUT:.1f}s"
                         )
                     else:
-                        raw_chunk = PCM_SILENCE_CHUNK
-                        silence_fill_events += 1
-                        await _write_chunk_to_hub(raw_chunk, stage="rebuffer_silence")
-                        next_send_monotonic += PCM_CHUNK_SECONDS
+                        await asyncio.sleep(PCM_CHUNK_SECONDS)
                         continue
 
                 if not rebuffering:

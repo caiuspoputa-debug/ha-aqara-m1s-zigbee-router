@@ -1,3 +1,7 @@
+## v0.20.11 - Stop curat la căderea radioului și reload automat
+
+La o întrerupere accidentală a fluxului radio individual, receptorul audio de pe hub este oprit imediat pentru a elimina coada rămasă în `aplay`. După ce FFmpeg primește din nou audio și reface bufferul, receptorul este reconstruit și redarea continuă fără repetarea sacadată a finalului. IP-ul este adăugat acum și numelui personalizat deja salvat în Home Assistant. După upload WAV/ZIP sau ștergere multiplă, fereastra se închide și integrarea se reîncarcă automat. ZIP rămâne formatul de lot; arhiva este deschisă în Home Assistant, deci hubul nu are nevoie de TAR sau unzip.
+
 ## v0.20.10 - IP vizibil și administrare WAV mai simplă
 
 Numele dispozitivului din Home Assistant include acum IP-ul/hostul configurat. Fișierele WAV administrate apar ca listă cu bife pentru ștergere multiplă. Încărcarea în lot rămâne pe ZIP: Home Assistant deschide arhiva și trimite separat fiecare WAV către hub, iar tipurile ZIP folosite uzual de Windows și browser sunt recunoscute. Comportamentul audio rămâne neschimbat față de v0.20.9.
@@ -32,7 +36,7 @@ Numele postului continuă să fie obținut prin mecanismul existent și este exp
 
 Cititorul asincron folosește o conexiune HTTP separată (consum suplimentar de trafic), fără modificări în fluxul audio, sincronizare sau comenzile STOP/PLAY. Nu activează adaptive/per-buffer sync. Se oprește odată cu transportul și își reîncearcă separat conexiunea la erori. Funcționează pentru URL-uri HTTP(S) directe cu ICY; nu adaugă interpretare playlist/HLS. Momentul metadata este decis de post și poate diferi de sunetul auzit.
 
-**Pachet curent: v0.20.5 + kit hub v0.8**
+**Pachet curent: v0.20.11 + kit hub v0.8**
 
 [**Română**](README_RO.md) | [English](README.md)
 
@@ -49,8 +53,8 @@ Integrarea poate fi folosită împreună cu add-on-ul opțional **M1S YouTube Ca
 
 # Aqara M1S Gen 1 — conversie completă în Zigbee Router + integrare Home Assistant
 
-Versiune documentație: **2026-09-08 — v0.20.5 + kit hub v0.8**  
-Integrare Home Assistant inclusă: **0.20.5**  
+Versiune documentație: **2026-09-18 - v0.20.11 + kit hub v0.8**  
+Integrare Home Assistant inclusă: **0.20.11**  
 Model țintă: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 Acesta este ghidul principal pentru refacerea unui hub stock în configurația folosită de proiect:
@@ -1170,15 +1174,15 @@ Meniul curent oferă:
 4. dacă transferul TCP eșuează, există fallback BusyBox `base64`, tot cu verificare;
 5. fișierul ajunge numai în `/data/musics/music-ch`;
 6. lista butoanelor de sunet se actualizează imediat;
-7. după toate operațiile apasă **Finalizare și închidere** pentru reloadul complet și controlat al config entry-ului.
+7. după un upload reușit, fereastra se închide și integrarea se reîncarcă automat.
 
 Ștergere:
 
 1. bifează unul sau mai multe fișiere oferite în listă;
 2. confirmă o singură dată; toate fișierele selectate sunt șterse în aceeași operație;
-3. apasă **Finalizare și închidere**.
+3. după ștergerea reușită, fereastra se închide și integrarea se reîncarcă automat.
 
-Sunetele originale din directoare precum `/data/musics/music-scene` nu sunt oferite pentru ștergere. Butonul **X** al ferestrei aparține frontendului Home Assistant: închiderea cu X nu anulează uploadul/ștergerea și lista se reîmprospătează imediat, dar sare reloadul final al config entry-ului.
+Sunetele originale din directoare precum `/data/musics/music-scene` nu sunt oferite pentru ștergere. Butonul **X** al ferestrei aparține frontendului Home Assistant; nu îl folosi în timpul transferului. La finalizarea reușită a uploadului sau ștergerii, integrarea face singură reloadul necesar.
 
 ### Schimbarea Wi-Fi direct din integrare
 

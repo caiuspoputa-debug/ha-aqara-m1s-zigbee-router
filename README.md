@@ -1,3 +1,7 @@
+## v0.20.11 - Clean radio-drop recovery and automatic sound reload
+
+When an individual radio source drops, the hub audio receiver is stopped immediately to clear the remaining `aplay` tail. Once FFmpeg receives audio again and rebuilds its buffer, the receiver is recreated and playback resumes without repeating the end of the previous audio. The IP is now also appended to an existing Home Assistant user-renamed device. After a successful WAV/ZIP upload or multi-file delete, the dialog closes and the integration reloads automatically. ZIP remains the batch format and is extracted in Home Assistant, so the hub does not need TAR or unzip.
+
 ## v0.20.10 - Device IP and friendlier sound batches
 
 The Home Assistant device name now includes the configured hub IP/host. Managed sounds are shown as a checkbox list for multi-delete. WAV batch upload remains ZIP-based because Home Assistant expands the archive before sending each WAV to the hub; common Windows/browser ZIP MIME variants are now accepted. Audio behavior is unchanged from v0.20.9.
@@ -39,14 +43,14 @@ Intentional individual → group handoff, priority-sound preemption, Stop and sh
 - This uses one additional radio HTTP connection and its bandwidth. Stations must expose ICY directly on the resolved HTTP(S) URL; playlist/HLS parsing is not added. Servers without `icy-metaint` are closed immediately. Metadata timing is station-dependent and is not aligned to buffered audio.
 - Validation: Python syntax, JSON parsing, synthetic ICY stream and lifecycle/regression checks. No live Home Assistant/hub playback test was available.
 
-**Current package: v0.20.7 + hub kit v0.8**
+**Current package: v0.20.11 + hub kit v0.8**
 
 [Romana](README_RO.md) | **English**
 
 # Aqara M1S Gen 1 - stock hub to Zigbee Router + Home Assistant integration
 
-Documentation version: **2026-09-09 - v0.20.7 + hub kit v0.8**  
-Home Assistant integration version: **0.20.7**  
+Documentation version: **2026-09-18 - v0.20.11 + hub kit v0.8**  
+Home Assistant integration version: **0.20.11**  
 Target model: **Aqara M1S Gen 1 `lumi.gateway.aeu01`**
 
 This README is the current English operational guide for the packaged kit. The Romanian file `README_RO.md` is the long detailed reference; this file keeps the same current facts and the practical stock-hub flow.

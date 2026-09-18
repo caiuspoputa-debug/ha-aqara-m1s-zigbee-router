@@ -1,3 +1,11 @@
+## 0.20.11 - Clean radio-drop recovery and automatic sound reload
+
+- Stop the hub's individual audio receiver as soon as a radio source underruns, clearing the buffered audio tail instead of feeding silence while FFmpeg reconnects.
+- Rebuild and prefill the receiver only after PCM returns, so an accidental stream drop resumes without the repeated end-of-audio stutter.
+- Append the configured host/IP to an existing Home Assistant user-renamed device as well as to the integration-provided device name.
+- Close the sound-management dialog and reload the config entry automatically after a successful WAV/ZIP upload or multi-file delete.
+- Keep ZIP as the batch format. Home Assistant extracts it and uploads the WAV members individually; no TAR support is required on the hub.
+
 ## 0.20.10 - Device IP and friendlier sound batches
 
 - Append the configured hub host/IP to the Home Assistant device name and update existing registry entries on reload.
