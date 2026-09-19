@@ -4,7 +4,7 @@
 
 **Hub kit:** `0.10.0 Stable Ultimate`  
 **Documentation date:** 2026-09-19  
-**README revision:** `R2 — Master Documentation`  
+**README revision:** `R3 — Self-Contained Master Manual`  
 **Included Home Assistant integration:** `aqara_m1s_zigbee_router 0.21.7`  
 **Target model:** Aqara M1S Gen 1 `lumi.gateway.aeu01`
 
@@ -39,7 +39,26 @@ stock hub
 
 The first new hub installed with this kit is the final hardware validation. If a problem is detected before flashing, the flow is designed to stop without writing JN5189.
 
-R2 adds useful operational material from the project GitHub README, but verifies version-dependent facts against the actual shipped `0.21.7` snapshot before inclusion. Historical `0.20.x / hub v0.8` text is not treated as current installation guidance.
+R3 is a self-contained master manual. It restores the operational steps that had disappeared from shorter revisions and verifies version-dependent facts against the actual shipped `0.21.7` snapshot and the files physically present in this kit. Historical `0.20.x / hub v0.8` text is not treated as current installation guidance.
+
+
+### Known project technical baseline
+
+The project was built around the following historically confirmed baseline:
+
+```text
+Model:                   lumi.gateway.aeu01
+Known stock firmware:    3.1.3_0009
+Linux:                   MIPS, kernel 3.10.90
+BusyBox:                 1.22.1
+JN5189 UART:              /dev/ttyS1
+UART:                     115200 8N1
+GPIO18:                   JN5189 reset, active at 1
+GPIO33:                   ISP=0, normal boot=1
+JN5189 FLASH:             Memory ID 0, 0x9DE00 bytes, sector 0x200
+```
+
+`3.1.3_0009` is the **known stock reference**, not a claim that every other stock firmware is incompatible. If a new hub runs another firmware, do not assume the same procedure blindly: verify model, Telnet access, UART and JN5189 FLASH geometry before any write. A model or FLASH-geometry mismatch is a hard stop.
 
 ---
 
@@ -275,26 +294,72 @@ python -m pip install "spsdk[dk6]"
 python -m spsdk.apps.dk6prog --help
 ```
 
+If the Windows Telnet client is missing, enable **Telnet Client** from *Optional Features / Windows Features*. Alternatively, from an Administrator PowerShell/CMD:
+
+```powershell
+dism /online /Enable-Feature /FeatureName:TelnetClient
+```
+
 ---
 
-# 7. Prepare the stock hub
+# 7. Prepare the stock hub and obtain the MiIO token
 
-Before modifying it:
+This stage is described from scratch. Do not continue until the stock hub is stable on the LAN and the MiIO token is verified.
 
-- add the hub to Xiaomi Home;
-- use working 2.4 GHz Wi-Fi;
-- create a DHCP reservation for the current address;
-- obtain the MiIO token and keep it separately;
-- confirm the hub works normally in stock mode.
+## 7.1 Add the hub to Xiaomi Home
 
-Keep a separate record for every hub:
+1. Reset the hub or put it into pairing mode if required.
+2. The project-documented sequence for switching to Xiaomi/Mi Home mode is a **double click** on the button.
+3. Add the hub to Xiaomi Home on **2.4 GHz Wi-Fi**.
+4. Use the correct Xiaomi account region.
+5. Confirm in the app that the hub is online and works normally in stock mode.
+6. Identify its Wi-Fi MAC on your router and create a **DHCP reservation**.
+7. Reboot normally and confirm that it receives the same IP address.
+
+**The ecosystem double click is not the Telnet-enable sequence.**
+
+## 7.2 Obtain the MiIO token
+
+The project method uses the HACS **Xiaomi Gateway 3 / XiaomiGateway3 integration by AlexxIT**, through its Cloud configuration. It can expose Mi Home device tokens from the account even when a particular device is not directly controlled by that integration.
+
+Steps:
+
+1. Home Assistant → **HACS → Integrations**.
+2. Find **Xiaomi Gateway 3** / `AlexxIT/XiaomiGateway3` and install it.
+3. Restart Home Assistant if requested.
+4. Configure its **Cloud** part with the same Xiaomi account and region used in Xiaomi Home.
+5. Find model `lumi.gateway.aeu01` in the account device list.
+6. Copy the MiIO token and treat it like a password.
+
+A MiIO token is normally **32 hexadecimal characters**.
+
+Do not put it in a README, screenshot, GitHub repository or distributed archive.
+
+### If you do not use HACS
+
+You still need the MiIO token before using the software Telnet method. Another token-extraction method may be used if compatible with your account/region, but **do not continue until the token passes the verification command below**.
+
+## 7.3 Verify the token before enabling Telnet
+
+On the Windows PC:
+
+```powershell
+python -m miio.cli device --ip HUB_IP --token MIIO_TOKEN info
+```
+
+The command must return the device information. On timeout, invalid token, or a different device, **STOP**.
+
+## 7.4 Private per-hub record
+
+Keep this separately for each hub:
 
 ```text
 Hub name:
 Model:
 Wi-Fi MAC:
-Initial IP:
+Reserved IP:
 Stock firmware:
+MiIO token: stored separately, NOT in a public record
 JN5189 backup date:
 Backup A SHA256:
 Backup B SHA256:
@@ -303,19 +368,37 @@ Zigbee2MQTT device name:
 Home Assistant entry name:
 ```
 
-Do not store the MiIO token in a document that may be shared.
-
 ---
 
-# 8. Enable temporary Telnet
+# 8. Enable temporary Telnet — CRITICAL STEP
 
-From PowerShell:
+**Without Telnet the kit cannot be installed. Do not proceed to section 9 until `telnet HUB_IP` opens the hub shell.**
+
+## 8.1 Documented physical method
+
+For compatible stock firmware, the physical sequence documented in this project is:
+
+```text
+5-2-2-2-2-2-2
+```
+
+This is the **Telnet-enable sequence**. It is different from the double click used for Xiaomi/Mi Home ecosystem mode.
+
+This README preserves the sequence exactly as documented and **does not invent timing between press groups**. If your firmware does not expose Telnet with this sequence, use the MiIO method below.
+
+## 8.2 Recommended kit method — PowerShell + MiIO
+
+From the kit root on Windows:
 
 ```powershell
 .\scripts\windows\Enable-TemporaryTelnet.ps1 -HubIp HUB_IP
 ```
 
-The script asks for the MiIO token as a hidden value, verifies the device first, and only then requests Telnet.
+The helper:
+
+1. asks for the MiIO token securely;
+2. verifies it with `Device.info()`;
+3. only then sends the Telnet-enable command.
 
 Expected markers:
 
@@ -324,24 +407,78 @@ MIIO_TOKEN_OK
 TELNET_REQUEST_SENT HUB_IP
 ```
 
-Connect:
+If Python is not `C:\Windows\py.exe`, pass the real executable:
+
+```powershell
+.\scripts\windows\Enable-TemporaryTelnet.ps1 `
+  -HubIp HUB_IP `
+  -Python "C:\Path\To\python.exe"
+```
+
+## 8.3 Manual MiIO fallback
+
+For helper troubleshooting, the historically used MiIO command is:
+
+```powershell
+python -m miio.cli device --ip HUB_IP --token MIIO_TOKEN raw_command set_ip_info '{"ssid":"\\"\\"","pswd":"123123 ; passwd -d admin ; passwd -d root ; telnetd"}'
+```
+
+This is a **PC/PowerShell** command, not a hub-shell command. Run it only on the trusted LAN and never store a real token in public documentation.
+
+## 8.4 Connect through Telnet
+
+On the PC:
 
 ```powershell
 telnet HUB_IP
 ```
 
-Documented login:
+Validated project login:
 
 ```text
 user: admin
 password: empty
 ```
 
-If the hub shell does not appear, do not continue with commands marked `#`.
+On some stock states this may also work:
+
+```text
+user: root
+password: empty
+```
+
+After login you must see the hub Linux shell. **Only from this point** should you run `/data/...`, `ps`, `ifconfig`, `md5sum`, `tar`, etc.
+
+If the hub shell does not appear, **STOP**.
+
+## 8.5 Initial verification after the first login
+
+On the hub:
+
+```sh
+uname -a
+busybox | head -n 1
+getprop ro.product.model
+ifconfig wlan0
+ps w | grep '[m]zigbee_agent'
+ps w | grep '[a]pp_monitor'
+ps w | grep '[m]ha_master'
+ls -l /dev/ttyS1
+```
+
+The model must be exactly:
+
+```text
+lumi.gateway.aeu01
+```
+
+Also confirm that `wlan0` has the reserved IP. If the model differs or the network is unstable, **STOP**.
 
 ---
 
 # 9. Transfer the unified 0.10.0 installer
+
+Transfer uses a BusyBox `nc` listener on port `12345`. It is normal for the Telnet terminal to appear "stuck" after `nc -l`: the hub is waiting for the PC to send the file. Do not close that window before the transfer.
 
 ## On the hub
 
@@ -436,7 +573,74 @@ The preflight checks, without exposing credentials:
 - stock STA/AP state;
 - free `/dev/ttyS1`;
 - enabled Factory Reset Guard;
-- enabled service trim.
+- service trim enabled.
+
+## 10.1 If preflight fails — manual checks
+
+Do not bypass `ULTIMATE_PREFLASH_OK`. Use the checks below only to learn **why** preflight failed.
+
+Check the stock STA/AP decision state:
+
+```sh
+/data/scripts/aqara_wifi_boot_state.sh check
+```
+
+A healthy result should reach:
+
+```text
+cloud_provisioned=true
+hap_provisioned=true
+hap_keepalive=true
+user_paired=true
+BOOT_WIFI_SELECTION=STA_EXPECTED
+```
+
+If the helper reports `AP_RISK`, the documented correction is:
+
+```sh
+/data/scripts/aqara_wifi_boot_state.sh fix
+/data/scripts/aqara_wifi_boot_state.sh check
+```
+
+Check the boot hook:
+
+```sh
+/bin/sh -n /data/scripts/post_init.sh
+grep -n 'factory_reset_guard\|service_trim\|fw_manager\|mzigbee_agent\|gpio33' /data/scripts/post_init.sh
+```
+
+### Critical `fw_manager` warning
+
+Normal stock-service startup uses:
+
+```text
+fw_manager.sh -r
+```
+
+The form:
+
+```text
+fw_manager.sh -f -r
+```
+
+enters the **factory-reset path** and must never be added to `post_init.sh`. Ultimate intentionally uses normal `-r`; Factory Reset Guard isolates the button before the stock stack starts.
+
+To inspect the properties manually:
+
+```sh
+getprop persist.app.cloud_provisioned
+getprop persist.app.hap_provisioned
+getprop persist.app.hap_keepalive
+getprop persist.app.user_paired
+```
+
+After any correction, run again:
+
+```sh
+/data/scripts/ultimate_preflash_check.sh
+```
+
+and do not continue until it prints exactly `ULTIMATE_PREFLASH_OK`.
 
 ---
 
@@ -469,6 +673,27 @@ Sector 0x200
 ```
 
 Stop if the device or memory geometry differs.
+
+
+If `info` does not detect JN5189, check before repeating it:
+
+```sh
+ps w | grep '[c]at /dev/ttyS1'
+ps w | grep '[m]zigbee_agent'
+ps w | grep '[a]pp_monitor'
+netstat -lnt | grep 1888
+```
+
+If a `cat /dev/ttyS1` process keeps returning and you need its parent:
+
+```sh
+for p in $(ps w | grep '[c]at /dev/ttyS1' | awk '{print $1}'); do
+  echo "CAT=$p"
+  grep PPid /proc/$p/status
+done
+```
+
+Do not blindly kill every `nc` process; some are legitimately used by audio or temporary integration tunnels.
 
 ---
 
@@ -594,20 +819,18 @@ If it does not appear:
 
 ---
 
-# 16. Add the hub to Home Assistant
+# 16. Install the integration and add the hub to Home Assistant
 
-Included integration version:
+Reproducible version shipped in the kit:
 
 ```text
-0.21.7
+Aqara M1S Zigbee Router 0.21.7
 ```
-
-If the HACS repository is already installed and current, just add the new hub.
 
 Repository:
 
 ```text
-caiuspoputa-debug/ha-aqara-m1s-zigbee-router
+https://github.com/caiuspoputa-debug/ha-aqara-m1s-zigbee-router
 ```
 
 Offline snapshot:
@@ -616,9 +839,68 @@ Offline snapshot:
 home_assistant/ha-aqara-m1s-zigbee-router-v0.21.7-SNAPSHOT.zip
 ```
 
-Configuration uses local Telnet. Device identity is based on Wi-Fi MAC, so changing the IP later does not create a new Home Assistant device.
+## 16.1 If you have HACS
 
-Add the integration before the final reboot, then validate its entities after the hub has fully stabilized.
+1. Home Assistant → **HACS → Integrations**.
+2. Open **Custom repositories**.
+3. Add:
+   ```text
+   https://github.com/caiuspoputa-debug/ha-aqara-m1s-zigbee-router
+   ```
+4. Category: **Integration**.
+5. Install **Aqara M1S Zigbee Router**.
+6. Fully restart Home Assistant.
+7. Check `custom_components/aqara_m1s_zigbee_router/manifest.json`. The bundled snapshot version is `0.21.7`.
+
+If HACS already has a compatible version installed, you do not need to reinstall the integration for every new hub.
+
+## 16.2 If you do NOT have HACS — manual/offline installation
+
+1. Open `home_assistant/ha-aqara-m1s-zigbee-router-v0.21.7-SNAPSHOT.zip`.
+2. Extract:
+   ```text
+   custom_components/aqara_m1s_zigbee_router
+   ```
+3. Copy it into Home Assistant at:
+   ```text
+   /config/custom_components/aqara_m1s_zigbee_router
+   ```
+4. Fully restart Home Assistant.
+
+At the end this file must exist:
+
+```text
+/config/custom_components/aqara_m1s_zigbee_router/manifest.json
+```
+
+and the bundled snapshot version should be `0.21.7`.
+
+## 16.3 Add the new hub
+
+In Home Assistant:
+
+```text
+Settings
+→ Devices & services
+→ Add integration
+→ Aqara M1S Zigbee Router
+```
+
+Enter:
+
+```text
+Host:      HUB_IP
+Port:      23
+Username:  admin
+Password:  empty
+Name:      a unique hub name
+```
+
+If the hub uses different Telnet credentials that you tested manually, enter those exact credentials.
+
+The integration uses local Telnet. The config-entry identity is stabilized by Wi-Fi MAC (`mac:<wifi_mac>`), so a later controlled IP change is intended to update the same entry.
+
+**Add the integration before the final reboot**, then continue with section 17.
 
 ---
 
@@ -662,6 +944,30 @@ ULTIMATE_POSTBOOT_OK
 ```
 
 `service_trim` intentionally starts after roughly 120 seconds. If only its status is not ready yet, repeat the verification after full stabilization.
+
+If the automatic verifier fails, these commands are safe for diagnostics:
+
+```sh
+cat /tmp/post_init.log
+cat /tmp/factory_reset_guard_boot.status
+cat /tmp/gpio_button_watch.status
+cat /tmp/service_trim.status
+mount | grep /dev/input
+ps w | grep '[g]pio_button_watch.sh'
+ps w | grep '[t]elnetd'
+ps w | grep '[m]zigbee_agent'
+cat /sys/class/gpio/gpio33/value
+cat /sys/class/gpio/gpio18/value
+netstat -lnt | grep 1888
+```
+
+After stable boot:
+- GPIO33 should be `1`;
+- GPIO18 should be `0`;
+- port `1888` should no longer listen;
+- `mzigbee_agent` must not own the UART;
+- `post_init.log` must exist;
+- guard and watcher status should show active operation.
 
 Also test in practice:
 
@@ -785,6 +1091,35 @@ hold_repeat
 hold_release
 ```
 
+### MQTT topic and button timing
+
+The actual publisher in this kit sends to:
+
+```text
+m1s/<BUTTON_TOPIC_ID>/button/action
+```
+
+On first initialization, if `BUTTON_TOPIC_ID` is empty, the network manager freezes it to the **last octet of the current IP** and stores it in:
+
+```text
+/data/m1s_network/network.conf
+```
+
+That ID remains stable across later static-IP changes, so the physical-button topic does not move merely because IPv4 changed. If no ID has been stored yet, the publisher falls back to the current IP's last octet.
+
+The kit's base watcher timing is:
+
+```text
+GPIO_BUTTON=7
+ACTIVE_VALUE=1
+POLL_INTERVAL_TENTHS=1      # 0.1 s
+DOUBLE_WINDOW_TENTHS=8      # 0.8 s
+HOLD_TENTHS=12              # 1.2 s before hold
+HOLD_REPEAT_TENTHS=5        # 0.5 s between repeats
+```
+
+The persistent `gpio_button_watch.conf` is deliberately stored conservatively with `ENABLE_GPIO_BUTTON_WATCH=0` and `DRY_RUN=1`. At boot, **Factory Reset Guard starts the watcher live** by temporarily overriding those settings (`ENABLE=1`, `DRY_RUN=0`, unlimited runtime), then restores the config file. Therefore, inactive values in the stored file do not prove that the runtime watcher is inactive.
+
 Manual publisher test:
 
 ```sh
@@ -819,6 +1154,29 @@ JN5189 Router
 ```
 
 Do not kill `mha_basis` or `mha_master` as a button reset-protection method. Factory Reset Guard is the correct mechanism.
+
+
+## 21.1 What `post_init.sh` does on every boot
+
+Order matters for diagnostics:
+
+1. starts `syslogd` if missing;
+2. checks Aqara STA/AP provisioning state;
+3. starts Factory Reset Guard so `/dev/input` is isolated before the stock stack;
+4. starts stock services through **`fw_manager.sh -r`**;
+5. starts `service_trim`;
+6. waits for Wi-Fi association;
+7. reapplies a confirmed static IP if present, without modifying `fw_manager.sh`;
+8. requests persistent Telnet through `fw_manager.sh -t -k`;
+9. starts Wi-Fi Recovery/portal when installed;
+10. keeps the stock Zigbee stack (`app_monitor.sh` / `mzigbee_agent`) from reclaiming JN5189;
+11. restarts `mha_master -b` for legacy-event compatibility;
+12. removes stale `cat /dev/ttyS1` readers and configures the UART at `115200 raw`;
+13. boots JN5189 normally: GPIO33=`1`, reset pulse GPIO18 `1 → 0`;
+14. starts the legacy button bridge if configured;
+15. sends RGB OFF after stabilization.
+
+**Do not change this order without a demonstrated reason.** In particular, never replace `fw_manager.sh -r` with `fw_manager.sh -f -r`.
 
 ---
 
@@ -1268,6 +1626,7 @@ Do not assume an existing-Router update is identical to first-time stock convers
 | 1886 | UART tunnel created by the integration |
 | 1888 | temporary ISP/SPSDK listener |
 | 1889 | temporary file transfer from hub |
+| 1884 | legacy MQTT client/tunnel reference; not used by the current flow |
 | 8080 | Wi-Fi Recovery portal |
 | 12345 | temporary manual transfer to hub |
 | 12346 | individual media player |
@@ -1309,6 +1668,15 @@ Use `SHA256SUMS.txt` and `Verify-Kit.ps1` for whole-kit integrity rather than re
 # 33. Final acceptance checklist
 
 Do not call the hub finished until every relevant item is confirmed.
+
+### Initial access
+
+- [ ] stock hub added to Xiaomi Home on 2.4 GHz
+- [ ] DHCP reservation created
+- [ ] MiIO token obtained and verified with `device info`
+- [ ] Telnet method known: `5-2-2-2-2-2-2` or MiIO helper
+- [ ] `telnet HUB_IP` opens the hub shell
+- [ ] verified model is `lumi.gateway.aeu01`
 
 ### Kit and PC
 
@@ -1373,6 +1741,38 @@ Do not call the hub finished until every relevant item is confirmed.
 ---
 
 # 34. Recovery and rollback
+
+## 34.0 Generic manual file transfer
+
+If you need to send one individual kit script manually for diagnostics, the project method is:
+
+On the hub:
+
+```sh
+rm -f /tmp/FILE_NAME
+nc -l -p 12345 > /tmp/FILE_NAME
+```
+
+On Windows:
+
+```powershell
+.\scripts\windows\Send-FileToM1S.ps1 `
+  -HubIp HUB_IP `
+  -Path .\PATH_IN_KIT\FILE_NAME `
+  -Port 12345
+```
+
+Then on the hub:
+
+```sh
+ls -l /tmp/FILE_NAME
+/bin/sh -n /tmp/FILE_NAME
+echo "syntax=$?"
+busybox sha256sum /tmp/FILE_NAME 2>/dev/null || true
+```
+
+For a shell script, `syntax=0` is mandatory before execution. Do not use this method to overwrite 0.10.0 with older files “just to test”.
+
 
 ## 34.1 SPSDK timeout
 

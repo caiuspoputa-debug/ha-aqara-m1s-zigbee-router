@@ -4,7 +4,7 @@
 
 **Kit hub:** `0.10.0 Stable Ultimate`  
 **Data documentației:** 2026-09-19  
-**Revizia README:** `R2 — Master Documentation`  
+**Revizia README:** `R3 — Self-Contained Master Manual`  
 **Integrare Home Assistant inclusă:** `aqara_m1s_zigbee_router 0.21.7`  
 **Model țintă:** Aqara M1S Gen 1 `lumi.gateway.aeu01`
 
@@ -39,7 +39,26 @@ hub stock
 
 Primul hub nou pe care îl facem cu acest kit va fi validarea hardware finală. Dacă apare o problemă înainte de flash, fluxul este construit să se oprească fără să scrie JN5189.
 
-Revizia R2 adaugă informațiile operaționale utile din README-ul proiectului GitHub, dar le verifică față de snapshotul real `0.21.7` înainte de includere. Istoricul vechi `0.20.x / hub v0.8` nu este folosit ca instrucțiune curentă.
+Revizia R3 este scrisă ca **manual autonom**: un utilizator care nu cunoaște proiectul trebuie să poată porni de la un M1S stock și să ajungă la hubul final fără să consulte conversațiile noastre sau README-uri vechi. Informațiile dependente de versiune sunt verificate față de snapshotul real `0.21.7` și față de fișierele incluse în kit.
+
+
+### Reper tehnic cunoscut al proiectului
+
+Configurația pe care a fost construit proiectul are următoarele repere confirmate istoric:
+
+```text
+Model:                  lumi.gateway.aeu01
+Firmware stock reper:   3.1.3_0009
+Linux:                  MIPS, kernel 3.10.90
+BusyBox:                1.22.1
+JN5189 UART:             /dev/ttyS1
+UART:                    115200 8N1
+GPIO18:                  reset JN5189, activ la 1
+GPIO33:                  ISP=0, boot normal=1
+FLASH JN5189:            Memory ID 0, 0x9DE00 bytes, sector 0x200
+```
+
+`3.1.3_0009` este **reperul stock cunoscut**, nu o afirmație că orice alt firmware este incompatibil. Dacă un hub nou are alt firmware, nu presupune automat că procedura este identică: verifică modelul, Telnetul, UART-ul și geometria JN5189 înainte de orice scriere. Modelul și geometria FLASH sunt condiții de oprire dacă diferă.
 
 ---
 
@@ -222,6 +241,21 @@ Pentru instalarea normală pe un hub nou, pachetul principal transferat este **i
 
 Dacă un pas raportează `FAIL`, `ERROR`, `MISMATCH` sau nu afișează markerul așteptat, **STOP la acel pas**.
 
+### Oprește procedura imediat dacă
+
+- modelul nu este exact `lumi.gateway.aeu01`;
+- IP-ul nu este rezervat sau rețeaua este instabilă;
+- tokenul MiIO nu este verificat;
+- Telnet nu funcționează stabil;
+- SPSDK nu detectează `JN5189` sau geometria FLASH diferă;
+- există un `cat /dev/ttyS1` manual sau `mzigbee_agent` deține UART-ul înainte de ISP;
+- unul dintre backupuri nu are exact `646656` bytes;
+- SHA256 A și B diferă;
+- firmware-ul nu are exact `209296` bytes și SHA256-ul documentat;
+- scriptul de flash nu afișează markerii așteptați;
+- ești între ERASE și WRITE: în acel interval **nu folosi rebootul ca test**.
+
+
 ---
 
 # 5. Regula de prompt
@@ -275,26 +309,72 @@ python -m pip install "spsdk[dk6]"
 python -m spsdk.apps.dk6prog --help
 ```
 
+Dacă lipsește clientul Telnet Windows, activează **Telnet Client** din *Optional Features / Windows Features*. Alternativ, dintr-un PowerShell/CMD deschis ca Administrator:
+
+```powershell
+dism /online /Enable-Feature /FeatureName:TelnetClient
+```
+
 ---
 
-# 7. Pregătirea hubului stock
+# 7. Pregătirea hubului stock și tokenul MiIO
 
-Înainte de modificări:
+Această etapă este descrisă de la zero. Nu continua până când hubul stock este stabil în rețea și tokenul MiIO este verificat.
 
-- adaugă hubul în Xiaomi Home;
-- folosește Wi-Fi 2.4 GHz;
-- rezervă adresa curentă în DHCP;
-- obține tokenul MiIO și păstrează-l separat;
-- verifică faptul că hubul funcționează normal stock.
+## 7.1 Adaugă hubul în Xiaomi Home
 
-Pentru fiecare hub păstrează o fișă separată:
+1. Dacă este necesar, resetează hubul sau pune-l în modul de asociere.
+2. Pentru trecerea în modul Xiaomi/Mi Home, secvența folosită/documentată în proiect este **dublu-click** pe buton.
+3. Adaugă hubul în Xiaomi Home pe Wi-Fi **2.4 GHz**.
+4. Folosește regiunea corectă a contului Xiaomi.
+5. Confirmă în aplicație că hubul este online și funcționează stock.
+6. În router identifică MAC-ul Wi-Fi al hubului și creează o **rezervare DHCP**.
+7. Repornește normal hubul și confirmă că primește aceeași adresă IP.
+
+**Dublu-click-ul pentru ecosistem nu este secvența de activare Telnet.**
+
+## 7.2 Obține tokenul MiIO
+
+Metoda folosită în proiect este integrarea HACS **Xiaomi Gateway 3 / XiaomiGateway3 de AlexxIT**, prin partea sa Cloud. Ea poate afișa tokenurile dispozitivelor din contul Mi Home chiar dacă acel dispozitiv nu este controlat direct de integrare.
+
+Pași:
+
+1. Home Assistant → **HACS → Integrations**.
+2. Caută **Xiaomi Gateway 3** / `AlexxIT/XiaomiGateway3` și instaleaz-o.
+3. Repornește Home Assistant dacă este cerut.
+4. Configurează partea **Cloud** cu același cont Xiaomi și aceeași regiune folosite în Xiaomi Home.
+5. În lista dispozitivelor contului găsește modelul `lumi.gateway.aeu01`.
+6. Copiază tokenul MiIO și păstrează-l ca pe o parolă.
+
+Tokenul are în mod normal **32 caractere hexazecimale**.
+
+Nu pune tokenul în README, capturi, GitHub sau arhive distribuite.
+
+### Dacă nu folosești HACS
+
+Ai nevoie tot de tokenul MiIO înainte de metoda software de activare Telnet. Poți folosi o altă metodă de extragere a tokenului compatibilă cu contul/regiunea ta, dar **nu continua până când tokenul nu este verificat cu comanda de mai jos**.
+
+## 7.3 Verifică tokenul înainte de activarea Telnet
+
+În PowerShell pe PC:
+
+```powershell
+python -m miio.cli device --ip HUB_IP --token MIIO_TOKEN info
+```
+
+Trebuie să primești informațiile dispozitivului. Dacă primești timeout, token invalid sau date de la alt dispozitiv, **STOP**.
+
+## 7.4 Fișa privată a hubului
+
+Pentru fiecare hub păstrează separat:
 
 ```text
 Nume hub:
 Model:
 MAC Wi-Fi:
-IP inițial:
+IP rezervat:
 Firmware stock:
+Token MiIO: păstrat separat, NU în fișa publică
 Data backupului JN5189:
 SHA256 backup A:
 SHA256 backup B:
@@ -303,45 +383,128 @@ Nume dispozitiv Zigbee2MQTT:
 Nume intrare Home Assistant:
 ```
 
-Nu pune tokenul MiIO în această fișă dacă documentul va fi distribuit.
-
 ---
 
-# 8. Activează Telnet temporar
+# 8. Activează Telnet temporar — PAS CRITIC
 
-Din PowerShell:
+**Fără Telnet nu poți instala kitul. Nu trece la secțiunea 9 până când `telnet HUB_IP` nu deschide shell-ul hubului.**
+
+## 8.1 Metoda fizică documentată
+
+Pentru firmware stock compatibil, secvența fizică documentată în proiect este:
+
+```text
+5-2-2-2-2-2-2
+```
+
+Aceasta este **secvența pentru activarea Telnet**. Este diferită de dublu-click-ul pentru modul Xiaomi/Mi Home.
+
+README-ul păstrează secvența exact cum a fost documentată în proiect și **nu inventează timpi între grupurile de apăsări**. Dacă firmware-ul tău nu deschide Telnet prin această metodă, folosește metoda MiIO de mai jos.
+
+## 8.2 Metoda recomandată din kit — PowerShell + MiIO
+
+Din rădăcina kitului, pe Windows:
 
 ```powershell
 .\scripts\windows\Enable-TemporaryTelnet.ps1 -HubIp HUB_IP
 ```
 
-Scriptul cere tokenul MiIO ascuns, verifică întâi dispozitivul și apoi trimite cererea de Telnet.
+Scriptul:
 
-Markerii așteptați:
+1. cere tokenul MiIO mascat;
+2. verifică tokenul prin `Device.info()`;
+3. numai după verificare trimite comanda de activare Telnet.
+
+Markerii corecți:
 
 ```text
 MIIO_TOKEN_OK
 TELNET_REQUEST_SENT HUB_IP
 ```
 
-Conectare:
+Dacă Python nu este `C:\Windows\py.exe`, indică executabilul real:
+
+```powershell
+.\scripts\windows\Enable-TemporaryTelnet.ps1 `
+  -HubIp HUB_IP `
+  -Python "C:\Path\To\python.exe"
+```
+
+## 8.3 Fallback manual MiIO
+
+Dacă trebuie diagnosticat helperul PowerShell, comanda MiIO folosită istoric este:
+
+```powershell
+python -m miio.cli device --ip HUB_IP --token MIIO_TOKEN raw_command set_ip_info '{"ssid":"\\"\\"","pswd":"123123 ; passwd -d admin ; passwd -d root ; telnetd"}'
+```
+
+Această comandă este pentru **PowerShell/PC**, nu pentru shell-ul hubului. Ruleaz-o numai în LAN și nu salva tokenul real în documente publice.
+
+
+Comanda validată face explicit trei lucruri pe partea de acces administrativ:
+
+```text
+passwd -d admin
+passwd -d root
+telnetd
+```
+
+De aceea autentificarea documentată este cu parolă goală pentru `admin` și, ca alternativă, `root`. Consideră acest lucru **acces administrativ complet și necriptat**. Nu expune portul `23` în Internet și nu folosi această stare pe o rețea în care nu ai încredere.
+
+## 8.4 Conectează-te prin Telnet
+
+Pe PC:
 
 ```powershell
 telnet HUB_IP
 ```
 
-Login documentat:
+Login validat în proiect:
 
 ```text
 user: admin
 password: gol
 ```
 
-Dacă nu apare shell-ul hubului, nu continua cu comenzile marcate `#`.
+Pe unele stări stock poate funcționa și:
+
+```text
+user: root
+password: gol
+```
+
+După autentificare trebuie să vezi shell-ul Linux al hubului. **Abia din acest moment** rulezi comenzile `/data/...`, `ps`, `ifconfig`, `md5sum`, `tar` etc.
+
+Dacă nu apare shell-ul, **STOP**.
+
+## 8.5 Verificarea inițială după primul login
+
+Pe hub:
+
+```sh
+uname -a
+busybox | head -n 1
+getprop ro.product.model
+ifconfig wlan0
+ps w | grep '[m]zigbee_agent'
+ps w | grep '[a]pp_monitor'
+ps w | grep '[m]ha_master'
+ls -l /dev/ttyS1
+```
+
+Modelul trebuie să fie exact:
+
+```text
+lumi.gateway.aeu01
+```
+
+Confirmă și că `wlan0` are IP-ul rezervat. Dacă modelul este altul sau rețeaua este instabilă, **STOP**.
 
 ---
 
 # 9. Transferă installerul unic 0.10.0
+
+Transferul folosește un listener BusyBox `nc` pe portul `12345`. Este normal ca terminalul Telnet să pară „blocat” după comanda `nc -l`: hubul așteaptă ca PC-ul să trimită fișierul. Nu închide acea fereastră înainte de trimitere.
 
 ## Pe hub
 
@@ -438,6 +601,73 @@ Preflight-ul verifică, fără să afișeze credentialele:
 - Factory Reset Guard activ;
 - service trim activ.
 
+## 10.1 Dacă preflight-ul nu trece — verificări manuale
+
+Nu ocoli `ULTIMATE_PREFLASH_OK`. Folosește verificările de mai jos doar pentru a afla **de ce** a eșuat.
+
+Starea stock care decide STA/AP:
+
+```sh
+/data/scripts/aqara_wifi_boot_state.sh check
+```
+
+Un rezultat sănătos trebuie să ajungă la:
+
+```text
+cloud_provisioned=true
+hap_provisioned=true
+hap_keepalive=true
+user_paired=true
+BOOT_WIFI_SELECTION=STA_EXPECTED
+```
+
+Dacă helperul raportează `AP_RISK`, corecția documentată este:
+
+```sh
+/data/scripts/aqara_wifi_boot_state.sh fix
+/data/scripts/aqara_wifi_boot_state.sh check
+```
+
+Verifică apoi boot hook-ul:
+
+```sh
+/bin/sh -n /data/scripts/post_init.sh
+grep -n 'factory_reset_guard\|service_trim\|fw_manager\|mzigbee_agent\|gpio33' /data/scripts/post_init.sh
+```
+
+### Avertisment critic `fw_manager`
+
+Bootul normal al serviciilor stock folosește:
+
+```text
+fw_manager.sh -r
+```
+
+Opțiunea:
+
+```text
+fw_manager.sh -f -r
+```
+
+intră pe calea de **factory reset** și nu trebuie introdusă în `post_init.sh`. Ultimate folosește intenționat numai bootul normal `-r`; Factory Reset Guard izolează butonul înainte de pornirea stackului stock.
+
+Dacă vrei să confirmi proprietățile fără helper:
+
+```sh
+getprop persist.app.cloud_provisioned
+getprop persist.app.hap_provisioned
+getprop persist.app.hap_keepalive
+getprop persist.app.user_paired
+```
+
+După orice corecție, rulează din nou:
+
+```sh
+/data/scripts/ultimate_preflash_check.sh
+```
+
+și nu continua până când apare exact `ULTIMATE_PREFLASH_OK`.
+
 ---
 
 # 11. Intră JN5189 în ISP
@@ -448,7 +678,21 @@ Pe hub:
 /data/scripts/jn5189_enter_isp_1888.sh
 ```
 
-Nu porni backupul dacă scriptul raportează eroare.
+Rezultatul așteptat trebuie să includă:
+
+```text
+ISP_LISTENER_OK port=1888 ...
+GPIO33=0 GPIO18=0
+```
+
+Nu porni backupul dacă scriptul raportează eroare. Nu rula din nou `jn5189_enter_isp_1888.sh` cât timp o comandă SPSDK este activă.
+
+Dacă ai consumat/închis listenerul înainte de `dk6prog`, rearmează-l:
+
+```sh
+/data/scripts/jn5189_close_isp_1888.sh
+/data/scripts/jn5189_enter_isp_1888.sh
+```
 
 Din Windows, pentru verificare avansată:
 
@@ -469,6 +713,27 @@ Sector 0x200
 ```
 
 Oprește procedura dacă dispozitivul sau geometria memoriei diferă.
+
+
+Dacă `info` nu detectează JN5189, verifică înainte să repeți comanda:
+
+```sh
+ps w | grep '[c]at /dev/ttyS1'
+ps w | grep '[m]zigbee_agent'
+ps w | grep '[a]pp_monitor'
+netstat -lnt | grep 1888
+```
+
+Pentru un `cat /dev/ttyS1` care reapare și trebuie identificat:
+
+```sh
+for p in $(ps w | grep '[c]at /dev/ttyS1' | awk '{print $1}'); do
+  echo "CAT=$p"
+  grep PPid /proc/$p/status
+done
+```
+
+Nu opri generic toate procesele `nc`; unele sunt folosite legitim de audio sau de tunelurile temporare ale integrării.
 
 ---
 
@@ -532,6 +797,16 @@ Erase pentru prima conversie: 0x0..0x33200
 
 Numele fișierului nu este suficient. Dimensiunea și SHA256 sunt identitatea firmware-ului.
 
+
+Verificare manuală pe Windows:
+
+```powershell
+Get-Item .\firmware\jn5189_router_rgb_lux_rejoin_test.bin
+Get-FileHash .\firmware\jn5189_router_rgb_lux_rejoin_test.bin -Algorithm SHA256
+```
+
+Dacă dimensiunea sau hashul diferă, **STOP** chiar dacă numele fișierului este identic.
+
 ---
 
 # 14. Flash JN5189 — numai după backup valid
@@ -570,6 +845,27 @@ Nu face readback imediat în fluxul normal. SPSDK poate pierde handshake-ul dup�
 
 Nu repeta ERASE/WRITE doar din cauza unui timeout la readback.
 
+
+### 14.1 Referință SPSDK manuală — numai pentru diagnostic avansat
+
+Fluxul normal folosește scriptul `JN5189-Flash-WRITE.ps1`, deoarece acesta impune poarta de backup. Comenzile de mai jos **ocolesc acea protecție** și sunt documentate numai pentru recovery/diagnostic atunci când știi exact starea hubului.
+
+```powershell
+# Identificare
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n info
+
+# ERASE NUMAI la prima conversie stock / recovery justificat
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n erase 0x0 0x33200 0
+
+# WRITE imagine Router validată
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n write 0x0 ".\firmware\jn5189_router_rgb_lux_rejoin_test.bin" 0
+
+# Readback exact al imaginii Router
+python -m spsdk.apps.dk6prog -b PYSERIAL -d "socket://HUB_IP:1888" -n read -o ".\readback.bin" 0x0 209296 0
+```
+
+În SPSDK 3.10, `erase` folosește argumentele poziționale de mai sus. Nu face full-chip erase și nu scrie alte Memory ID-uri.
+
 ---
 
 # 15. Închide ISP și bootează Routerul
@@ -594,20 +890,18 @@ Dacă nu apare:
 
 ---
 
-# 16. Adaugă hubul în Home Assistant
+# 16. Instalează integrarea și adaugă hubul în Home Assistant
 
-Versiunea inclusă în kit:
+Versiunea reproductibilă inclusă în kit:
 
 ```text
-0.21.7
+Aqara M1S Zigbee Router 0.21.7
 ```
 
-Dacă repo-ul HACS este deja instalat și actualizat, adaugi doar noul hub.
-
-Repo:
+Repository:
 
 ```text
-caiuspoputa-debug/ha-aqara-m1s-zigbee-router
+https://github.com/caiuspoputa-debug/ha-aqara-m1s-zigbee-router
 ```
 
 Snapshot offline:
@@ -616,9 +910,68 @@ Snapshot offline:
 home_assistant/ha-aqara-m1s-zigbee-router-v0.21.7-SNAPSHOT.zip
 ```
 
-Configurarea folosește Telnet local. Identitatea dispozitivului este stabilă după MAC-ul Wi-Fi, astfel încât schimbarea ulterioară a IP-ului să nu creeze un dispozitiv nou.
+## 16.1 Dacă ai HACS
 
-Adaugă integrarea înainte de rebootul final, apoi verifică entitățile după stabilizare.
+1. Home Assistant → **HACS → Integrations**.
+2. Deschide meniul **Custom repositories**.
+3. Adaugă:
+   ```text
+   https://github.com/caiuspoputa-debug/ha-aqara-m1s-zigbee-router
+   ```
+4. Category: **Integration**.
+5. Instalează **Aqara M1S Zigbee Router**.
+6. Repornește complet Home Assistant.
+7. Verifică `custom_components/aqara_m1s_zigbee_router/manifest.json`. Pentru snapshotul acestui kit versiunea este `0.21.7`.
+
+Dacă HACS are deja o versiune compatibilă instalată, nu reinstala integrarea pentru fiecare hub nou.
+
+## 16.2 Dacă NU ai HACS — instalare manuală/offline
+
+1. Deschide `home_assistant/ha-aqara-m1s-zigbee-router-v0.21.7-SNAPSHOT.zip`.
+2. Extrage directorul:
+   ```text
+   custom_components/aqara_m1s_zigbee_router
+   ```
+3. Copiază-l în Home Assistant la:
+   ```text
+   /config/custom_components/aqara_m1s_zigbee_router
+   ```
+4. Repornește complet Home Assistant.
+
+La final trebuie să existe:
+
+```text
+/config/custom_components/aqara_m1s_zigbee_router/manifest.json
+```
+
+și versiunea să fie `0.21.7` pentru snapshotul inclus.
+
+## 16.3 Adaugă noul hub
+
+În Home Assistant:
+
+```text
+Settings / Setări
+→ Devices & services / Dispozitive și servicii
+→ Add integration / Adaugă integrare
+→ Aqara M1S Zigbee Router
+```
+
+Completează:
+
+```text
+Host:      HUB_IP
+Port:      23
+Username:  admin
+Password:  gol
+Name:      un nume unic pentru hub
+```
+
+Dacă pe hub ai confirmat manual alt user/parolă Telnet, folosește exact credentialele testate.
+
+Integrarea folosește Telnet local. Identitatea config-entry-ului este stabilizată după MAC-ul Wi-Fi (`mac:<wifi_mac>`), astfel încât schimbarea controlată ulterioară a IP-ului să actualizeze aceeași intrare.
+
+**Adaugă integrarea înainte de rebootul final**, apoi continuă cu secțiunea 17.
 
 ---
 
@@ -662,6 +1015,30 @@ ULTIMATE_POSTBOOT_OK
 ```
 
 `service_trim` are intenționat o întârziere de aproximativ 120 s. Dacă numai acel status nu este încă disponibil, repetă verificarea după stabilizarea completă.
+
+Dacă verificatorul automat nu trece, aceste comenzi sunt sigure pentru diagnostic:
+
+```sh
+cat /tmp/post_init.log
+cat /tmp/factory_reset_guard_boot.status
+cat /tmp/gpio_button_watch.status
+cat /tmp/service_trim.status
+mount | grep /dev/input
+ps w | grep '[g]pio_button_watch.sh'
+ps w | grep '[t]elnetd'
+ps w | grep '[m]zigbee_agent'
+cat /sys/class/gpio/gpio33/value
+cat /sys/class/gpio/gpio18/value
+netstat -lnt | grep 1888
+```
+
+După boot stabil:
+- GPIO33 trebuie să fie `1`;
+- GPIO18 trebuie să fie `0`;
+- portul `1888` nu trebuie să mai asculte;
+- `mzigbee_agent` nu trebuie să dețină UART-ul;
+- `post_init.log` trebuie să existe;
+- guardul și watcherul trebuie să raporteze starea activă.
 
 Verifică și practic:
 
@@ -785,6 +1162,35 @@ hold_repeat
 hold_release
 ```
 
+### Topic MQTT și timpii butonului
+
+Publisherul real din acest kit publică pe:
+
+```text
+m1s/<BUTTON_TOPIC_ID>/button/action
+```
+
+La prima inițializare, dacă `BUTTON_TOPIC_ID` este gol, managerul de rețea îl fixează la **ultimul octet al IP-ului curent** și îl salvează în:
+
+```text
+/data/m1s_network/network.conf
+```
+
+Acest ID rămâne stabil la schimbarea ulterioară a IP-ului static, astfel încât topicul butonului să nu se schimbe doar pentru că adresa IPv4 s-a schimbat. Dacă ID-ul nu este încă salvat, publisherul are fallback la ultimul octet al IP-ului curent.
+
+Valorile de bază ale watcherului din kit sunt:
+
+```text
+GPIO_BUTTON=7
+ACTIVE_VALUE=1
+POLL_INTERVAL_TENTHS=1      # 0.1 s
+DOUBLE_WINDOW_TENTHS=8      # 0.8 s
+HOLD_TENTHS=12              # 1.2 s până la hold
+HOLD_REPEAT_TENTHS=5        # 0.5 s între repeat-uri
+```
+
+Fișierul persistent `gpio_button_watch.conf` este păstrat conservator cu `ENABLE_GPIO_BUTTON_WATCH=0` și `DRY_RUN=1`. La boot, **Factory Reset Guard pornește watcherul în mod live** printr-o copie temporară a setărilor (`ENABLE=1`, `DRY_RUN=0`, runtime nelimitat), apoi restaurează fișierul de configurare. De aceea nu interpreta valorile inactive din fișier ca dovadă că watcherul nu rulează.
+
 Test manual al publisherului:
 
 ```sh
@@ -795,6 +1201,19 @@ echo "rc=$?"
 Cu guardul activ, o apăsare fizică trebuie să ajungă prin GPIO7/MQTT și nu trebuie să creeze un nou click stock `basis.button`.
 
 Calea `button_watch.sh` pe loguri rămâne pentru compatibilitate/diagnostic, dar nu este metoda principală de protecție la reset.
+
+### Rollback Factory Reset Guard
+
+Dacă trebuie să reactivezi temporar calea stock a butonului pentru diagnostic:
+
+```sh
+cp /data/scripts/factory_reset_guard_boot.conf /data/scripts/factory_reset_guard_boot.conf.before_disable
+sed -i 's/^ENABLE_FACTORY_RESET_BOOT_GUARD=.*/ENABLE_FACTORY_RESET_BOOT_GUARD=0/' /data/scripts/factory_reset_guard_boot.conf
+sync
+reboot
+```
+
+Asta poate readuce comportamentul stock de reset al butonului. Păstrează copia `.before_disable` pentru revenire.
 
 ---
 
@@ -819,6 +1238,29 @@ JN5189 Router
 ```
 
 Nu opri brutal `mha_basis` sau `mha_master` pentru protecția butonului. Factory Reset Guard este mecanismul corect.
+
+
+## 21.1 Ce face `post_init.sh` la fiecare boot
+
+Ordinea este importantă pentru diagnostic:
+
+1. pornește `syslogd` dacă lipsește;
+2. verifică stările Aqara de provisioning STA/AP;
+3. pornește Factory Reset Guard, care izolează `/dev/input` înainte de stackul stock;
+4. pornește serviciile stock prin **`fw_manager.sh -r`**;
+5. pornește `service_trim`;
+6. așteaptă asocierea Wi-Fi;
+7. reaplică IP-ul static confirmat, dacă există, fără să modifice `fw_manager.sh`;
+8. solicită Telnet persistent prin `fw_manager.sh -t -k`;
+9. pornește Wi-Fi Recovery/portal dacă sunt instalate;
+10. ține oprit stackul Zigbee stock (`app_monitor.sh` / `mzigbee_agent`) care ar ocupa JN5189;
+11. repornește `mha_master -b` pentru compatibilitatea evenimentelor legacy;
+12. elimină cititoare vechi `cat /dev/ttyS1`, setează UART-ul la `115200 raw`;
+13. bootează JN5189 normal: GPIO33=`1`, pulse reset GPIO18 `1 → 0`;
+14. pornește bridge-ul legacy al butonului dacă este configurat;
+15. trimite RGB OFF după stabilizare.
+
+**Nu modifica această ordine fără motiv demonstrat.** În special, nu înlocui `fw_manager.sh -r` cu `fw_manager.sh -f -r`.
 
 ---
 
@@ -1268,6 +1710,7 @@ Nu presupune că procedura de update a unui Router existent este identică cu pr
 | 1886 | tunel UART creat de integrare |
 | 1888 | listener temporar ISP/SPSDK |
 | 1889 | transfer temporar de fișier de pe hub |
+| 1884 | referință/client MQTT legacy; nu este folosit de fluxul curent |
 | 8080 | portal Wi-Fi Recovery |
 | 12345 | transfer manual temporar către hub |
 | 12346 | media player individual |
@@ -1309,6 +1752,15 @@ Pentru integritatea întregului kit folosește `SHA256SUMS.txt` și `Verify-Kit.
 # 33. Checklist final — hub gata
 
 Nu considera hubul terminat până când toate punctele relevante sunt bifate:
+
+### Acces inițial
+
+- [ ] hub stock adăugat în Xiaomi Home pe 2.4 GHz
+- [ ] DHCP reservation creată
+- [ ] token MiIO obținut și verificat cu `device info`
+- [ ] metoda Telnet cunoscută: `5-2-2-2-2-2-2` sau MiIO helper
+- [ ] `telnet HUB_IP` deschide shell-ul hubului
+- [ ] modelul verificat este `lumi.gateway.aeu01`
 
 ### Kit și PC
 
@@ -1373,6 +1825,38 @@ Nu considera hubul terminat până când toate punctele relevante sunt bifate:
 ---
 
 # 34. Recovery și revenire
+
+## 34.0 Transfer manual generic de fișier
+
+Dacă trebuie să trimiți manual un script individual din kit pentru diagnostic, metoda folosită de proiect este:
+
+Pe hub:
+
+```sh
+rm -f /tmp/NUME_FISIER
+nc -l -p 12345 > /tmp/NUME_FISIER
+```
+
+În Windows:
+
+```powershell
+.\scripts\windows\Send-FileToM1S.ps1 `
+  -HubIp HUB_IP `
+  -Path .\CALEA_DIN_KIT\NUME_FISIER `
+  -Port 12345
+```
+
+Apoi pe hub:
+
+```sh
+ls -l /tmp/NUME_FISIER
+/bin/sh -n /tmp/NUME_FISIER
+echo "syntax=$?"
+busybox sha256sum /tmp/NUME_FISIER 2>/dev/null || true
+```
+
+Pentru un script shell, `syntax=0` este obligatoriu înainte de execuție. Nu folosi această metodă pentru a substitui fișiere vechi peste 0.10.0 „doar ca test”.
+
 
 ## 34.1 SPSDK timeout
 
@@ -1570,5 +2054,33 @@ Verify-Kit
 ```
 
 **Nu trece la etapa următoare până când markerul etapei curente nu este corect.**
+
+
+### Testul README-ului
+
+Dacă revii la proiect peste luni sau dacă altcineva citește documentația de pe GitHub, nu trebuie să știe nimic din conversațiile anterioare. Din acest README trebuie să poată afla:
+
+- ce model este acceptat;
+- ce software trebuie instalat pe PC;
+- cum se adaugă hubul stock în Xiaomi Home;
+- cum se obține și verifică tokenul MiIO;
+- **secvența fizică Telnet `5-2-2-2-2-2-2`**;
+- metoda MiIO care activează Telnet și golește parolele `admin`/`root`;
+- cum se face login;
+- cum se transferă fișiere;
+- cum se pregătește Linux-ul fără a scrie JN5189;
+- ce înseamnă `ULTIMATE_PREFLASH_OK`;
+- cum se intră în ISP;
+- cum se verifică JN5189;
+- cum se fac și se validează cele două backupuri;
+- ce firmware și hash sunt permise;
+- cum se face flash numai după backup;
+- cum se bootează Routerul și se adaugă în Zigbee2MQTT;
+- cum se instalează integrarea Home Assistant de la zero;
+- cum se validează rebootul final;
+- cum funcționează butonul, MQTT, audio, WAV, Wi-Fi Recovery și IP-ul static;
+- cum se diagnostichează și cum se revine spre stock.
+
+Dacă una dintre aceste informații lipsește într-o revizie viitoare, README-ul nu trebuie considerat master.
 
 Pentru auditul tehnic al buildului vezi `docs/VALIDATION_REPORT.md`.
