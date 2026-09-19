@@ -1,3 +1,10 @@
+v0.21.7
+Static-IP UI only: explicit numeric BOX selectors, min 2, max 254, step 1, in both static forms.
+Network client and hub scripts unchanged from v0.21.5.
+LIMIT: The updated dialog has not been visually verified in a running Home Assistant instance.
+
+Previous release validation:
+
 v0.21.5
 PASS: Live read-only check confirmed rmdir is unavailable, rm -r is available, and the old lock persists despite the 0.21.4 calculation repair.
 PASS: Ten regression tests pass, including the missing-rmdir environment and the integration's real abandoned-lock cleanup command.

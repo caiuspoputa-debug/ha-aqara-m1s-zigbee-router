@@ -188,12 +188,7 @@ async def async_setup_entry(
     device_registry = dr.async_get(hass)
     stable_identifier = device_identifier(entry)
     legacy_device = device_registry.async_get_device(identifiers={(DOMAIN, host)})
-    stable_device = device_registry.async_get_device(identifiers={stable_identifier})
-    if (
-        legacy_device is not None
-        and stable_identifier not in legacy_device.identifiers
-        and stable_device is None
-    ):
+    if legacy_device is not None and stable_identifier not in legacy_device.identifiers:
         device_registry.async_update_device(
             legacy_device.id,
             new_identifiers={stable_identifier},
@@ -220,34 +215,6 @@ async def async_setup_entry(
         device_registry.async_update_device(device.id, **device_updates)
 
     entity_registry = er.async_get(hass)
-
-    # Clean up old IP-based device-registry rows that can remain after the hub
-    # has already moved to its stable MAC identifier. Preserve any entities by
-    # moving them to the canonical MAC device before removing the stale device.
-    for legacy_entry in dr.async_entries_for_config_entry(
-        device_registry, entry.entry_id
-    ):
-        if legacy_entry.id == device.id:
-            continue
-        domain_identifiers = {
-            identifier
-            for identifier in legacy_entry.identifiers
-            if identifier[0] == DOMAIN
-        }
-        if not domain_identifiers or not all(
-            _parse_wifi_ipv4(identifier[1]) == identifier[1]
-            for identifier in domain_identifiers
-        ):
-            continue
-        for entity_entry in er.async_entries_for_config_entry(
-            entity_registry, entry.entry_id
-        ):
-            if entity_entry.device_id == legacy_entry.id:
-                entity_registry.async_update_entity(
-                    entity_entry.entity_id, device_id=device.id
-                )
-        device_registry.async_remove_device(legacy_entry.id)
-
     obsolete_select_id = entity_registry.async_get_entity_id(
         "select",
         DOMAIN,

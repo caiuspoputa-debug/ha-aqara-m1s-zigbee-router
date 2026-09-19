@@ -1,3 +1,7 @@
+## v0.21.7 - Camp numeric pentru IP static
+
+Ultimul numar al IP-ului se introduce direct, fara slider, si ramane vizibil. Prefixul retelei si valoarea initiala provin din IP-ul actual. Interval: 2-254. Actualizati integrarea si reporniti Home Assistant; kiturile de pe huburi nu necesita modificari.
+
 ## v0.21.5 - Eliminarea blocării pe BusyBox-ul hubului
 
 Verificarea directă a hubului a arătat că rmdir lipsește. De aceea, blocarea veche rămânea chiar după corecția calculului IP. Versiunea aceasta folosește comanda disponibilă rm -r pentru directorul de blocare deținut de manager. Repară automat scriptul cunoscut la trimiterea noului IP din integrare, inclusiv dacă v0.21.4 a aplicat deja prima corecție.

@@ -17,6 +17,9 @@ from homeassistant.helpers.selector import (
     BooleanSelector,
     FileSelector,
     FileSelectorConfig,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -160,7 +163,7 @@ class AqaraM1SZigbeeRouterConfigFlow(
         errors = {}
         current_ip = self._initial_network.get("current_ip", self._pending_user[CONF_HOST])
         current_octet = int(current_ip.rsplit(".", 1)[-1])
-        ip_field = f"{current_ip.rsplit('.', 1)[0]}.xxx"
+        ip_field = f"{current_ip.rsplit('.', 1)[0]}.___"
         if user_input is not None:
             data = dict(self._pending_user)
             network = self._initial_network
@@ -196,8 +199,10 @@ class AqaraM1SZigbeeRouterConfigFlow(
             step_id="network_setup_static",
             data_schema=vol.Schema(
                 {
-                    vol.Required(ip_field, default=current_octet): vol.All(
-                        vol.Coerce(int), vol.Range(min=2, max=254)
+                    vol.Required(ip_field, default=current_octet): NumberSelector(
+                        NumberSelectorConfig(
+                            min=2, max=254, step=1, mode=NumberSelectorMode.BOX
+                        )
                     )
                 }
             ),
@@ -367,7 +372,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         current_ip = status.get(
             "current_ip", str(self.config_entry.data.get(CONF_HOST, ""))
         )
-        ip_field = f"{current_ip.rsplit('.', 1)[0]}.xxx"
+        ip_field = f"{current_ip.rsplit('.', 1)[0]}.___"
         try:
             current_octet = int(current_ip.rsplit(".", 1)[-1])
         except ValueError:
@@ -387,8 +392,10 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             step_id="network_static",
             data_schema=vol.Schema(
                 {
-                    vol.Required(ip_field, default=current_octet): vol.All(
-                        vol.Coerce(int), vol.Range(min=2, max=254)
+                    vol.Required(ip_field, default=current_octet): NumberSelector(
+                        NumberSelectorConfig(
+                            min=2, max=254, step=1, mode=NumberSelectorMode.BOX
+                        )
                     )
                 }
             ),

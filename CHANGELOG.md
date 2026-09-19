@@ -1,3 +1,7 @@
+## 0.21.7 - Precise static IP input
+
+Replace the final-octet slider with an always-visible numeric box in both static-IP forms. Keep the current subnet, initial octet and 2-254 range. Network operations and hub scripts are unchanged.
+
 ## 0.21.5 - Support the hub's minimal BusyBox lock cleanup
 
 - Live read-only diagnosis confirmed that the hub has no rmdir applet; the old lock remained after the calculation repair in 0.21.4.

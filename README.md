@@ -1,3 +1,7 @@
+## v0.21.7 - Numeric static IP field
+
+Type the final IP octet directly in a numeric box; the selected value stays visible. Install this integration update and restart Home Assistant. No hub kit update is needed for this UI change.
+
 ## v0.21.5 - Lock cleanup on the hub's minimal BusyBox
 
 Read-only diagnosis confirmed the hub has no rmdir applet, which left the old lock in place after the IPv4 calculation repair. This version uses the available rm -r command for the manager-owned lock. Static-IP submission repairs either the original known script or the calculation-only repair from 0.21.4.

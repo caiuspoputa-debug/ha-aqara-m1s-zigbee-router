@@ -123,7 +123,7 @@
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",
       "wifi_invalid": "SSID-ul sau parola Wi-Fi nu sunt valide.",
       "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery.",
-      "network_manager_unavailable": "v0.21.5: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
+      "network_manager_unavailable": "v0.21.7: managerul de rețea v0.9 nu a putut fi citit. Verifică jurnalul Home Assistant.",
       "network_confirmation_required": "Bifează confirmarea înainte de schimbarea adresei.",
       "network_manager_update_required": "Corecția managerului de rețea nu a putut fi verificată. Adresa nu a fost schimbată. / The network manager repair could not be verified. No address change was requested.",
       "network_is_gateway": "Adresa aleasă aparține routerului. Alege alt ultim număr. / This address is the router address. Choose a different final number.",
