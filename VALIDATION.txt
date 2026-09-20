@@ -1,68 +1,13 @@
-v0.21.11 HA master-clock scheduler validation
-- Base: v0.21.10 (whose audio path is v0.21.8 plus read-only drift logging)
-- Scope: M1S Media Group only
-- Individual media-player files: unchanged
-- Live group frame size/rate: unchanged, 1120 samples / 35 ms / 32 kHz S32_LE mono
-- Initial remote prefill: unchanged length (1.4 s), now released from one common HA barrier
-- Live group scheduler: one absolute HA monotonic deadline per sequence, queued 280 ms ahead to each member writer
-- Audio-rate correction/resampling: disabled
-- Automatic receiver resync: disabled
-- Hub receiver: unchanged nc -> FIFO -> aplay; no metadata/timestamp bytes are mixed into PCM
-- Master-clock diagnostics: visible WARNING summary every ~30 s plus late-writer warning over 12 ms
-- Python syntax: validated with py_compile/compileall
-- JSON: validated
-- LIMIT: this schedules TCP release against one HA clock; it cannot force the M1S DAC hardware clocks to share a physical oscillator. Real-hub listening/log validation is required.
-
-v0.21.10 diagnostic build validation
-- Base: clean v0.21.8 archive
-- Audio behavior changes: none intended
-- media_group.py: read-only drift instrumentation only
-- Manifest version: 0.21.10
+v0.21.12 shared fanout buffer validation
+- Base: v0.21.10 (which is v0.21.8 audio behavior + read-only diagnostics)
+- v0.21.11 per-chunk deadline scheduler: NOT included
+- HA live fanout: one shared PCM history buffer with one sequence space
+- Per-member HA PCM queues: removed
+- Per-member state: sequence cursor only; slow member isolated only after shared 4 s history overrun
+- Source jitter/prebuffer and remote aplay/FIFO/TCP buffering remain intentionally unchanged
+- Adaptive rate correction: disabled as before
+- Periodic automatic receiver resync: disabled as before
+- Individual media players: unchanged
 - Python syntax: validated with py_compile
-- JSON files: validated
-- ZIP integrity: validate after packaging
-
-v0.21.7
-Static-IP UI only: explicit numeric BOX selectors, min 2, max 254, step 1, in both static forms.
-Network client and hub scripts unchanged from v0.21.5.
-LIMIT: The updated dialog has not been visually verified in a running Home Assistant instance.
-
-Previous release validation:
-
-v0.21.5
-PASS: Live read-only check confirmed rmdir is unavailable, rm -r is available, and the old lock persists despite the 0.21.4 calculation repair.
-PASS: Ten regression tests pass, including the missing-rmdir environment and the integration's real abandoned-lock cleanup command.
-PASS: Read-only transformation on the hub produced the exact expected checksum; the real /bin/sh syntax check passed.
-LIMIT: No live IP change or script installation was performed by Codex. User must initiate and verify the change through Home Assistant.
-PASS: Reproduced v0.9 shell defect locally: selecting .200 becomes the gateway .1 and is rejected with exit code 19.
-PASS: Read-only live check confirmed that hub .106 has the exact defective v0.9 script checksum.
-PASS: Shell regression tests exercise the actual repair and manager lifecycle with isolated OS resources: candidate, confirmation, activation, rollback, address occupied, unknown script and pending operation.
-PASS: Client regression tests require the requested active address and reject a different candidate before confirmation.
-PASS: Script repair uses a checksum gate, backup and atomic replacement; repeated preparation is idempotent.
-PASS: The IP field uses the current subnet prefix and starts with the current final octet.
-PASS: Built directly from the user-supplied resolved v0.20.14 package.
-PASS: Adds only network management, stable identity and related display/topic plumbing; audio, Zigbee and WAV transfer logic is unchanged.
-PASS: Static and DHCP address forms contain no extra confirmation switch; Submit starts the selected operation.
-PASS: An abandoned network lock is removed only when no pending candidate and no active candidate process exist.
-PASS: Read-only live diagnosis on 192.168.0.106 confirmed DHCP mode, the expected MAC identity and an abandoned lock with no pending operation; Codex did not request or apply an address change.
-PASS: Static IPv4 is restricted to the final octet on the current /24 and is confirmed only after the candidate answers with the same Wi-Fi MAC.
-PASS: Hub candidate rollback is scheduled for 120 seconds and does not stop the current address before confirmation.
-PASS: Wi-Fi network changes clear persistent static mode before the existing Wi-Fi recovery flow starts.
-PASS: Device registry identity and config-entry unique ID migrate to the normalized Wi-Fi MAC; entity unique IDs remain unchanged.
-PASS: The MQTT button topic uses the frozen button_topic_id returned by hub bundle v0.9.
-PASS: Config-entry titles use `IPv4 - friendly name`, so `.200`, `.201`, `.202` entries sort by their visible address while device rows keep `friendly name - IPv4`.
-PASS: Network-manager detection ignores stock Telnet command echo and requires the executed BEGIN/END status frame.
-LIMIT: The repaired static-IP path has not been activated by Codex. Complete the change from the Home Assistant integration, then verify static persistence after reboot and return to DHCP.
-
-Previous v0.20.14 validation:
-PASS: Built directly from the user-supplied v0.20.13 FAST-UPLOAD-PROGRESS package.
-PASS: Python AST/syntax validation passes for every integration Python module.
-PASS: manifest and translation JSON parse; manifest reports version 0.20.14.
-PASS: async_step_delete_sound is AST-identical to supplied v0.20.13.
-PASS: client.delete_sound is AST-identical to supplied v0.20.13.
-PASS: every integration code/data file except __init__.py, client.py, config_flow.py and manifest.json is byte-identical to supplied v0.20.13.
-PASS: v0.20.13 upload transport semantics are preserved: TCP first, same Base64 fallback on TCP/finalization exception, same size/MD5 verification and same upload paths.
-PASS: progress callbacks are added to the existing TCP and Base64 transfer paths; Home Assistant progress is monotonic and exact 100% is emitted only after upload_sound returns successfully after verification.
-PASS: successful upload uses a dedicated upload_finish step with zero-second scheduling before config-entry reload; the original one-second finish path used by delete remains unchanged.
-PASS: config-entry title has any stale trailing integration-added IPv4 removed; the device name is re-applied after platform setup with one wlan0 IPv4 from the same command used by the WiFi IP sensor.
-LIMIT: no live M1S hub test was available in this environment. Validate device naming, one WAV upload, one ZIP upload and one delete on the real hub.
+- Manifest version: 0.21.12
+- Real multi-hub acoustic behavior: requires user test on physical M1S hubs

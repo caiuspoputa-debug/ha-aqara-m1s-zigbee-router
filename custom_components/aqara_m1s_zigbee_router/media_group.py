@@ -66,11 +66,12 @@ GROUP_REBUFFER_RESUME_CHUNKS = max(1, round(GROUP_REBUFFER_RESUME_SECONDS / CHUN
 GROUP_REMOTE_PREFILL_CHUNKS = max(1, round(GROUP_REMOTE_PREFILL_SECONDS / CHUNK_SECONDS))
 GROUP_SOURCE_STALL_TIMEOUT = 5.0
 
-# Keep enough per-member queue for the complete jitter window.  Late joiners
-# are primed with the recent shared PCM history and catch up over TCP before
-# entering normal real-time fanout, preventing a 1-2 s echo offset.
-QUEUE_SECONDS = GROUP_JITTER_BUFFER_SECONDS
-QUEUE_CHUNKS = GROUP_JITTER_BUFFER_CHUNKS
+# v0.21.12: the recent PCM history is also the one live fanout buffer for every
+# group member.  Members keep only a sequence cursor into this shared buffer;
+# there are no independent HA-side PCM queues that can drift apart.  A member
+# that falls behind the shared history window is isolated without moving the
+# common group position.
+SHARED_FANOUT_SECONDS = GROUP_JITTER_BUFFER_SECONDS
 SYNC_LEAD_SECONDS = GROUP_REMOTE_PREFILL_SECONDS
 SYNC_LEAD_CHUNKS = GROUP_REMOTE_PREFILL_CHUNKS
 JOIN_BOUNDARY_SECONDS = CHUNK_SECONDS
@@ -151,19 +152,6 @@ DRIFT_DIAGNOSTICS_LOG_INTERVAL_SECONDS = 30.0
 DRIFT_DIAGNOSTICS_HISTORY_SECONDS = 300.0
 DRIFT_DIAGNOSTICS_MIN_SAMPLES = 4
 DRIFT_DIAGNOSTICS_MAX_SAMPLES = 96
-
-# v0.21.11 experimental HA master-clock scheduler. Live PCM frames are queued
-# ahead of time, but every member writer releases the same sequence against the
-# same absolute HA monotonic deadline. No audio resampling or DAC-rate control
-# is performed; this isolates transport/scheduler skew from downstream ALSA/DAC
-# drift while keeping the proven 0.21.8 PCM path and receiver intact.
-MASTER_CLOCK_SCHEDULER_ENABLED = True
-MASTER_CLOCK_SEND_LEAD_SECONDS = 0.280
-MASTER_CLOCK_INITIAL_BARRIER_SECONDS = 0.120
-MASTER_CLOCK_LOG_INTERVAL_SECONDS = 30.0
-MASTER_CLOCK_LATE_WARN_MS = 12.0
-MASTER_CLOCK_LATE_WARN_INTERVAL_SECONDS = 5.0
-
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 FFMPEG_NICE_TARGET = -5
@@ -203,15 +191,6 @@ GROUP_START_COMMAND = (
 )
 
 
-@dataclass(frozen=True)
-class ScheduledGroupFrame:
-    """One PCM period tied to one absolute HA master-clock deadline."""
-
-    sequence: int
-    deadline_monotonic: float
-    payload: bytes
-
-
 @dataclass
 class GroupMember:
     entry_id: str
@@ -221,7 +200,7 @@ class GroupMember:
     selected: bool = True
     state: str = "waiting"
     writer: asyncio.StreamWriter | None = None
-    queue: asyncio.Queue[ScheduledGroupFrame | None] | None = None
+    shared_cursor: int | None = None
     writer_task: asyncio.Task | None = None
     prepare_task: asyncio.Task | None = None
     join_at_sequence: int | None = None
@@ -265,16 +244,6 @@ class GroupMember:
     drift_samples: deque[tuple[float, float]] = field(
         default_factory=lambda: deque(maxlen=DRIFT_DIAGNOSTICS_MAX_SAMPLES)
     )
-    # v0.21.11 HA master-clock transport diagnostics. These measure when HA
-    # releases bytes to each TCP transport; they do not claim to measure the
-    # acoustic DAC output time.
-    master_last_sequence: int | None = None
-    master_last_deadline_monotonic: float | None = None
-    master_last_send_monotonic: float | None = None
-    master_last_lateness_ms: float | None = None
-    master_max_lateness_ms: float = 0.0
-    master_send_samples: int = 0
-    master_last_late_warning_monotonic: float = 0.0
 
 
 class AqaraM1SMediaGroupManager:
@@ -329,10 +298,10 @@ class AqaraM1SMediaGroupManager:
         self._last_soft_resync_check_monotonic: float | None = None
         self._last_adaptive_sync_control_monotonic: float = 0.0
         self._last_drift_summary_monotonic: float = 0.0
-        self._last_master_clock_summary_monotonic: float = 0.0
         self._broadcast_pause_requested = asyncio.Event()
         self._broadcast_paused = asyncio.Event()
         self._fanout_lock = asyncio.Lock()
+        self._fanout_condition = asyncio.Condition(self._fanout_lock)
         self._pcm_history: deque[tuple[int, bytes]] = deque(
             maxlen=GROUP_JITTER_BUFFER_CHUNKS
         )
@@ -597,23 +566,6 @@ class AqaraM1SMediaGroupManager:
             "rebuffer_events": self._rebuffer_events,
             "silence_fill_events": self._silence_fill_events,
             "playout_clock_rebases": self._clock_rebase_count,
-            "master_clock_scheduler_enabled": MASTER_CLOCK_SCHEDULER_ENABLED,
-            "master_clock_send_lead_ms": int(MASTER_CLOCK_SEND_LEAD_SECONDS * 1000),
-            "master_clock_member_sequence": {
-                f"{member.name}@{getattr(member.client, 'host', '?')}": member.master_last_sequence
-                for member in self.ready_members
-            },
-            "master_clock_member_lateness_ms": {
-                f"{member.name}@{getattr(member.client, 'host', '?')}": (
-                    None if member.master_last_lateness_ms is None
-                    else round(member.master_last_lateness_ms, 3)
-                )
-                for member in self.ready_members
-            },
-            "master_clock_member_max_lateness_ms": {
-                f"{member.name}@{getattr(member.client, 'host', '?')}": round(member.master_max_lateness_ms, 3)
-                for member in self.ready_members
-            },
             "selected_hubs": sorted(m.name for m in self.members.values() if m.selected),
             "active_hubs": sorted(m.name for m in self.active_members),
             "ready_hubs": sorted(m.name for m in self.ready_members),
@@ -736,10 +688,23 @@ class AqaraM1SMediaGroupManager:
                 for member in self.members.values()
                 if member.writer is None and member.selected
             },
-            "member_queue_depth_ms": {
-                member.name: int(member.queue.qsize() * CHUNK_SECONDS * 1000)
+            "shared_fanout_buffer_depth_ms": int(
+                len(self._pcm_history) * CHUNK_SECONDS * 1000
+            ),
+            "shared_fanout_oldest_sequence": (
+                self._pcm_history[0][0] if self._pcm_history else None
+            ),
+            "shared_fanout_newest_sequence": (
+                self._pcm_history[-1][0] if self._pcm_history else None
+            ),
+            "member_shared_lag_ms": {
+                member.name: int(
+                    max(0, self._sequence - member.shared_cursor)
+                    * CHUNK_SECONDS
+                    * 1000
+                )
                 for member in self.active_members
-                if member.queue is not None
+                if member.shared_cursor is not None
             },
             "member_lag_age_seconds": {
                 member.name: round(time.monotonic() - member.lag_since_monotonic, 3)
@@ -749,8 +714,8 @@ class AqaraM1SMediaGroupManager:
             "muted_hubs": sorted(
                 member.name for member in self.members.values() if member.muted_in_group
             ),
-            "sync_policy": "ha_master_deadline_per_member_queue_no_rate_correction",
-            "queue_overflow_policy": "detach_only_slow_member",
+            "sync_policy": "single_shared_fanout_buffer_common_sequence_no_adaptive",
+            "queue_overflow_policy": "shared_history_overrun_detach_only_slow_member",
             "receiver_health_interval_seconds": GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS,
             "member_receiver_health": {
                 member.name: member.last_receiver_health
@@ -998,11 +963,7 @@ class AqaraM1SMediaGroupManager:
                     and not receiver_health_task.done()
                 ):
                     receiver_health_task.cancel()
-                queue = member.queue
-                member.queue = None
-                if queue is not None:
-                    with suppress(asyncio.QueueFull):
-                        queue.put_nowait(None)
+                member.shared_cursor = None
                 writer = member.writer
                 member.writer = None
                 member.join_at_sequence = None
@@ -1046,6 +1007,7 @@ class AqaraM1SMediaGroupManager:
         self._last_pcm_monotonic = None
         self._gain_ramp_remaining = 0
         for member in self.members.values():
+            member.shared_cursor = None
             if member.writer is None:
                 member.state = self._idle_member_state(member)
         self._signal_update()
@@ -1389,7 +1351,6 @@ class AqaraM1SMediaGroupManager:
         self._silence_fill_events = 0
         self._stream_started_monotonic = time.monotonic()
         self._last_drift_summary_monotonic = 0.0
-        self._last_master_clock_summary_monotonic = 0.0
         self._last_soft_resync_check_monotonic = self._stream_started_monotonic
         self._playout_epoch_monotonic = None
         self._last_pcm_monotonic = None
@@ -1397,6 +1358,7 @@ class AqaraM1SMediaGroupManager:
             member.lag_since_monotonic = None
             member.lag_peak_chunks = 0
             member.ready_for_fanout = False
+            member.shared_cursor = None
             member.join_at_sequence = 0
             member.state = "waiting_for_sync"
 
@@ -1554,20 +1516,12 @@ class AqaraM1SMediaGroupManager:
         )
         member.next_prepare_monotonic = time.monotonic() + delay
 
-    async def _schedule_frame_deadline(self, sequence: int) -> float:
-        """Return one absolute HA master-clock send deadline for this sequence.
-
-        v0.21.8 paced the broadcaster itself at the playout deadline and only
-        then placed bytes in each member queue. v0.21.11 places the frame into
-        every member queue ahead of time. Each independent writer sleeps against
-        this exact same deadline, so normal asyncio/TCP scheduling jitter is no
-        longer inherited from fanout ordering.
-        """
+    async def _pace_frame(self, sequence: int) -> None:
+        """Pace the common timeline and catch up after short HA stalls."""
         now = time.monotonic()
-        lead = MASTER_CLOCK_SEND_LEAD_SECONDS if MASTER_CLOCK_SCHEDULER_ENABLED else 0.0
         if self._playout_epoch_monotonic is None:
             self._playout_epoch_monotonic = (
-                now + PLAYOUT_START_MARGIN_SECONDS + lead - (sequence * CHUNK_SECONDS)
+                now + PLAYOUT_START_MARGIN_SECONDS - (sequence * CHUNK_SECONDS)
             )
 
         deadline = self._playout_epoch_monotonic + (sequence * CHUNK_SECONDS)
@@ -1577,17 +1531,15 @@ class AqaraM1SMediaGroupManager:
             self._clock_rebase_count += 1
             deadline = self._playout_epoch_monotonic + (sequence * CHUNK_SECONDS)
             _LOGGER.warning(
-                "M1S group master clock rebased lag_ms=%s jitter_window_ms=%s rebases=%s",
+                "M1S group playout clock rebased lag_ms=%s jitter_window_ms=%s rebases=%s",
                 int(lag * 1000),
                 int(GROUP_JITTER_BUFFER_SECONDS * 1000),
                 self._clock_rebase_count,
             )
 
-        enqueue_at = deadline - lead
-        delay = enqueue_at - time.monotonic()
+        delay = deadline - time.monotonic()
         if delay > 0:
             await asyncio.sleep(delay)
-        return deadline
 
     def _schedule_isolate_member(self, member: GroupMember, *, reason: str) -> None:
         if member.detaching:
@@ -1690,19 +1642,12 @@ class AqaraM1SMediaGroupManager:
                     )
 
             member.writer = writer
-            member.queue = asyncio.Queue(maxsize=QUEUE_CHUNKS)
+            member.shared_cursor = None
             member.detaching = False
             member.ready_for_fanout = False
             member.lag_since_monotonic = None
             member.lag_peak_chunks = 0
             member.consecutive_drain_timeouts = 0
-            member.master_last_sequence = None
-            member.master_last_deadline_monotonic = None
-            member.master_last_send_monotonic = None
-            member.master_last_lateness_ms = None
-            member.master_max_lateness_ms = 0.0
-            member.master_send_samples = 0
-            member.master_last_late_warning_monotonic = 0.0
             self._reset_member_adaptive_sync(member)
             member.join_at_sequence = self._sequence if self.ffmpeg_running else 0
             member.state = "waiting_for_sync"
@@ -1739,7 +1684,7 @@ class AqaraM1SMediaGroupManager:
                 await self._cancel_task(task)
             writer = member.writer
             member.writer = None
-            member.queue = None
+            member.shared_cursor = None
             if writer is not None:
                 with suppress(Exception):
                     writer.close()
@@ -1760,7 +1705,7 @@ class AqaraM1SMediaGroupManager:
     def _start_member_writer(self, member: GroupMember, generation: int) -> None:
         if (
             member.writer is None
-            or member.queue is None
+            or member.shared_cursor is None
             or member.generation != generation
         ):
             return
@@ -1861,6 +1806,7 @@ class AqaraM1SMediaGroupManager:
                         )
                     missing = [chunk for seq, chunk in history if cursor <= seq < history_end]
                     if not missing:
+                        member.shared_cursor = history_end
                         self._start_member_writer(member, generation)
                         self._reset_member_drift_diagnostics(member)
                         member.ready_for_fanout = True
@@ -1882,71 +1828,90 @@ class AqaraM1SMediaGroupManager:
         raise RuntimeError("late join became stale before alignment completed")
 
     async def _member_writer_loop(self, member: GroupMember, generation: int) -> None:
-        queue = member.queue
+        """Drain one member from the single shared PCM history by sequence cursor."""
         writer = member.writer
-        if queue is None or writer is None:
+        if writer is None or member.shared_cursor is None:
             return
         consecutive_timeouts = 0
         try:
             while member.generation == generation:
-                frame = await queue.get()
-                try:
-                    if frame is None:
-                        return
-                    if MASTER_CLOCK_SCHEDULER_ENABLED:
-                        delay = frame.deadline_monotonic - time.monotonic()
-                        if delay > 0:
-                            await asyncio.sleep(delay)
-                    send_now = time.monotonic()
-                    lateness_ms = (send_now - frame.deadline_monotonic) * 1000.0
-                    member.master_last_sequence = frame.sequence
-                    member.master_last_deadline_monotonic = frame.deadline_monotonic
-                    member.master_last_send_monotonic = send_now
-                    member.master_last_lateness_ms = lateness_ms
-                    member.master_max_lateness_ms = max(
-                        member.master_max_lateness_ms, lateness_ms
-                    )
-                    member.master_send_samples += 1
-                    writer.write(self._member_chunk(member, frame.payload))
-                    self._maybe_log_master_clock_summary(send_now)
-                    if (
-                        lateness_ms > MASTER_CLOCK_LATE_WARN_MS
-                        and (
-                            member.master_last_late_warning_monotonic <= 0.0
-                            or send_now - member.master_last_late_warning_monotonic
-                            >= MASTER_CLOCK_LATE_WARN_INTERVAL_SECONDS
-                        )
-                    ):
-                        member.master_last_late_warning_monotonic = send_now
-                        _LOGGER.warning(
-                            "M1S GROUP MASTER CLOCK late writer member=%s@%s "
-                            "seq=%s late_ms=%.3f queue_ms=%s action=observe_only",
-                            member.name,
-                            getattr(member.client, "host", "?"),
-                            frame.sequence,
-                            lateness_ms,
-                            int(queue.qsize() * CHUNK_SECONDS * 1000),
-                        )
-                    try:
-                        await asyncio.wait_for(
-                            writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
-                        )
-                        consecutive_timeouts = 0
-                        member.consecutive_drain_timeouts = 0
-                    except asyncio.TimeoutError:
-                        consecutive_timeouts += 1
-                        member.consecutive_drain_timeouts = consecutive_timeouts
-                        if consecutive_timeouts < 2:
-                            _LOGGER.warning(
-                                "M1S group first consecutive TCP drain timeout tolerated "
-                                "member=%s timeout=%ss action=keep_receiver",
-                                member.name,
-                                WRITER_DRAIN_TIMEOUT,
+                chunk: bytes | None = None
+                sequence: int | None = None
+                overflow_reason: str | None = None
+
+                async with self._fanout_condition:
+                    while member.generation == generation:
+                        cursor = member.shared_cursor
+                        if cursor is None:
+                            return
+
+                        if self._pcm_history:
+                            oldest = self._pcm_history[0][0]
+                            newest = self._pcm_history[-1][0]
+                            lag_chunks = max(0, newest + 1 - cursor)
+                            member.lag_peak_chunks = max(
+                                member.lag_peak_chunks, lag_chunks
                             )
-                            continue
-                        raise
-                finally:
-                    queue.task_done()
+
+                            if cursor < oldest:
+                                overflow_reason = (
+                                    f"shared PCM cursor fell behind by "
+                                    f"{int((oldest - cursor) * CHUNK_SECONDS * 1000)} ms; "
+                                    f"history window={int(SHARED_FANOUT_SECONDS * 1000)} ms"
+                                )
+                                break
+
+                            if cursor <= newest:
+                                index = cursor - oldest
+                                sequence, chunk = self._pcm_history[index]
+                                member.shared_cursor = cursor + 1
+                                if lag_chunks > 1:
+                                    if member.lag_since_monotonic is None:
+                                        member.lag_since_monotonic = time.monotonic()
+                                else:
+                                    member.lag_since_monotonic = None
+                                break
+
+                        await self._fanout_condition.wait()
+
+                if overflow_reason is not None:
+                    member.last_error = overflow_reason
+                    _LOGGER.warning(
+                        "M1S group isolating slow member after shared-buffer overrun "
+                        "member=%s cursor=%s oldest=%s current=%s reason=%s",
+                        member.name,
+                        member.shared_cursor,
+                        self._pcm_history[0][0] if self._pcm_history else None,
+                        self._sequence,
+                        overflow_reason,
+                    )
+                    self._set_member_retry(member, failed=True)
+                    member.detaching = True
+                    return
+
+                if chunk is None or sequence is None:
+                    continue
+
+                writer.write(self._member_chunk(member, chunk))
+                try:
+                    await asyncio.wait_for(
+                        writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
+                    )
+                    consecutive_timeouts = 0
+                    member.consecutive_drain_timeouts = 0
+                except asyncio.TimeoutError:
+                    consecutive_timeouts += 1
+                    member.consecutive_drain_timeouts = consecutive_timeouts
+                    if consecutive_timeouts < 2:
+                        _LOGGER.warning(
+                            "M1S group first consecutive TCP drain timeout tolerated "
+                            "member=%s seq=%s timeout=%ss action=keep_receiver",
+                            member.name,
+                            sequence,
+                            WRITER_DRAIN_TIMEOUT,
+                        )
+                        continue
+                    raise
         except asyncio.CancelledError:
             raise
         except Exception as err:
@@ -1981,8 +1946,7 @@ class AqaraM1SMediaGroupManager:
         member.writer_task = None
         health_task = member.receiver_health_task
         member.receiver_health_task = None
-        queue = member.queue
-        member.queue = None
+        member.shared_cursor = None
         writer = member.writer
         member.writer = None
         member.join_at_sequence = None
@@ -1991,9 +1955,8 @@ class AqaraM1SMediaGroupManager:
         member.lag_peak_chunks = 0
         member.consecutive_drain_timeouts = 0
         self._reset_member_adaptive_sync(member)
-        if queue is not None:
-            with suppress(asyncio.QueueFull):
-                queue.put_nowait(None)
+        # Writers wait on the one shared condition; cancelling writer_task above
+        # is enough to release this member without touching peers.
         if prepare_task and prepare_task is not asyncio.current_task():
             await self._cancel_task(prepare_task)
         if task and task is not asyncio.current_task():
@@ -2032,7 +1995,7 @@ class AqaraM1SMediaGroupManager:
     async def _prime_initial_cohort(
         self, source_queue: asyncio.Queue[bytes], generation: int
     ) -> None:
-        """Prime initial receivers from one tightly released HA clock barrier."""
+        """Give every initial receiver the same real PCM cushion before clock start."""
         prime_raw: list[bytes] = []
         while len(prime_raw) < GROUP_REMOTE_PREFILL_CHUNKS:
             try:
@@ -2045,75 +2008,31 @@ class AqaraM1SMediaGroupManager:
 
         prime_pcm = [self._apply_live_pcm_gain(raw) for raw in prime_raw]
         payload = b"".join(prime_pcm)
-        members = [
-            m for m in self.active_members
-            if m.generation > 0 and m.writer is not None
-        ]
+        members = [m for m in self.active_members if m.generation > 0]
         if not members:
             return
 
-        # All receivers are already connected but receive no PCM until this
-        # shared monotonic barrier. writer.write() is intentionally performed
-        # for every member without awaiting between members; drain happens only
-        # afterwards. This is the tightest common start available with the
-        # existing nc -> FIFO -> aplay receiver and introduces no bytes into PCM.
-        barrier = time.monotonic() + (
-            MASTER_CLOCK_INITIAL_BARRIER_SECONDS
-            if MASTER_CLOCK_SCHEDULER_ENABLED else 0.0
-        )
-        delay = barrier - time.monotonic()
-        if delay > 0:
-            await asyncio.sleep(delay)
-
-        released: list[GroupMember] = []
-        release_times: dict[str, float] = {}
-        for member in members:
-            writer = member.writer
-            if writer is None:
-                continue
-            try:
-                writer.write(self._member_payload(member, payload))
-                release_times[member.entry_id] = time.monotonic()
-                released.append(member)
-            except Exception as err:
-                member.last_error = f"initial prefill write failed: {err}"
-                _LOGGER.warning(
-                    "M1S group initial prefill write failed member=%s@%s error=%s",
-                    member.name,
-                    getattr(member.client, "host", "?"),
-                    err,
-                )
-                self._schedule_isolate_member(
-                    member, reason=f"initial prefill write failed: {err}"
-                )
-
-        async def _drain_initial(member: GroupMember) -> Exception | None:
-            writer = member.writer
-            if writer is None:
-                return RuntimeError("initial prefill writer disappeared")
-            try:
-                await asyncio.wait_for(writer.drain(), timeout=WRITER_DRAIN_TIMEOUT)
-                member.consecutive_drain_timeouts = 0
-                return None
-            except Exception as err:  # noqa: BLE001 - result is handled per member
-                return err
-
-        results = await asyncio.gather(
-            *(_drain_initial(member) for member in released),
-            return_exceptions=False,
-        )
+        tasks = {
+            member.entry_id: self.hass.async_create_background_task(
+                self._write_member_burst(
+                    member, payload, stage="initial_remote_prefill"
+                ),
+                f"aqara_m1s_group_initial_prefill_{member.entry_id}",
+            )
+            for member in members
+        }
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         successful: list[GroupMember] = []
-        for member, result in zip(released, results, strict=False):
-            if result is not None:
-                member.last_error = f"initial prefill drain failed: {result}"
+        for member, result in zip(members, results):
+            if isinstance(result, BaseException):
+                member.last_error = f"initial prefill failed: {result}"
                 _LOGGER.warning(
-                    "M1S group initial prefill drain failed member=%s@%s error=%s",
+                    "M1S group initial prefill failed member=%s error=%s",
                     member.name,
-                    getattr(member.client, "host", "?"),
                     result,
                 )
                 self._schedule_isolate_member(
-                    member, reason=f"initial prefill drain failed: {result}"
+                    member, reason=f"initial prefill failed: {result}"
                 )
                 continue
             successful.append(member)
@@ -2121,65 +2040,36 @@ class AqaraM1SMediaGroupManager:
         if not successful:
             raise RuntimeError("no group receiver accepted initial PCM prefill")
 
-        release_values = [
-            release_times[m.entry_id]
-            for m in successful
-            if m.entry_id in release_times
-        ]
-        release_skew_ms = (
-            (max(release_values) - min(release_values)) * 1000.0
-            if len(release_values) >= 2 else 0.0
-        )
-
         async with self._fanout_lock:
             for chunk in prime_pcm:
                 self._pcm_history.append((self._sequence, chunk))
                 self._sequence += 1
             for member in successful:
+                member.shared_cursor = self._sequence
                 self._start_member_writer(member, member.generation)
                 self._reset_member_drift_diagnostics(member)
                 member.ready_for_fanout = True
                 member.join_at_sequence = None
                 member.state = "playing_group"
 
-        _LOGGER.warning(
-            "M1S GROUP MASTER CLOCK INITIAL members=%s barrier_release_skew_ms=%.3f "
-            "remote_prefill_ms=%s sequence=%s action=common_release",
-            [f"{m.name}@{getattr(m.client, 'host', '?')}" for m in successful],
-            release_skew_ms,
+        _LOGGER.info(
+            "M1S group initial receivers prefilled members=%s remote_prefill_ms=%s "
+            "sequence=%s remaining_ha_buffer_ms=%s",
+            [m.name for m in successful],
             int(len(prime_pcm) * CHUNK_SECONDS * 1000),
             self._sequence,
+            int(source_queue.qsize() * CHUNK_SECONDS * 1000),
         )
         self._signal_update()
 
-    async def _fanout_frame(
-        self, chunk: bytes, sequence: int, deadline_monotonic: float
-    ) -> None:
-        """Queue one PCM period early; all writers share one HA deadline."""
-        frame = ScheduledGroupFrame(sequence, deadline_monotonic, chunk)
-        async with self._fanout_lock:
+    async def _fanout_frame(self, chunk: bytes, sequence: int) -> None:
+        """Publish one clocked frame once into the shared live fanout buffer."""
+        async with self._fanout_condition:
             self._pcm_history.append((sequence, chunk))
-            for member in list(self.ready_members):
-                queue = member.queue
-                if queue is None:
-                    continue
-                queue_depth = queue.qsize()
-                member.lag_peak_chunks = max(member.lag_peak_chunks, queue_depth)
-                try:
-                    queue.put_nowait(frame)
-                except asyncio.QueueFull:
-                    _LOGGER.warning(
-                        "M1S group isolating slow member after %.0f ms queue overflow: %s",
-                        QUEUE_SECONDS * 1000,
-                        member.name,
-                    )
-                    self._schedule_isolate_member(
-                        member,
-                        reason=(
-                            f"PCM queue reached {int(QUEUE_SECONDS * 1000)} ms; "
-                            "member isolated"
-                        ),
-                    )
+            # Every writer wakes against the same sequence space.  No PCM is copied
+            # into per-member HA queues, so a temporary slow consumer cannot create
+            # a second logical timeline.
+            self._fanout_condition.notify_all()
 
     @staticmethod
     def _member_payload(member: GroupMember, payload: bytes) -> bytes:
@@ -2544,8 +2434,8 @@ class AqaraM1SMediaGroupManager:
                     else self._apply_live_pcm_gain(raw_chunk)
                 )
                 sequence = self._sequence
-                deadline_monotonic = await self._schedule_frame_deadline(sequence)
-                await self._fanout_frame(chunk, sequence, deadline_monotonic)
+                await self._pace_frame(sequence)
+                await self._fanout_frame(chunk, sequence)
                 self._sequence += 1
                 self._last_pcm_monotonic = time.monotonic()
 
@@ -2940,61 +2830,6 @@ class AqaraM1SMediaGroupManager:
             return None
         return round((max(delays) - min(delays)) * 1000 / PCM_RATE, 3)
 
-    def _maybe_log_master_clock_summary(self, sample_now: float) -> None:
-        """Log HA-side send alignment without claiming acoustic synchronization."""
-        if not MASTER_CLOCK_SCHEDULER_ENABLED:
-            return
-        if (
-            self._last_master_clock_summary_monotonic
-            and sample_now - self._last_master_clock_summary_monotonic
-            < MASTER_CLOCK_LOG_INTERVAL_SECONDS
-        ):
-            return
-        members = [
-            member
-            for member in self.ready_members
-            if member.master_last_sequence is not None
-            and member.master_last_send_monotonic is not None
-            and member.master_last_lateness_ms is not None
-        ]
-        if not members:
-            return
-        sequences = [int(member.master_last_sequence) for member in members]
-        min_seq = min(sequences)
-        max_seq = max(sequences)
-        # Log only after every currently-ready writer has released the same
-        # sequence. This makes send_skew_ms a real like-for-like measurement
-        # instead of comparing adjacent PCM periods.
-        if min_seq != max_seq:
-            return
-        same_seq_times = [float(member.master_last_send_monotonic) for member in members]
-        send_skew_ms = (
-            (max(same_seq_times) - min(same_seq_times)) * 1000.0
-            if len(same_seq_times) >= 2
-            else None
-        )
-        parts = []
-        for member in sorted(members, key=lambda item: (item.name.lower(), str(getattr(item.client, "host", "")))):
-            queue_ms = 0
-            if member.queue is not None:
-                queue_ms = int(member.queue.qsize() * CHUNK_SECONDS * 1000)
-            parts.append(
-                f"{member.name}@{getattr(member.client, 'host', '?')}:"
-                f"seq={member.master_last_sequence},"
-                f"late={member.master_last_lateness_ms:+.3f}ms,"
-                f"maxlate={member.master_max_lateness_ms:+.3f}ms,"
-                f"q={queue_ms}ms,n={member.master_send_samples}"
-            )
-        self._last_master_clock_summary_monotonic = sample_now
-        _LOGGER.warning(
-            "M1S GROUP MASTER CLOCK seq_span=%s send_skew_ms=%s lead_ms=%s | %s | "
-            "action=scheduled_send_no_rate_correction",
-            max_seq - min_seq,
-            "n/a" if send_skew_ms is None else f"{send_skew_ms:.3f}",
-            int(MASTER_CLOCK_SEND_LEAD_SECONDS * 1000),
-            " | ".join(parts),
-        )
-
     def _maybe_log_drift_summary(self, sample_now: float) -> None:
         """Emit one compact, visible diagnostic line for all aligned hubs."""
         if not DRIFT_DIAGNOSTICS_ENABLED:
@@ -3021,10 +2856,19 @@ class AqaraM1SMediaGroupManager:
             delta_text = "n/a" if delta is None else f"{delta:+.3f}ms"
             trend_text = "n/a" if trend is None else f"{trend:+.4f}ms/min"
             ppm_text = "n/a" if ppm is None else f"{ppm:+.2f}"
+            shared_lag_ms = (
+                None
+                if member.shared_cursor is None
+                else max(0, self._sequence - member.shared_cursor)
+                * CHUNK_SECONDS
+                * 1000
+            )
+            label = f"{member.name}@{member.client.host}"
             parts.append(
-                f"{member.name}:delay={delay_ms:.3f}ms,"
+                f"{label}:delay={delay_ms:.3f}ms,"
                 f"delta={delta_text},trend={trend_text},ppm={ppm_text},"
-                f"n={len(member.drift_samples)}"
+                f"shared_lag={'n/a' if shared_lag_ms is None else f'{shared_lag_ms:.0f}ms'},"
+                f"cursor={member.shared_cursor},n={len(member.drift_samples)}"
             )
 
         if not parts:
@@ -3036,11 +2880,27 @@ class AqaraM1SMediaGroupManager:
             else max(0.0, sample_now - self._stream_started_monotonic)
         )
         spread = self._latest_drift_spread_ms()
+        shared_lags_ms = [
+            max(0, self._sequence - member.shared_cursor) * CHUNK_SECONDS * 1000
+            for member in self.ready_members
+            if member.shared_cursor is not None
+        ]
+        shared_lag_spread_ms = (
+            None
+            if len(shared_lags_ms) < 2
+            else max(shared_lags_ms) - min(shared_lags_ms)
+        )
         _LOGGER.warning(
-            "M1S GROUP DRIFT DIAGNOSTIC elapsed_s=%.1f alsa_spread_ms=%s | %s | "
-            "action=measure_only",
+            "M1S GROUP DRIFT DIAGNOSTIC elapsed_s=%.1f alsa_spread_ms=%s "
+            "shared_lag_spread_ms=%s shared_sequence=%s | %s | action=measure_only",
             elapsed,
             "n/a" if spread is None else f"{spread:.3f}",
+            (
+                "n/a"
+                if shared_lag_spread_ms is None
+                else f"{shared_lag_spread_ms:.3f}"
+            ),
+            self._sequence,
             " | ".join(parts),
         )
 

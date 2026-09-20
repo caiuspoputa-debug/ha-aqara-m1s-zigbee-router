@@ -1,12 +1,11 @@
-## 0.21.11 - HA master-clock scheduled group fanout
+## 0.21.12 - One shared HA fanout buffer
 
-- Built from v0.21.10 / the stable v0.21.8 audio path; individual media players are unchanged.
-- Experimental group-only scheduler: every live 35 ms PCM frame now carries an internal sequence number and one absolute Home Assistant monotonic send deadline.
-- Frames are queued 280 ms ahead to each group member. Independent member writers wait for the same deadline before releasing the same PCM period to their TCP transports.
-- Initial 1.4 s remote prefill is released to all connected group sockets from one shared HA barrier, with no await between member writes; the measured barrier release skew is logged.
-- No timestamp bytes are inserted into PCM, because the hub receiver remains the proven `nc -> FIFO -> aplay` path. No adaptive resampling, DAC-rate correction or automatic receiver resync is enabled.
-- Add visible `M1S GROUP MASTER CLOCK` diagnostics every ~30 s: per-member sequence, send lateness, maximum lateness, queue depth and like-for-like `send_skew_ms`. Hub IP is included so duplicate friendly names are distinguishable.
-- Keep v0.21.10 ALSA-delay diagnostics for comparison. These remain diagnostic-only and are not used to steer playback.
+- Built from v0.21.10, retaining the stable v0.21.8 audio engine and read-only diagnostics; the v0.21.11 per-chunk deadline scheduler is not included.
+- Remove the independent HA-side PCM queue from every group member. All aligned hubs now consume by sequence cursor from one shared 4-second PCM history/fanout buffer.
+- Keep one common sequence/timeline for the whole group. A slow hub can no longer accumulate a private HA PCM timeline; if its cursor falls behind the shared history window, only that hub is isolated and later rejoins from shared history.
+- Keep the existing source jitter/prebuffer, TCP receiver, FIFO, aplay/ALSA settings, 35 ms PCM period, 1.4 s remote prefill, and all individual media-player behavior unchanged.
+- Add shared-buffer diagnostics: per-hub shared cursor/lag, shared lag spread, shared sequence, shared buffer depth and oldest/newest sequence. Diagnostic labels include hub IP so identically named hubs remain distinguishable.
+- No adaptive rate correction, per-chunk HA deadline scheduling, automatic periodic resync, or DAC-clock manipulation is enabled.
 
 ## 0.21.10 - Read-only group drift diagnostics
 
