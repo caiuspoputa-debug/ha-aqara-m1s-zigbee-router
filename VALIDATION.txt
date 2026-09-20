@@ -1,3 +1,12 @@
+v0.21.10 diagnostic build validation
+- Base: clean v0.21.8 archive
+- Audio behavior changes: none intended
+- media_group.py: read-only drift instrumentation only
+- Manifest version: 0.21.10
+- Python syntax: validated with py_compile
+- JSON files: validated
+- ZIP integrity: validate after packaging
+
 v0.21.7
 Static-IP UI only: explicit numeric BOX selectors, min 2, max 254, step 1, in both static forms.
 Network client and hub scripts unchanged from v0.21.5.
@@ -42,13 +51,3 @@ PASS: progress callbacks are added to the existing TCP and Base64 transfer paths
 PASS: successful upload uses a dedicated upload_finish step with zero-second scheduling before config-entry reload; the original one-second finish path used by delete remains unchanged.
 PASS: config-entry title has any stale trailing integration-added IPv4 removed; the device name is re-applied after platform setup with one wlan0 IPv4 from the same command used by the WiFi IP sensor.
 LIMIT: no live M1S hub test was available in this environment. Validate device naming, one WAV upload, one ZIP upload and one delete on the real hub.
-
-v0.21.9 code-level validation
-- PASS: all Python files compile and parse.
-- PASS: all JSON files parse.
-- PASS: manifest version is 0.21.9.
-- PASS: HA-master group clock discipline is enabled; retired median adaptive sync remains disabled.
-- PASS: periodic automatic receiver resync remains disabled.
-- PASS: media_player.py, sound_player.py, client.py and coordinator.py are byte-identical to supplied v0.21.8.
-- PASS: controller simulation for representative +/-50 to +/-300 ppm clock error converged inside the configured correction range.
-- NOTE: no live multi-hub listening test was possible in this build environment.

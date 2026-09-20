@@ -1,13 +1,12 @@
-## 0.21.9 - HA-master clock discipline for M1S Media Group
+## 0.21.10 - Read-only group drift diagnostics
 
-- Group-only change: individual M1S media players keep the existing transport and timing unchanged.
-- Keep Home Assistant as the single 32 kHz / 35 ms PCM master timeline and add continuous per-hub clock discipline after the clean common group start.
-- Each ready receiver learns its own stable ALSA-delay reference from three health samples after a 1.5 s settle period; it no longer follows the median delay of other hubs.
-- Probe group receiver ALSA state once per second and use a conservative PI loop to cancel slow DAC/crystal drift without STOP, rebuffer or receiver rebuild.
-- Apply only micro-resampling to live group PCM, with a 3 ms deadband, +/-0.15% hard correction limit and 0.015%/control-step slew limit. Initial/late-join prefill remains bit-identical.
-- Expose `master_clock_*` diagnostics on `media_player.m1s_media_group`, including lock state, reference delay, current error and correction in ppm.
-- The retired v0.20.x median-based `ADAPTIVE_SYNC_ENABLED` controller stays disabled, and periodic automatic receiver resync stays disabled.
-- This is a code-level build; no live multi-hub listening validation was performed in this environment.
+- Built directly from v0.21.8; v0.21.9 rate correction is not included.
+- Group audio transport, PCM fanout, 35 ms pacing, buffering, prefill, receiver start/stop and all individual media-player behavior remain unchanged from v0.21.8.
+- Add diagnostic-only sampling of each active group hub's ALSA `delay` after a 20 s warm-up. No measured value can change playback.
+- Establish an independent baseline per aligned hub and track current delay, delta from baseline, least-squares trend in ms/min, and an estimated ppm derived from ALSA-buffer growth/shrinkage over the latest 5-minute window.
+- Emit a visible `M1S GROUP DRIFT BASELINE` warning once per hub and one `M1S GROUP DRIFT DIAGNOSTIC` warning approximately every 30 s with all aligned hubs and the current inter-hub ALSA-delay spread.
+- Expose the same measurements as `M1S Media Group` state attributes (`drift_member_delay_ms`, `drift_member_delta_from_baseline_ms`, `drift_member_trend_ms_per_minute`, `drift_member_estimated_ppm`, `drift_latest_alsa_delay_spread_ms`).
+- The ppm value is explicitly diagnostic: it is inferred from ALSA buffer trend and is not claimed to be a direct DAC/acoustic clock measurement.
 
 ## 0.21.7 - Precise static IP input
 

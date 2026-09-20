@@ -4,7 +4,7 @@ import asyncio
 from array import array
 from collections import deque
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import os
 import shutil
@@ -95,32 +95,8 @@ WRITER_DRAIN_TIMEOUT = 5.0
 WRITER_HIGH_WATER_BYTES = CHUNK_BYTES * 16
 WRITER_LOW_WATER_BYTES = CHUNK_BYTES * 8
 SOCKET_SNDBUF_BYTES = CHUNK_BYTES * 16
-GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS = 1.0
+GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS = 5.0
 GROUP_RECEIVER_STALE_DELAY_FRAMES = int(PCM_RATE * 0.20)
-
-# v0.21.9: HA-master clock discipline for GROUP playback only.
-#
-# The transport clock was already common, but every hub ultimately consumes PCM
-# with its own ALSA/DAC oscillator.  Do not make hubs chase the median of other
-# hubs (the old adaptive-sync experiment).  Instead, after the clean common
-# startup each receiver learns its own stable ALSA-delay reference.  HA keeps
-# emitting the shared source timeline at exactly PCM_RATE and each receiver is
-# micro-resampled only enough to keep its learned delay locked to that master
-# cadence.  This preserves the initial alignment while cancelling slow crystal
-# drift without STOP/rebuffer/rejoin.
-MASTER_CLOCK_DISCIPLINE_ENABLED = True
-MASTER_CLOCK_REFERENCE_SETTLE_SECONDS = 1.5
-MASTER_CLOCK_REFERENCE_SAMPLES = 3
-MASTER_CLOCK_DELAY_EMA_ALPHA = 0.30
-MASTER_CLOCK_HEALTH_MAX_AGE_SECONDS = 3.5
-MASTER_CLOCK_DEADBAND_FRAMES = int(PCM_RATE * 0.003)  # ~3 ms
-MASTER_CLOCK_INTEGRAL_GATE_FRAMES = int(PCM_RATE * 0.050)  # learn drift inside 50 ms
-MASTER_CLOCK_KP = 0.045
-MASTER_CLOCK_KI = 0.0012
-MASTER_CLOCK_INTEGRAL_LIMIT = 0.30
-MASTER_CLOCK_MAX_RATE_OFFSET = 0.0015  # +/-0.15% maximum correction
-MASTER_CLOCK_RATE_SLEW_PER_UPDATE = 0.00015  # 0.015% per ~1 s control step
-MASTER_CLOCK_RATE_BYPASS = 0.00002
 GROUP_RECEIVER_STALE_AVAIL_MULTIPLIER = 2
 RADIO_BROWSER_API_BASE = "http://de1.api.radio-browser.info/json/stations"
 RADIO_BROWSER_MEDIA_PREFIX = "media-source://radio_browser/"
@@ -150,9 +126,9 @@ SOFT_RESYNC_MIN_REFERENCE_MEMBERS = 3
 MANUAL_GROUP_RESYNC_COOLDOWN_SECONDS = 20.0
 MANUAL_GROUP_RESYNC_COHORT_SECONDS = 4.0
 
-# Keep the failed legacy median-based adaptive controller disabled.  v0.21.9
-# uses a separate HA-master discipline loop below: each hub locks to its own
-# post-start ALSA reference instead of chasing another hub or group median.
+# v0.20.2 proved that per-member correction is not usable on these hubs.
+# Keep the old diagnostic attributes readable, but never enable per-hub
+# resampling, per-hub buffers, or automatic drift correction.
 ADAPTIVE_SYNC_ENABLED = False
 ADAPTIVE_SYNC_MIN_MEMBERS = 2
 ADAPTIVE_SYNC_HEALTH_MAX_AGE_SECONDS = GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS * 2.5
@@ -165,6 +141,16 @@ ADAPTIVE_SYNC_INTEGRAL_GATE_FRAMES = int(PCM_RATE * 0.080)  # integrate only ins
 ADAPTIVE_SYNC_MAX_RATE_OFFSET = 0.008  # ±0.8%
 ADAPTIVE_SYNC_RATE_SLEW_PER_UPDATE = 0.004  # max 0.4% change per health sample
 ADAPTIVE_SYNC_RATE_BYPASS = 0.00002
+
+# v0.21.10 diagnostic-only drift instrumentation. These values never alter
+# PCM, receiver timing, member rate, buffering, or resync behavior. They only
+# quantify how the ALSA delay evolves while the unchanged v0.21.8 group plays.
+DRIFT_DIAGNOSTICS_ENABLED = True
+DRIFT_DIAGNOSTICS_WARMUP_SECONDS = 20.0
+DRIFT_DIAGNOSTICS_LOG_INTERVAL_SECONDS = 30.0
+DRIFT_DIAGNOSTICS_HISTORY_SECONDS = 300.0
+DRIFT_DIAGNOSTICS_MIN_SAMPLES = 4
+DRIFT_DIAGNOSTICS_MAX_SAMPLES = 96
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 FFMPEG_NICE_TARGET = -5
@@ -245,21 +231,18 @@ class GroupMember:
     adaptive_health_monotonic: float = 0.0
     adaptive_resample_residual: float = 0.0
     adaptive_corrections: int = 0
-    # v0.21.9 group-only HA master-clock discipline state.
-    master_clock_rate: float = 1.0
-    master_clock_target_rate: float = 1.0
-    master_clock_delay_ema: float | None = None
-    master_clock_reference_delay_frames: float | None = None
-    master_clock_reference_accumulator: float = 0.0
-    master_clock_reference_samples: int = 0
-    master_clock_ready_monotonic: float = 0.0
-    master_clock_health_monotonic: float = 0.0
-    master_clock_error_frames: float | None = None
-    master_clock_last_error_frames: float | None = None
-    master_clock_integral: float = 0.0
-    master_clock_last_update_monotonic: float = 0.0
-    master_clock_resample_residual: float = 0.0
-    master_clock_corrections: int = 0
+    # v0.21.10 read-only drift diagnostics. Positive trend means the ALSA
+    # queued-delay is growing; negative trend means it is shrinking.
+    drift_started_monotonic: float | None = None
+    drift_baseline_monotonic: float | None = None
+    drift_baseline_frames: float | None = None
+    drift_delta_ms: float | None = None
+    drift_slope_frames_per_second: float | None = None
+    drift_ms_per_minute: float | None = None
+    drift_estimated_ppm: float | None = None
+    drift_samples: deque[tuple[float, float]] = field(
+        default_factory=lambda: deque(maxlen=DRIFT_DIAGNOSTICS_MAX_SAMPLES)
+    )
 
 
 class AqaraM1SMediaGroupManager:
@@ -313,7 +296,7 @@ class AqaraM1SMediaGroupManager:
         self._manual_resync_skipped_reason: str | None = None
         self._last_soft_resync_check_monotonic: float | None = None
         self._last_adaptive_sync_control_monotonic: float = 0.0
-        self._last_master_clock_control_monotonic: float = 0.0
+        self._last_drift_summary_monotonic: float = 0.0
         self._broadcast_pause_requested = asyncio.Event()
         self._broadcast_paused = asyncio.Event()
         self._fanout_lock = asyncio.Lock()
@@ -636,47 +619,49 @@ class AqaraM1SMediaGroupManager:
                 member.name: member.adaptive_corrections
                 for member in self.ready_members
             },
-            "master_clock_discipline_enabled": MASTER_CLOCK_DISCIPLINE_ENABLED,
-            "master_clock_reference_settle_seconds": MASTER_CLOCK_REFERENCE_SETTLE_SECONDS,
-            "master_clock_probe_interval_seconds": GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS,
-            "master_clock_deadband_ms": round(
-                MASTER_CLOCK_DEADBAND_FRAMES * 1000 / PCM_RATE, 2
-            ),
-            "master_clock_max_rate_percent": round(
-                MASTER_CLOCK_MAX_RATE_OFFSET * 100, 3
-            ),
-            "master_clock_locked_hubs": sorted(
-                member.name
-                for member in self.ready_members
-                if member.master_clock_reference_delay_frames is not None
-            ),
-            "master_clock_reference_delay_ms": {
-                member.name: round(
-                    member.master_clock_reference_delay_frames * 1000 / PCM_RATE, 2
-                )
-                for member in self.ready_members
-                if member.master_clock_reference_delay_frames is not None
-            },
-            "master_clock_error_ms": {
+            "drift_diagnostics_enabled": DRIFT_DIAGNOSTICS_ENABLED,
+            "drift_diagnostics_mode": "read_only_no_audio_correction",
+            "drift_diagnostics_warmup_seconds": DRIFT_DIAGNOSTICS_WARMUP_SECONDS,
+            "drift_diagnostics_log_interval_seconds": DRIFT_DIAGNOSTICS_LOG_INTERVAL_SECONDS,
+            "drift_diagnostics_history_seconds": DRIFT_DIAGNOSTICS_HISTORY_SECONDS,
+            "drift_member_delay_ms": {
                 member.name: (
                     None
-                    if member.master_clock_error_frames is None
-                    else round(member.master_clock_error_frames * 1000 / PCM_RATE, 3)
+                    if not member.last_receiver_health
+                    or not isinstance(member.last_receiver_health.get("alsa_delay_frames"), int)
+                    else round(
+                        member.last_receiver_health["alsa_delay_frames"] * 1000 / PCM_RATE, 3
+                    )
                 )
                 for member in self.ready_members
             },
-            "master_clock_rate": {
-                member.name: round(member.master_clock_rate, 7)
+            "drift_member_delta_from_baseline_ms": {
+                member.name: (
+                    None if member.drift_delta_ms is None else round(member.drift_delta_ms, 3)
+                )
                 for member in self.ready_members
             },
-            "master_clock_correction_ppm": {
-                member.name: round((member.master_clock_rate - 1.0) * 1_000_000, 1)
+            "drift_member_trend_ms_per_minute": {
+                member.name: (
+                    None
+                    if member.drift_ms_per_minute is None
+                    else round(member.drift_ms_per_minute, 4)
+                )
                 for member in self.ready_members
             },
-            "master_clock_corrections": {
-                member.name: member.master_clock_corrections
+            "drift_member_estimated_ppm": {
+                member.name: (
+                    None
+                    if member.drift_estimated_ppm is None
+                    else round(member.drift_estimated_ppm, 2)
+                )
                 for member in self.ready_members
             },
+            "drift_member_samples": {
+                member.name: len(member.drift_samples)
+                for member in self.ready_members
+            },
+            "drift_latest_alsa_delay_spread_ms": self._latest_drift_spread_ms(),
             "receiver_resync_count": self._receiver_resync_count,
             "last_receiver_resync_reason": self._last_receiver_resync_reason,
             "last_receiver_resync_age_seconds": (
@@ -714,7 +699,7 @@ class AqaraM1SMediaGroupManager:
             "muted_hubs": sorted(
                 member.name for member in self.members.values() if member.muted_in_group
             ),
-            "sync_policy": "ha_master_timeline_per_hub_delay_lock_no_periodic_resync",
+            "sync_policy": "shared_timeline_manual_group_resync_no_adaptive_no_per_buffer",
             "queue_overflow_policy": "detach_only_slow_member",
             "receiver_health_interval_seconds": GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS,
             "member_receiver_health": {
@@ -1353,8 +1338,8 @@ class AqaraM1SMediaGroupManager:
         self._rebuffer_events = 0
         self._silence_fill_events = 0
         self._stream_started_monotonic = time.monotonic()
+        self._last_drift_summary_monotonic = 0.0
         self._last_soft_resync_check_monotonic = self._stream_started_monotonic
-        self._last_master_clock_control_monotonic = 0.0
         self._playout_epoch_monotonic = None
         self._last_pcm_monotonic = None
         for member in self.active_members:
@@ -1651,7 +1636,6 @@ class AqaraM1SMediaGroupManager:
             member.lag_peak_chunks = 0
             member.consecutive_drain_timeouts = 0
             self._reset_member_adaptive_sync(member)
-            self._reset_member_master_clock(member)
             member.join_at_sequence = self._sequence if self.ffmpeg_running else 0
             member.state = "waiting_for_sync"
             member.last_error = None
@@ -1810,8 +1794,8 @@ class AqaraM1SMediaGroupManager:
                     missing = [chunk for seq, chunk in history if cursor <= seq < history_end]
                     if not missing:
                         self._start_member_writer(member, generation)
+                        self._reset_member_drift_diagnostics(member)
                         member.ready_for_fanout = True
-                        member.master_clock_ready_monotonic = time.monotonic()
                         member.join_at_sequence = None
                         member.state = "playing_group"
                         self._signal_update()
@@ -1998,8 +1982,8 @@ class AqaraM1SMediaGroupManager:
                 self._sequence += 1
             for member in successful:
                 self._start_member_writer(member, member.generation)
+                self._reset_member_drift_diagnostics(member)
                 member.ready_for_fanout = True
-                member.master_clock_ready_monotonic = time.monotonic()
                 member.join_at_sequence = None
                 member.state = "playing_group"
 
@@ -2055,168 +2039,6 @@ class AqaraM1SMediaGroupManager:
         member.adaptive_last_update_monotonic = 0.0
         member.adaptive_health_monotonic = 0.0
         member.adaptive_resample_residual = 0.0
-
-    @staticmethod
-    def _reset_member_master_clock(member: GroupMember) -> None:
-        member.master_clock_rate = 1.0
-        member.master_clock_target_rate = 1.0
-        member.master_clock_delay_ema = None
-        member.master_clock_reference_delay_frames = None
-        member.master_clock_reference_accumulator = 0.0
-        member.master_clock_reference_samples = 0
-        member.master_clock_ready_monotonic = 0.0
-        member.master_clock_health_monotonic = 0.0
-        member.master_clock_error_frames = None
-        member.master_clock_last_error_frames = None
-        member.master_clock_integral = 0.0
-        member.master_clock_last_update_monotonic = 0.0
-        member.master_clock_resample_residual = 0.0
-        member.master_clock_corrections = 0
-
-    def _update_master_clock_rates(self) -> None:
-        """Discipline each group receiver to the HA PCM master cadence.
-
-        Unlike the retired median-based adaptive experiment, every receiver
-        locks to its own delay measured after the common synchronized start.
-        A slow DAC makes ALSA delay grow; a fast DAC makes it shrink.  Tiny
-        per-member resampling keeps that delay near the learned reference, so
-        the source position remains tied to HA's common 32 kHz timeline.
-        """
-        if not MASTER_CLOCK_DISCIPLINE_ENABLED:
-            return
-
-        now = time.monotonic()
-        if (
-            self._last_master_clock_control_monotonic > 0.0
-            and now - self._last_master_clock_control_monotonic < 0.8
-        ):
-            return
-        control_dt = (
-            1.0
-            if self._last_master_clock_control_monotonic <= 0.0
-            else max(0.25, min(5.0, now - self._last_master_clock_control_monotonic))
-        )
-        self._last_master_clock_control_monotonic = now
-
-        for member in self.ready_members:
-            reference = member.master_clock_reference_delay_frames
-            current_delay = member.master_clock_delay_ema
-            fresh = (
-                member.master_clock_health_monotonic > 0.0
-                and now - member.master_clock_health_monotonic
-                <= MASTER_CLOCK_HEALTH_MAX_AGE_SECONDS
-            )
-
-            if reference is None or current_delay is None or not fresh:
-                member.master_clock_target_rate = 1.0
-                delta = 1.0 - member.master_clock_rate
-                delta = max(
-                    -MASTER_CLOCK_RATE_SLEW_PER_UPDATE,
-                    min(MASTER_CLOCK_RATE_SLEW_PER_UPDATE, delta),
-                )
-                member.master_clock_rate += delta
-                member.master_clock_error_frames = None
-                continue
-
-            error_frames = float(current_delay) - float(reference)
-            previous_error = member.master_clock_last_error_frames
-            member.master_clock_error_frames = error_frames
-            member.master_clock_last_error_frames = error_frames
-            member.master_clock_last_update_monotonic = now
-
-            # Crossing the reference means the old accumulated correction is no
-            # longer trustworthy; discard it rather than allowing overshoot.
-            if previous_error is not None and error_frames * previous_error < 0.0:
-                member.master_clock_integral *= 0.25
-
-            error_seconds = error_frames / PCM_RATE
-            if abs(error_frames) <= MASTER_CLOCK_DEADBAND_FRAMES:
-                proportional = 0.0
-            else:
-                if abs(error_frames) <= MASTER_CLOCK_INTEGRAL_GATE_FRAMES:
-                    member.master_clock_integral += error_seconds * control_dt
-                    member.master_clock_integral = max(
-                        -MASTER_CLOCK_INTEGRAL_LIMIT,
-                        min(MASTER_CLOCK_INTEGRAL_LIMIT, member.master_clock_integral),
-                    )
-                proportional = MASTER_CLOCK_KP * error_seconds
-
-            offset = proportional + MASTER_CLOCK_KI * member.master_clock_integral
-            offset = max(
-                -MASTER_CLOCK_MAX_RATE_OFFSET,
-                min(MASTER_CLOCK_MAX_RATE_OFFSET, offset),
-            )
-            member.master_clock_target_rate = 1.0 + offset
-            delta = member.master_clock_target_rate - member.master_clock_rate
-            delta = max(
-                -MASTER_CLOCK_RATE_SLEW_PER_UPDATE,
-                min(MASTER_CLOCK_RATE_SLEW_PER_UPDATE, delta),
-            )
-            old_rate = member.master_clock_rate
-            member.master_clock_rate += delta
-            if abs(member.master_clock_rate - old_rate) >= 0.00001:
-                member.master_clock_corrections += 1
-
-        _LOGGER.debug(
-            "M1S HA-master clock discipline rates=%s errors_ms=%s",
-            {m.name: round(m.master_clock_rate, 7) for m in self.ready_members},
-            {
-                m.name: (
-                    None
-                    if m.master_clock_error_frames is None
-                    else round(m.master_clock_error_frames * 1000 / PCM_RATE, 3)
-                )
-                for m in self.ready_members
-            },
-        )
-
-    def _master_clock_resample_member_chunk(
-        self, member: GroupMember, chunk: bytes
-    ) -> bytes:
-        """Micro-resample one group chunk to keep this hub on the HA timeline."""
-        rate = max(
-            1.0 - MASTER_CLOCK_MAX_RATE_OFFSET,
-            min(1.0 + MASTER_CLOCK_MAX_RATE_OFFSET, member.master_clock_rate),
-        )
-        if abs(rate - 1.0) <= MASTER_CLOCK_RATE_BYPASS:
-            return SILENCE_CHUNK if member.muted_in_group else chunk
-
-        samples = array("i")
-        samples.frombytes(chunk)
-        if samples.itemsize != PCM_SAMPLE_BYTES:
-            raise RuntimeError(
-                f"Unsupported native int size for S32_LE PCM: {samples.itemsize}"
-            )
-        if sys.byteorder != "little":
-            samples.byteswap()
-        in_frames = len(samples)
-        if in_frames < 2:
-            return SILENCE_CHUNK if member.muted_in_group else chunk
-
-        exact_out = (in_frames / rate) + member.master_clock_resample_residual
-        out_frames = max(2, int(exact_out))
-        member.master_clock_resample_residual = exact_out - out_frames
-
-        if member.muted_in_group:
-            return b"\x00" * (out_frames * PCM_SAMPLE_BYTES)
-
-        out = array("i", [0]) * out_frames
-        scale = (in_frames - 1) / (out_frames - 1)
-        last = in_frames - 1
-        for index in range(out_frames):
-            src = index * scale
-            left = int(src)
-            if left >= last:
-                out[index] = samples[last]
-                continue
-            frac = src - left
-            a = samples[left]
-            b = samples[left + 1]
-            out[index] = int(a + ((b - a) * frac))
-
-        if sys.byteorder != "little":
-            out.byteswap()
-        return out.tobytes()
 
     @staticmethod
     def _median(values: list[float]) -> float:
@@ -2394,11 +2216,9 @@ class AqaraM1SMediaGroupManager:
         return out.tobytes()
 
     def _member_chunk(self, member: GroupMember, chunk: bytes) -> bytes:
-        if MASTER_CLOCK_DISCIPLINE_ENABLED:
-            return self._master_clock_resample_member_chunk(member, chunk)
-        if ADAPTIVE_SYNC_ENABLED:
-            return self._adaptive_resample_member_chunk(member, chunk)
-        return SILENCE_CHUNK if member.muted_in_group else chunk
+        if not ADAPTIVE_SYNC_ENABLED:
+            return SILENCE_CHUNK if member.muted_in_group else chunk
+        return self._adaptive_resample_member_chunk(member, chunk)
 
     async def _broadcast_loop(
         self, process: asyncio.subprocess.Process, generation: int
@@ -2877,6 +2697,140 @@ class AqaraM1SMediaGroupManager:
         )
         return self._parse_group_receiver_health(str(snapshot))
 
+    def _reset_member_drift_diagnostics(self, member: GroupMember) -> None:
+        """Reset read-only drift measurements for a newly aligned receiver."""
+        member.drift_started_monotonic = time.monotonic()
+        member.drift_baseline_monotonic = None
+        member.drift_baseline_frames = None
+        member.drift_delta_ms = None
+        member.drift_slope_frames_per_second = None
+        member.drift_ms_per_minute = None
+        member.drift_estimated_ppm = None
+        member.drift_samples.clear()
+
+    @staticmethod
+    def _linear_slope(samples: deque[tuple[float, float]]) -> float | None:
+        """Return least-squares slope in frames/second for diagnostic samples."""
+        if len(samples) < DRIFT_DIAGNOSTICS_MIN_SAMPLES:
+            return None
+        points = list(samples)
+        t0 = points[0][0]
+        xs = [t - t0 for t, _ in points]
+        ys = [value for _, value in points]
+        mean_x = sum(xs) / len(xs)
+        mean_y = sum(ys) / len(ys)
+        denominator = sum((x - mean_x) ** 2 for x in xs)
+        if denominator <= 0:
+            return None
+        return sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denominator
+
+    def _record_member_drift_sample(
+        self, member: GroupMember, sample_now: float, delay_frames: int
+    ) -> None:
+        """Measure ALSA delay trend without changing playback in any way."""
+        if not DRIFT_DIAGNOSTICS_ENABLED:
+            return
+        if member.drift_started_monotonic is None:
+            member.drift_started_monotonic = sample_now
+
+        age = sample_now - member.drift_started_monotonic
+        if age < DRIFT_DIAGNOSTICS_WARMUP_SECONDS:
+            return
+
+        if member.drift_baseline_frames is None:
+            member.drift_baseline_frames = float(delay_frames)
+            member.drift_baseline_monotonic = sample_now
+            member.drift_samples.clear()
+            member.drift_samples.append((sample_now, float(delay_frames)))
+            _LOGGER.warning(
+                "M1S GROUP DRIFT BASELINE member=%s delay_frames=%s delay_ms=%.3f "
+                "warmup_s=%.0f action=measure_only",
+                member.name,
+                delay_frames,
+                delay_frames * 1000 / PCM_RATE,
+                DRIFT_DIAGNOSTICS_WARMUP_SECONDS,
+            )
+            return
+
+        member.drift_samples.append((sample_now, float(delay_frames)))
+        cutoff = sample_now - DRIFT_DIAGNOSTICS_HISTORY_SECONDS
+        while member.drift_samples and member.drift_samples[0][0] < cutoff:
+            member.drift_samples.popleft()
+
+        member.drift_delta_ms = (
+            (float(delay_frames) - member.drift_baseline_frames) * 1000 / PCM_RATE
+        )
+        slope = self._linear_slope(member.drift_samples)
+        member.drift_slope_frames_per_second = slope
+        if slope is None:
+            member.drift_ms_per_minute = None
+            member.drift_estimated_ppm = None
+        else:
+            member.drift_ms_per_minute = slope * 1000 / PCM_RATE * 60.0
+            # This is an estimate from ALSA-buffer growth/shrinkage, not a direct
+            # measurement of the acoustic DAC clock. Positive means buffer growth.
+            member.drift_estimated_ppm = slope / PCM_RATE * 1_000_000.0
+
+    def _latest_drift_spread_ms(self) -> float | None:
+        delays = []
+        for member in self.ready_members:
+            health = member.last_receiver_health or {}
+            delay = health.get("alsa_delay_frames")
+            if isinstance(delay, int) and not health.get("stale"):
+                delays.append(delay)
+        if len(delays) < 2:
+            return None
+        return round((max(delays) - min(delays)) * 1000 / PCM_RATE, 3)
+
+    def _maybe_log_drift_summary(self, sample_now: float) -> None:
+        """Emit one compact, visible diagnostic line for all aligned hubs."""
+        if not DRIFT_DIAGNOSTICS_ENABLED:
+            return
+        if (
+            self._last_drift_summary_monotonic
+            and sample_now - self._last_drift_summary_monotonic
+            < DRIFT_DIAGNOSTICS_LOG_INTERVAL_SECONDS
+        ):
+            return
+
+        parts: list[str] = []
+        for member in sorted(self.ready_members, key=lambda item: item.name.lower()):
+            if member.drift_baseline_frames is None:
+                continue
+            health = member.last_receiver_health or {}
+            delay = health.get("alsa_delay_frames")
+            if not isinstance(delay, int):
+                continue
+            delay_ms = delay * 1000 / PCM_RATE
+            delta = member.drift_delta_ms
+            trend = member.drift_ms_per_minute
+            ppm = member.drift_estimated_ppm
+            delta_text = "n/a" if delta is None else f"{delta:+.3f}ms"
+            trend_text = "n/a" if trend is None else f"{trend:+.4f}ms/min"
+            ppm_text = "n/a" if ppm is None else f"{ppm:+.2f}"
+            parts.append(
+                f"{member.name}:delay={delay_ms:.3f}ms,"
+                f"delta={delta_text},trend={trend_text},ppm={ppm_text},"
+                f"n={len(member.drift_samples)}"
+            )
+
+        if not parts:
+            return
+        self._last_drift_summary_monotonic = sample_now
+        elapsed = (
+            0.0
+            if self._stream_started_monotonic is None
+            else max(0.0, sample_now - self._stream_started_monotonic)
+        )
+        spread = self._latest_drift_spread_ms()
+        _LOGGER.warning(
+            "M1S GROUP DRIFT DIAGNOSTIC elapsed_s=%.1f alsa_spread_ms=%s | %s | "
+            "action=measure_only",
+            elapsed,
+            "n/a" if spread is None else f"{spread:.3f}",
+            " | ".join(parts),
+        )
+
     async def _probe_group_receiver_health(self, member: GroupMember) -> None:
         current = asyncio.current_task()
         try:
@@ -2897,54 +2851,8 @@ class AqaraM1SMediaGroupManager:
                         + ADAPTIVE_SYNC_DELAY_EMA_ALPHA * float(delay)
                     )
                 member.adaptive_health_monotonic = sample_now
-
-                if member.master_clock_delay_ema is None:
-                    member.master_clock_delay_ema = float(delay)
-                else:
-                    member.master_clock_delay_ema = (
-                        (1.0 - MASTER_CLOCK_DELAY_EMA_ALPHA)
-                        * member.master_clock_delay_ema
-                        + MASTER_CLOCK_DELAY_EMA_ALPHA * float(delay)
-                    )
-                member.master_clock_health_monotonic = sample_now
-
-                # Learn this receiver's own post-start ALSA depth.  The common
-                # startup establishes relative alignment; holding each receiver
-                # at that depth thereafter makes it follow HA's master cadence
-                # instead of another hub's clock.
-                if (
-                    MASTER_CLOCK_DISCIPLINE_ENABLED
-                    and member.ready_for_fanout
-                    and member.master_clock_reference_delay_frames is None
-                    and member.master_clock_ready_monotonic > 0.0
-                    and sample_now - member.master_clock_ready_monotonic
-                    >= MASTER_CLOCK_REFERENCE_SETTLE_SECONDS
-                ):
-                    member.master_clock_reference_accumulator += float(delay)
-                    member.master_clock_reference_samples += 1
-                    if (
-                        member.master_clock_reference_samples
-                        >= MASTER_CLOCK_REFERENCE_SAMPLES
-                    ):
-                        member.master_clock_reference_delay_frames = (
-                            member.master_clock_reference_accumulator
-                            / member.master_clock_reference_samples
-                        )
-                        member.master_clock_delay_ema = (
-                            member.master_clock_reference_delay_frames
-                        )
-                        member.master_clock_error_frames = 0.0
-                        member.master_clock_last_error_frames = 0.0
-                        member.master_clock_integral = 0.0
-                        _LOGGER.info(
-                            "M1S HA-master clock locked member=%s "
-                            "reference_delay_ms=%.3f samples=%s",
-                            member.name,
-                            member.master_clock_reference_delay_frames
-                            * 1000
-                            / PCM_RATE,
-                            member.master_clock_reference_samples,
-                        )
+                self._record_member_drift_sample(member, sample_now, delay)
+                self._maybe_log_drift_summary(sample_now)
             if health.get("stale") and member.ready_for_fanout and member.writer is not None:
                 reason = str(health.get("reason") or "receiver_stale")
                 _LOGGER.warning(
@@ -3029,11 +2937,9 @@ class AqaraM1SMediaGroupManager:
                             )
                         )
 
-                # v0.21.9: keep the retired median-based adaptive controller
-                # disabled, but discipline every ready group receiver against
-                # its own post-start reference on HA's common PCM timeline.
+                # Keep old adaptive-control diagnostics inert. v0.20.4 never
+                # changes member rates or resamples a hub independently.
                 self._update_adaptive_sync_rates()
-                self._update_master_clock_rates()
 
                 # Remove ineligible members independently.
                 for member in list(self.members.values()):

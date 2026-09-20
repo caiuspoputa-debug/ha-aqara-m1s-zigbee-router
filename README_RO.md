@@ -1363,19 +1363,15 @@ Primul receiver:        max. 3.0 s
 Fereastră cohortă:      0.30 s
 ```
 
-Grupul folosește o singură cronologie PCM comună. În buildul `0.21.9`:
+Grupul folosește o singură cronologie PCM comună. În buildul `0.21.7`:
 
-- vechiul **adaptive sync bazat pe mediana huburilor rămâne dezactivat**;
-- este activ **HA-master clock discipline**, numai pentru `M1S Media Group`;
-- după pornirea comună, fiecare hub își învață propria întârziere ALSA stabilă și o menține față de ritmul PCM de 32 kHz al Home Assistant;
-- verificarea ALSA se face la aproximativ `1 s`; corecția are deadband de aproximativ `3 ms`, limită dură de `±0,15%` și variație graduală;
-- corecția se face fără STOP, fără rebuffer și fără scoaterea/reintroducerea hubului în grup;
-- resincronizarea periodică automată rămâne dezactivată;
+- **adaptive sync este dezactivat**;
+- resincronizarea periodică automată este dezactivată;
 - un membru revenit poate folosi istoric PCM + catch-up, fără restart global obligatoriu;
 - serviciul manual `resync_media_group` are cooldown de `20 s`;
 - `reset_media_group` face reset dur numai pentru transportul grupului.
 
-Atributele `master_clock_locked_hubs`, `master_clock_error_ms` și `master_clock_correction_ppm` permit verificarea directă a driftului și a corecției pentru fiecare hub. Player-ele individuale nu folosesc această buclă.
+Pentru diagnostic, nu presupune că orice decalaj se rezolvă prin restart repetat. Verifică mai întâi receiverul hubului afectat, rețeaua și procesele `nc`/`aplay`.
 
 ---
 
