@@ -1,3 +1,13 @@
+## 0.21.11 - HA master-clock scheduled group fanout
+
+- Built from v0.21.10 / the stable v0.21.8 audio path; individual media players are unchanged.
+- Experimental group-only scheduler: every live 35 ms PCM frame now carries an internal sequence number and one absolute Home Assistant monotonic send deadline.
+- Frames are queued 280 ms ahead to each group member. Independent member writers wait for the same deadline before releasing the same PCM period to their TCP transports.
+- Initial 1.4 s remote prefill is released to all connected group sockets from one shared HA barrier, with no await between member writes; the measured barrier release skew is logged.
+- No timestamp bytes are inserted into PCM, because the hub receiver remains the proven `nc -> FIFO -> aplay` path. No adaptive resampling, DAC-rate correction or automatic receiver resync is enabled.
+- Add visible `M1S GROUP MASTER CLOCK` diagnostics every ~30 s: per-member sequence, send lateness, maximum lateness, queue depth and like-for-like `send_skew_ms`. Hub IP is included so duplicate friendly names are distinguishable.
+- Keep v0.21.10 ALSA-delay diagnostics for comparison. These remain diagnostic-only and are not used to steer playback.
+
 ## 0.21.10 - Read-only group drift diagnostics
 
 - Built directly from v0.21.8; v0.21.9 rate correction is not included.

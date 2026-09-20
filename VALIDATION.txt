@@ -1,3 +1,18 @@
+v0.21.11 HA master-clock scheduler validation
+- Base: v0.21.10 (whose audio path is v0.21.8 plus read-only drift logging)
+- Scope: M1S Media Group only
+- Individual media-player files: unchanged
+- Live group frame size/rate: unchanged, 1120 samples / 35 ms / 32 kHz S32_LE mono
+- Initial remote prefill: unchanged length (1.4 s), now released from one common HA barrier
+- Live group scheduler: one absolute HA monotonic deadline per sequence, queued 280 ms ahead to each member writer
+- Audio-rate correction/resampling: disabled
+- Automatic receiver resync: disabled
+- Hub receiver: unchanged nc -> FIFO -> aplay; no metadata/timestamp bytes are mixed into PCM
+- Master-clock diagnostics: visible WARNING summary every ~30 s plus late-writer warning over 12 ms
+- Python syntax: validated with py_compile/compileall
+- JSON: validated
+- LIMIT: this schedules TCP release against one HA clock; it cannot force the M1S DAC hardware clocks to share a physical oscillator. Real-hub listening/log validation is required.
+
 v0.21.10 diagnostic build validation
 - Base: clean v0.21.8 archive
 - Audio behavior changes: none intended
