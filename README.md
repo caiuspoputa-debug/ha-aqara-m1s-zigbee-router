@@ -1279,15 +1279,19 @@ First receiver timeout:  3.0 s
 Cohort grace:            0.30 s
 ```
 
-The group uses one shared PCM timeline. In build `0.21.7`:
+The group uses one shared PCM timeline. In build `0.21.9`:
 
-- **adaptive sync is disabled**;
-- periodic automatic receiver resync is disabled;
+- the retired **hub-median adaptive sync remains disabled**;
+- **HA-master clock discipline** is enabled only for `M1S Media Group`;
+- after the common clean start, every hub learns its own stable ALSA delay and holds it against Home Assistant's 32 kHz PCM cadence;
+- ALSA feedback is sampled about once per second; correction uses an approximately `3 ms` deadband, a hard `+/-0.15%` limit and gradual rate slew;
+- correction does not STOP, rebuffer, remove or re-add the hub;
+- periodic automatic receiver resync remains disabled;
 - a returning member can use PCM history + catch-up rather than forcing a global source restart;
 - manual `resync_media_group` has a `20 s` cooldown;
 - `reset_media_group` hard-resets only the shared group transport.
 
-For troubleshooting, do not assume every timing problem should be fixed with repeated global restarts. Check the affected hub receiver, network path and `nc`/`aplay` processes first.
+The `master_clock_locked_hubs`, `master_clock_error_ms` and `master_clock_correction_ppm` attributes expose per-hub drift and correction directly. Individual media players do not use this control loop.
 
 ---
 

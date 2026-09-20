@@ -1,3 +1,14 @@
+## 0.21.9 - HA-master clock discipline for M1S Media Group
+
+- Group-only change: individual M1S media players keep the existing transport and timing unchanged.
+- Keep Home Assistant as the single 32 kHz / 35 ms PCM master timeline and add continuous per-hub clock discipline after the clean common group start.
+- Each ready receiver learns its own stable ALSA-delay reference from three health samples after a 1.5 s settle period; it no longer follows the median delay of other hubs.
+- Probe group receiver ALSA state once per second and use a conservative PI loop to cancel slow DAC/crystal drift without STOP, rebuffer or receiver rebuild.
+- Apply only micro-resampling to live group PCM, with a 3 ms deadband, +/-0.15% hard correction limit and 0.015%/control-step slew limit. Initial/late-join prefill remains bit-identical.
+- Expose `master_clock_*` diagnostics on `media_player.m1s_media_group`, including lock state, reference delay, current error and correction in ppm.
+- The retired v0.20.x median-based `ADAPTIVE_SYNC_ENABLED` controller stays disabled, and periodic automatic receiver resync stays disabled.
+- This is a code-level build; no live multi-hub listening validation was performed in this environment.
+
 ## 0.21.7 - Precise static IP input
 
 Replace the final-octet slider with an always-visible numeric box in both static-IP forms. Keep the current subnet, initial octet and 2-254 range. Network operations and hub scripts are unchanged.
