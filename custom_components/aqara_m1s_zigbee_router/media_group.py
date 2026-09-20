@@ -80,6 +80,7 @@ INITIAL_PREROLL_SECONDS = 0.0
 INITIAL_PREROLL_CHUNKS = 0
 START_COHORT_GRACE_SECONDS = 0.30
 START_FIRST_MEMBER_TIMEOUT = 3.0
+STARTUP_COHORT_SETTLE_SECONDS = 2.0
 PLAYOUT_START_MARGIN_SECONDS = 0.02
 # Preserve the clock through ordinary stalls and catch up from the HA jitter
 # buffer. Only abandon timing after the entire four-second window is exceeded.
@@ -146,7 +147,7 @@ ADAPTIVE_SYNC_RATE_BYPASS = 0.00002
 # v0.21.10 diagnostic-only drift instrumentation. These values never alter
 # PCM, receiver timing, member rate, buffering, or resync behavior. They only
 # quantify how the ALSA delay evolves while the unchanged v0.21.8 group plays.
-DRIFT_DIAGNOSTICS_ENABLED = True
+DRIFT_DIAGNOSTICS_ENABLED = False
 DRIFT_DIAGNOSTICS_WARMUP_SECONDS = 20.0
 DRIFT_DIAGNOSTICS_LOG_INTERVAL_SECONDS = 30.0
 DRIFT_DIAGNOSTICS_HISTORY_SECONDS = 300.0
@@ -315,6 +316,12 @@ class AqaraM1SMediaGroupManager:
         self._gain_ramp_remaining = 0
         self._ffmpeg_nice_applied = False
         self._shutting_down = False
+        # v0.21.13 startup gate: restored group playback is allowed to begin only
+        # after the configured hub cohort has finished loading and every currently
+        # selected hub is online with its group receiver connected. Manual Play and
+        # normal live add/remove keep the v0.21.12 behaviour.
+        self._startup_restore_pending = False
+        self._membership_last_change_monotonic = time.monotonic()
 
     def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
         existing = self.members.get(entry_id)
@@ -332,6 +339,7 @@ class AqaraM1SMediaGroupManager:
             was_online=online,
             online_since_monotonic=time.monotonic() if online else None,
         )
+        self._membership_last_change_monotonic = time.monotonic()
         self._signal_update()
 
     async def unregister_member(self, entry_id: str) -> None:
@@ -344,12 +352,15 @@ class AqaraM1SMediaGroupManager:
         self.members.pop(entry_id, None)
         self.individual_intent.discard(entry_id)
         self.sound_intent.discard(entry_id)
+        self._membership_last_change_monotonic = time.monotonic()
         self._signal_update()
 
     def set_selected(self, entry_id: str, selected: bool) -> None:
         member = self.members.get(entry_id)
         if member is None:
             return
+        if member.selected != selected:
+            self._membership_last_change_monotonic = time.monotonic()
         member.selected = selected
         if not selected:
             member.state = "excluded"
@@ -473,6 +484,52 @@ class AqaraM1SMediaGroupManager:
             and member.entry_id not in self.sound_intent
             and self._member_online(member)
         )
+
+    def _startup_configured_member_count(self) -> int:
+        """Return enabled Aqara entries expected to register during HA startup."""
+        try:
+            return sum(
+                1
+                for entry in self.hass.config_entries.async_entries(DOMAIN)
+                if getattr(entry, "disabled_by", None) is None
+            )
+        except Exception:
+            return len(self.members)
+
+    def _startup_membership_settled(self) -> bool:
+        """True once all enabled entries are registered and selection stopped moving."""
+        expected = self._startup_configured_member_count()
+        if expected and len(self.members) < expected:
+            return False
+        return (
+            time.monotonic() - self._membership_last_change_monotonic
+            >= STARTUP_COHORT_SETTLE_SECONDS
+        )
+
+    def _startup_selected_members(self) -> list[GroupMember]:
+        return [member for member in self.members.values() if member.selected]
+
+    def _startup_cohort_receivers_ready(self) -> bool:
+        """Require every selected startup hub online with port-12347 connected."""
+        selected = self._startup_selected_members()
+        if not selected:
+            return False
+        selected_ids = {member.entry_id for member in selected}
+        selected_ready = all(
+            self._member_online(member)
+            and member.writer is not None
+            and not member.detaching
+            for member in selected
+        )
+        no_extra_receiver = all(
+            member.entry_id in selected_ids
+            for member in self.active_members
+        )
+        return selected_ready and no_extra_receiver
+
+    def arm_startup_restore(self) -> None:
+        """Prevent any restored source from starting before the startup cohort is ready."""
+        self._startup_restore_pending = True
 
     def _signal_update(self) -> None:
         async_dispatcher_send(self.hass, media_group_signal())
@@ -621,6 +678,12 @@ class AqaraM1SMediaGroupManager:
                 member.name: member.adaptive_corrections
                 for member in self.ready_members
             },
+            "startup_restore_pending": self._startup_restore_pending,
+            "startup_membership_settled": self._startup_membership_settled(),
+            "startup_selected_receiver_count": sum(
+                1 for member in self._startup_selected_members() if member.writer is not None
+            ),
+            "startup_selected_member_count": len(self._startup_selected_members()),
             "drift_diagnostics_enabled": DRIFT_DIAGNOSTICS_ENABLED,
             "drift_diagnostics_mode": "read_only_no_audio_correction",
             "drift_diagnostics_warmup_seconds": DRIFT_DIAGNOSTICS_WARMUP_SECONDS,
@@ -797,6 +860,7 @@ class AqaraM1SMediaGroupManager:
             self._clear_track_metadata()
             self.media_title = title
             self.desired_playing = True
+            self._startup_restore_pending = False
             self._watchdog_attempts = 0
             await self._restart_stream_locked(reason="user_play")
         self._ensure_reconcile_task()
@@ -807,6 +871,7 @@ class AqaraM1SMediaGroupManager:
         if not self.media_url:
             return
         self.desired_playing = True
+        self._startup_restore_pending = False
         async with self._lock:
             if not self.ffmpeg_running:
                 await self._restart_stream_locked(reason="resume")
@@ -814,9 +879,33 @@ class AqaraM1SMediaGroupManager:
         self._ensure_periodic_receiver_resync_task()
         self._signal_update()
 
+    async def async_resume_after_startup(self) -> None:
+        """Restore group playback only after the complete selected cohort is ready.
+
+        This gate is used only for HA startup/reload restoration. It deliberately
+        does not change manual Play or live member add/remove behaviour. Each
+        selected hub is prepared with the normal GROUP_START_COMMAND first; FFmpeg
+        and the common prefill start only when all selected receivers are connected.
+        """
+        if not self.media_url:
+            return
+        self.desired_playing = True
+        self._startup_restore_pending = True
+        self._watchdog_attempts = 0
+        await asyncio.gather(
+            *(
+                self._suspend_individual_for_group(member)
+                for member in self._startup_selected_members()
+            ),
+            return_exceptions=True,
+        )
+        self._ensure_reconcile_task()
+        self._signal_update()
+
     async def async_stop(self, *, clear_intent: bool = True) -> None:
         if clear_intent:
             self.desired_playing = False
+            self._startup_restore_pending = False
         try:
             await asyncio.wait_for(self._cancel_background_recovery(), timeout=3.0)
         except Exception as err:
@@ -883,6 +972,7 @@ class AqaraM1SMediaGroupManager:
         # Disable every automatic restart path first.  The next user Play starts
         # a completely new timeline instead of inheriting a stuck recovery task.
         self.desired_playing = False
+        self._startup_restore_pending = False
         self._watchdog_attempts = 0
         self._last_failure = reason
         self._last_full_resync_reason = reason
@@ -2790,7 +2880,7 @@ class AqaraM1SMediaGroupManager:
             member.drift_baseline_monotonic = sample_now
             member.drift_samples.clear()
             member.drift_samples.append((sample_now, float(delay_frames)))
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "M1S GROUP DRIFT BASELINE member=%s delay_frames=%s delay_ms=%.3f "
                 "warmup_s=%.0f action=measure_only",
                 member.name,
@@ -2890,7 +2980,7 @@ class AqaraM1SMediaGroupManager:
             if len(shared_lags_ms) < 2
             else max(shared_lags_ms) - min(shared_lags_ms)
         )
-        _LOGGER.warning(
+        _LOGGER.debug(
             "M1S GROUP DRIFT DIAGNOSTIC elapsed_s=%.1f alsa_spread_ms=%s "
             "shared_lag_spread_ms=%s shared_sequence=%s | %s | action=measure_only",
             elapsed,
@@ -3043,18 +3133,48 @@ class AqaraM1SMediaGroupManager:
                         member, initial=not self.ffmpeg_running
                     )
 
-                # If Play was requested while every receiver was unavailable, start
-                # the source automatically as soon as any background preparation
-                # succeeds.  No global receiver teardown is performed.
+                # Normal playback may start as soon as any prepared receiver exists.
+                # Startup/restored playback is stricter: wait until Home Assistant
+                # has loaded the whole enabled Aqara cohort, membership selection has
+                # settled, and every selected hub is online with receiver 12347 open.
+                # Only then start FFmpeg so the initial common prefill reaches one
+                # complete cohort. Live add/remove after playback starts remains the
+                # v0.21.12 cursor-based behaviour and never forces STOP/PLAY.
                 if not self.ffmpeg_running and self.active_members and self.media_url:
-                    async with self._lock:
-                        if (
-                            self.desired_playing
-                            and not self.ffmpeg_running
-                            and self.active_members
-                            and self.media_url
-                        ):
-                            await self._start_ffmpeg_locked()
+                    startup_ready = (
+                        not self._startup_restore_pending
+                        or (
+                            self._startup_membership_settled()
+                            and self._startup_cohort_receivers_ready()
+                        )
+                    )
+                    if startup_ready:
+                        async with self._lock:
+                            startup_ready = (
+                                not self._startup_restore_pending
+                                or (
+                                    self._startup_membership_settled()
+                                    and self._startup_cohort_receivers_ready()
+                                )
+                            )
+                            if (
+                                self.desired_playing
+                                and not self.ffmpeg_running
+                                and self.active_members
+                                and self.media_url
+                                and startup_ready
+                            ):
+                                await self._start_ffmpeg_locked()
+                                if self._startup_restore_pending:
+                                    self._startup_restore_pending = False
+                                    _LOGGER.debug(
+                                        "M1S group startup cohort ready; clean restored "
+                                        "PLAY started members=%s",
+                                        [
+                                            f"{member.name}@{member.client.host}"
+                                            for member in self._startup_selected_members()
+                                        ],
+                                    )
 
                 for member in self.members.values():
                     if member.writer is None and member.prepare_task is None:
@@ -3361,6 +3481,11 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
                     self.hass, self.manager.media_id, allow_relative_url=False
                 )
             if self.manager.desired_playing and self.manager.media_id:
+                # Arm the gate immediately. Member switches restore independently
+                # and may start the reconcile loop before the delayed resume task.
+                # Without this early gate a single fast hub could start the source
+                # before the rest of the cohort has loaded.
+                self.manager.arm_startup_restore()
                 self._resume_task = self.hass.async_create_background_task(
                     self._restore_after_startup(), "aqara_m1s_group_restore"
                 )
@@ -3479,7 +3604,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
                     self.hass, resolved.url, allow_relative_url=False
                 )
             if self.manager.media_url:
-                await self.manager.async_resume()
+                await self.manager.async_resume_after_startup()
         except asyncio.CancelledError:
             raise
         except Exception as err:

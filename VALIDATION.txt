@@ -1,13 +1,18 @@
-v0.21.12 shared fanout buffer validation
-- Base: v0.21.10 (which is v0.21.8 audio behavior + read-only diagnostics)
-- v0.21.11 per-chunk deadline scheduler: NOT included
-- HA live fanout: one shared PCM history buffer with one sequence space
-- Per-member HA PCM queues: removed
-- Per-member state: sequence cursor only; slow member isolated only after shared 4 s history overrun
-- Source jitter/prebuffer and remote aplay/FIFO/TCP buffering remain intentionally unchanged
-- Adaptive rate correction: disabled as before
-- Periodic automatic receiver resync: disabled as before
-- Individual media players: unchanged
-- Python syntax: validated with py_compile
-- Manifest version: 0.21.12
-- Real multi-hub acoustic behavior: requires user test on physical M1S hubs
+Aqara M1S Zigbee Router v0.21.13 validation
+
+Base: v0.21.12
+
+Intended changes:
+- Preserve the v0.21.12 shared live fanout buffer/audio path.
+- Gate only restored startup/reload playback until all enabled integration entries are registered, membership selection is stable for 2 seconds, and every selected hub is online with its group TCP receiver connected.
+- Arm the gate immediately when the group restore state is read, preventing member-switch restore callbacks from starting FFmpeg early.
+- Manual Play/Resume clears the startup gate and retains normal v0.21.12 behaviour.
+- Live group member enable/disable behaviour is unchanged; no automatic STOP/PLAY is added for membership changes.
+- Routine DRIFT BASELINE / DRIFT DIAGNOSTIC output is disabled and demoted to DEBUG; real failures stay visible.
+
+Static validation performed:
+- Python syntax compile of media_group.py.
+- manifest.json parsed successfully and version is 0.21.13.
+- Compared package files against v0.21.12; only media_group.py, manifest.json, CHANGELOG.md and VALIDATION.txt are intentionally changed.
+- No per-chunk deadline scheduler from v0.21.11 is present.
+- Individual media_player.py and sound_player.py are unchanged.

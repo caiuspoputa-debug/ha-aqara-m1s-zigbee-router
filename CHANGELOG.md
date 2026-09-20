@@ -1,3 +1,12 @@
+## 0.21.13 - Clean restored group startup
+
+- Keep the v0.21.12 one-shared-buffer audio engine unchanged: one live PCM fanout buffer, one common sequence, per-hub cursors, and the existing late add/remove behaviour.
+- Arm a startup gate immediately when Home Assistant restores a playing M1S Media Group so member-switch restoration cannot accidentally start the source on the first fast hub.
+- Auto-resume after HA startup/reload waits until every enabled Aqara entry has registered, group membership has settled, and every currently selected hub is online with its group receiver connected. FFmpeg and the common initial prefill start only after that complete cohort is ready.
+- A temporarily offline selected hub therefore delays only the automatic restored PLAY; manual Play remains available and keeps the normal v0.21.12 behaviour.
+- Do not force STOP/PLAY when a hub is added to or removed from the group during normal playback; live shared-buffer rejoin remains unchanged.
+- Disable routine drift diagnostic logging and move its baseline/summary messages to DEBUG. Genuine transport/offline/overflow failures remain warnings.
+
 ## 0.21.12 - One shared HA fanout buffer
 
 - Built from v0.21.10, retaining the stable v0.21.8 audio engine and read-only diagnostics; the v0.21.11 per-chunk deadline scheduler is not included.
