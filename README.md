@@ -1,18 +1,55 @@
-# Aqara M1S Gen 1 — 0.10.0 STABLE ULTIMATE KIT
+# Aqara M1S Gen 1 Zigbee Router for Home Assistant
 
 [Română](README_RO.md) | **English**
 
-**Hub kit:** `0.10.0 Stable Ultimate`  
-**Documentation date:** 2026-09-19  
-**README revision:** `R3 — Self-Contained Master Manual`  
-**Included Home Assistant integration:** `aqara_m1s_zigbee_router 0.21.7`  
-**Target model:** Aqara M1S Gen 1 `lumi.gateway.aeu01`
+Repurpose an **Aqara M1S Gen 1** as a **Zigbee2MQTT router** and control its ring light, media/radio, physical button and illuminance locally from Home Assistant.
 
-> This is the master README for a **new stock hub**. For a new installation, use this kit as one complete package. Kits `0.5.7`, `0.8` and `0.9` are retained as historical/recovery sources and should not be mixed into the normal 0.10.0 flow.
+> [!WARNING]
+> This is an advanced conversion for model `lumi.gateway.aeu01`. It requires temporary Telnet access, two verified JN5189 backups and firmware flashing. Read the compatibility, backup and recovery sections before writing anything to the hub.
 
-## 1. What 0.10.0 Stable Ultimate is
+## What you get
 
-The purpose of this kit is to take a stock M1S Gen 1 and keep everything required for the complete conversion in one archive:
+- JN5189 Zigbee2MQTT router firmware
+- Local RGB ring-light control
+- Individual radio/audio media player
+- Shared media group for multiple converted hubs
+- Physical-button click, multi-click and hold events
+- Illuminance readings
+- Managed WAV upload and playback controls
+- Local network controls and Wi-Fi recovery tools
+- Home Assistant installation and updates through HACS
+- English and Romanian documentation
+
+## Compatibility
+
+| Item | Supported target |
+| --- | --- |
+| Hub | Aqara M1S Gen 1 |
+| Model | `lumi.gateway.aeu01` |
+| Known stock reference | `3.1.3_0009` |
+| Home Assistant integration | `aqara_m1s_zigbee_router` |
+| Control path | Local Telnet, MQTT and JN5189 UART |
+
+Other models or flash geometries are not assumed compatible. Stop before flashing if the model, UART or JN5189 flash checks do not match this manual.
+
+## Current versions
+
+- Hub conversion kit: `0.10.0 Stable Ultimate`
+- Current HACS integration in this repository: `0.21.13`
+- Offline integration snapshot bundled with the hub kit: `0.21.7`
+- Master manual revision: `R3`, dated 2026-09-19
+
+## Validation status
+
+`Stable Ultimate` means the package has been consolidated, structurally validated and protected by safety gates. It does not claim that this exact `0.10.0` combination has already been run end to end on a brand-new physical stock M1S.
+
+The first new hub installed with this kit is the final hardware validation. If a problem is detected before flashing, the flow is designed to stop without writing JN5189.
+
+## Start here
+
+For a new installation, use the `0.10.0` kit as one complete package. Kits `0.5.7`, `0.8` and `0.9` are retained as historical or recovery sources and should not be mixed into the normal `0.10.0` flow.
+
+The complete conversion path is:
 
 ```text
 stock hub
@@ -33,16 +70,13 @@ stock hub
 
 **JN5189 flashing is intentionally not performed by the preparation installer.** Erase/write remains a separate step so the kit cannot flash until two complete identical stock backups exist.
 
-### Real validation status
+R3 is a self-contained master manual: a user who is new to the project should be able to start with a stock M1S and reach the final converted hub without consulting earlier conversations or README revisions. It restores operational steps that had disappeared from shorter revisions and verifies version-dependent kit facts against the bundled files and the `0.21.7` offline snapshot. The HACS component in this repository may be newer and is currently `0.21.13`. Historical `0.20.x / hub v0.8` documentation is retained for reference and must not be treated as current installation guidance.
 
-`Stable Ultimate` means the package has been consolidated, structurally validated and protected by safety gates. It does not claim that this exact `0.10.0` combination has already been run end-to-end on a brand-new physical stock M1S.
+---
 
-The first new hub installed with this kit is the final hardware validation. If a problem is detected before flashing, the flow is designed to stop without writing JN5189.
+## Complete conversion and recovery manual
 
-R3 is a self-contained master manual. It restores the operational steps that had disappeared from shorter revisions and verifies version-dependent facts against the actual shipped `0.21.7` snapshot and the files physically present in this kit. Historical `0.20.x / hub v0.8` text is not treated as current installation guidance.
-
-
-### Known project technical baseline
+### 1. Known project technical baseline
 
 The project was built around the following historically confirmed baseline:
 

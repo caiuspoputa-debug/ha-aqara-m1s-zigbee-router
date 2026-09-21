@@ -1,18 +1,55 @@
-# Aqara M1S Gen 1 — 0.10.0 STABLE ULTIMATE KIT
+# Aqara M1S Gen 1 - Router Zigbee pentru Home Assistant
 
 [**Română**](README_RO.md) | [English](README.md)
 
-**Kit hub:** `0.10.0 Stable Ultimate`  
-**Data documentației:** 2026-09-19  
-**Revizia README:** `R3 — Self-Contained Master Manual`  
-**Integrare Home Assistant inclusă:** `aqara_m1s_zigbee_router 0.21.7`  
-**Model țintă:** Aqara M1S Gen 1 `lumi.gateway.aeu01`
+Transformă un **Aqara M1S Gen 1** într-un **router Zigbee2MQTT** și controlează local din Home Assistant inelul luminos, redarea media/radio, butonul fizic și senzorul de iluminare.
 
-> Acesta este README-ul master pentru un **hub nou, stock**. Pentru o instalare nouă folosește acest kit ca pachet unic. Kiturile `0.5.7`, `0.8` și `0.9` rămân surse istorice/de recuperare și nu trebuie amestecate în fluxul normal 0.10.0.
+> [!WARNING]
+> Aceasta este o conversie avansată pentru modelul `lumi.gateway.aeu01`. Necesită acces Telnet temporar, două backupuri JN5189 verificate și scriere de firmware. Citește secțiunile despre compatibilitate, backup și recuperare înainte de orice scriere pe hub.
 
-## 1. Ce este 0.10.0 Stable Ultimate
+## Ce obții
 
-Scopul acestui kit este să putem lua un M1S Gen 1 stock și să avem într-o singură arhivă toate componentele necesare pentru traseul:
+- Firmware de router Zigbee2MQTT pentru JN5189
+- Control local pentru inelul luminos RGB
+- Media player individual pentru radio și audio
+- Grup media comun pentru mai multe huburi convertite
+- Evenimente pentru click, multi-click și apăsare lungă pe butonul fizic
+- Măsurarea iluminării
+- Încărcare și redare controlată a fișierelor WAV
+- Control local al rețelei și instrumente de recuperare Wi-Fi
+- Instalarea și actualizarea integrării Home Assistant prin HACS
+- Documentație în română și engleză
+
+## Compatibilitate
+
+| Element | Țintă acceptată |
+| --- | --- |
+| Hub | Aqara M1S Gen 1 |
+| Model | `lumi.gateway.aeu01` |
+| Firmware stock cunoscut | `3.1.3_0009` |
+| Integrare Home Assistant | `aqara_m1s_zigbee_router` |
+| Cale de control | Telnet local, MQTT și UART JN5189 |
+
+Nu presupune că alte modele sau alte geometrii flash sunt compatibile. Oprește procedura înainte de flash dacă verificările pentru model, UART sau memoria JN5189 nu corespund manualului.
+
+## Versiuni curente
+
+- Kit de conversie hub: `0.10.0 Stable Ultimate`
+- Integrare HACS curentă în acest repository: `0.21.13`
+- Snapshot offline al integrării inclus în kit: `0.21.7`
+- Revizie manual master: `R3`, din 2026-09-19
+
+## Starea validării
+
+`Stable Ultimate` înseamnă că pachetul a fost consolidat, verificat structural și protejat prin porți de siguranță. Nu înseamnă că această combinație exactă `0.10.0` a fost deja rulată cap-coadă pe un M1S stock nou.
+
+Primul hub nou instalat cu acest kit reprezintă validarea hardware finală. Dacă apare o problemă înainte de flash, fluxul este construit să se oprească fără să scrie JN5189.
+
+## De aici începi
+
+Pentru o instalare nouă, folosește kitul `0.10.0` ca pachet unic. Kiturile `0.5.7`, `0.8` și `0.9` rămân surse istorice sau de recuperare și nu trebuie amestecate în fluxul normal `0.10.0`.
+
+Traseul complet de conversie este:
 
 ```text
 hub stock
@@ -33,16 +70,13 @@ hub stock
 
 **Flash-ul JN5189 nu este automatizat în installerul de pregătire.** Acesta rămâne separat intenționat. Kitul nu permite ERASE/WRITE până când nu există două backupuri complete și identice ale flashului stock.
 
-### Starea reală de validare
+Revizia R3 este un manual autonom: un utilizator care nu cunoaște proiectul trebuie să poată porni de la un M1S stock și să ajungă la hubul convertit fără să consulte conversațiile sau reviziile README anterioare. Manualul restaurează pașii operaționali dispăruți din reviziile mai scurte și verifică informațiile dependente de versiune față de fișierele incluse în kit și snapshotul offline `0.21.7`. Componenta HACS din acest repository poate fi mai nouă și este în prezent `0.21.13`. Documentația istorică `0.20.x / hub v0.8` rămâne doar ca referință și nu trebuie folosită drept ghid pentru instalarea curentă.
 
-`Stable Ultimate` înseamnă că pachetul a fost consolidat, verificat structural și are porți de siguranță. Nu înseamnă că această combinație exactă `0.10.0` a fost deja rulată cap-coadă pe un M1S stock nou.
+---
 
-Primul hub nou pe care îl facem cu acest kit va fi validarea hardware finală. Dacă apare o problemă înainte de flash, fluxul este construit să se oprească fără să scrie JN5189.
+## Manual complet de conversie și recuperare
 
-Revizia R3 este scrisă ca **manual autonom**: un utilizator care nu cunoaște proiectul trebuie să poată porni de la un M1S stock și să ajungă la hubul final fără să consulte conversațiile noastre sau README-uri vechi. Informațiile dependente de versiune sunt verificate față de snapshotul real `0.21.7` și față de fișierele incluse în kit.
-
-
-### Reper tehnic cunoscut al proiectului
+### 1. Reper tehnic cunoscut al proiectului
 
 Configurația pe care a fost construit proiectul are următoarele repere confirmate istoric:
 
