@@ -1,3 +1,9 @@
+# 0.21.14
+
+- Sound manager: Delete WAV now lists every `.wav` under `/data/musics`, including original Aqara sound folders.
+- Deletion is strictly restricted to `.wav` files below `/data/musics`; paths outside that tree and non-WAV files are rejected.
+- Upload behavior is unchanged and continues to use `/data/musics/music-ch`.
+
 ## 0.21.13 - Clean restored group startup
 
 - Keep the v0.21.12 one-shared-buffer audio engine unchanged: one live PCM fanout buffer, one common sequence, per-hub cursors, and the existing late add/remove behaviour.

@@ -851,6 +851,23 @@ class AqaraM1SClient:
         if "__M1S_UPLOAD_OK__" not in output:
             raise IOError(f"Base64 WAV upload verification failed: {output}")
 
+    @staticmethod
+    def _safe_deletable_sound_path(path: str) -> str:
+        """Allow deletion of WAV files anywhere below /data/musics only."""
+        candidate = PurePosixPath(path)
+        root = PurePosixPath("/data/musics")
+        if candidate.suffix.lower() != ".wav":
+            raise ValueError("Only .wav files can be deleted")
+        if not candidate.is_absolute() or candidate == root:
+            raise ValueError("Invalid sound path")
+        if ".." in candidate.parts:
+            raise ValueError("Invalid sound path")
+        try:
+            candidate.relative_to(root)
+        except ValueError as err:
+            raise ValueError("Sound file must be inside /data/musics") from err
+        return str(candidate)
+
     def delete_sound(self, path: str) -> None:
-        path = self._safe_sound_path(path)
+        path = self._safe_deletable_sound_path(path)
         self.run_command(f"rm -f '{path}'", timeout=UPLOAD_COMMAND_TIMEOUT)

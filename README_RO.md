@@ -2,8 +2,6 @@
 
 [**Română**](README_RO.md) | [English](README.md)
 
-**Proiect comunitar neoficial, fără afiliere, aprobare sau suport din partea Aqara ori Lumi United Technology Co., Ltd. Aqara și M1S sunt mărci ale proprietarilor lor și sunt menționate exclusiv pentru identificarea dispozitivului compatibil.**
-
 Transformă un **Aqara M1S Gen 1** într-un **router Zigbee2MQTT** și controlează local din Home Assistant inelul luminos, redarea media/radio, butonul fizic și senzorul de iluminare.
 
 > [!WARNING]

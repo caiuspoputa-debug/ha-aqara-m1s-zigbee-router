@@ -66,7 +66,7 @@
       },
       "delete_sound": {
         "title": "Ștergere multiplă WAV / Delete multiple WAV files",
-        "description": "Selectează unul sau mai multe fișiere din /data/musics/music-ch. Niciun fișier nu este bifat implicit. După ștergere, fereastra se închide și integrarea se reîncarcă automat. / Select one or more files from /data/musics/music-ch. No file is selected by default. After deletion, the dialog closes and the integration reloads automatically.",
+        "description": "Selectează unul sau mai multe fișiere WAV din /data/musics, inclusiv sunetele originale Aqara. Niciun fișier nu este bifat implicit. După ștergere, spațiul devine disponibil pentru alte sunete, fereastra se închide și integrarea se reîncarcă automat. / Select one or more WAV files from /data/musics, including original Aqara sounds. No file is selected by default. After deletion, the space becomes available for other sounds, the dialog closes and the integration reloads automatically.",
         "data": {
           "path": "Fișiere audio / Sound files"
         }
@@ -139,7 +139,7 @@
       ,"network_identity_mismatch": "Adresa IPv4 aleasă răspunde, dar aparține altui dispozitiv."
     },
     "abort": {
-      "no_managed_sounds": "No WAV files were found in /data/musics/music-ch.",
+      "no_managed_sounds": "No WAV files were found in /data/musics.",
       "wifi_change_started": "Testul noii rețele Wi-Fi a fost pornit pe hub. Conexiunea poate cădea temporar. Hubul păstrează noua rețea numai după obținerea unui IPv4 proaspăt."
     }
   },

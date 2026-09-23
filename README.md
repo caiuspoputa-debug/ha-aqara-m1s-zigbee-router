@@ -2,8 +2,6 @@
 
 [Română](README_RO.md) | **English**
 
-**Unofficial community project. Not affiliated with, endorsed by, or supported by Aqara or Lumi United Technology Co., Ltd. Aqara and M1S are trademarks of their respective owners and are used only to identify the compatible device.**
-
 Repurpose an **Aqara M1S Gen 1** as a **Zigbee2MQTT router** and control its ring light, media/radio, physical button and illuminance locally from Home Assistant.
 
 > [!WARNING]

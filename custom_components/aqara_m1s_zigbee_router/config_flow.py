@@ -236,10 +236,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             )
         except (OSError, RuntimeError):
             sounds = []
-        if any(
-            path.startswith(f"{MANAGED_SOUND_ROOT}/")
-            for path in sounds
-        ):
+        if sounds:
             menu_options.append("delete_sound")
         menu_options.extend(["rejoin_zigbee", "finish"])
         return self.async_show_menu(
@@ -618,11 +615,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             )
         except (OSError, RuntimeError):
             sounds = []
-        managed_sounds = sorted(
-            path
-            for path in sounds
-            if path.startswith(f"{MANAGED_SOUND_ROOT}/")
-        )
+        managed_sounds = sorted(sounds)
         if not managed_sounds:
             return await self.async_step_init()
 
