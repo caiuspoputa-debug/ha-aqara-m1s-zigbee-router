@@ -871,3 +871,51 @@ class AqaraM1SClient:
     def delete_sound(self, path: str) -> None:
         path = self._safe_deletable_sound_path(path)
         self.run_command(f"rm -f '{path}'", timeout=UPLOAD_COMMAND_TIMEOUT)
+
+    def ensure_fast_button_polling(self) -> bool:
+        """Migrate the existing hub GPIO watcher from 100 ms to 20 ms polling.
+
+        Only button timing is changed. The click window remains 0.8 s, HOLD
+        remains 1.2 s and HOLD repeat remains 0.5 s by scaling the existing
+        tick counters from 100 ms ticks to 20 ms ticks.
+        """
+        command = (
+            "SCRIPT=/data/scripts/gpio_button_watch.sh; "
+            "CONF=/data/scripts/gpio_button_watch.conf; "
+            "if [ ! -f \"$SCRIPT\" ] || [ ! -f \"$CONF\" ]; then "
+            "echo __M1S_BUTTON_TIMING_NOT_INSTALLED__; exit 0; fi; "
+            "changed=0; "
+            "if grep -q 'tenths \\* 100000' \"$SCRIPT\"; then "
+            "cp \"$SCRIPT\" /tmp/gpio_button_watch.sh.v02115; "
+            "sed -i 's/tenths \\* 100000/tenths * 20000/' /tmp/gpio_button_watch.sh.v02115; "
+            "sed -i 's/RUN_SECONDS \\* 10 \\/ POLL_INTERVAL_TENTHS/RUN_SECONDS * 50 \\/ POLL_INTERVAL_TENTHS/' /tmp/gpio_button_watch.sh.v02115; "
+            "if grep -q 'tenths \\* 20000' /tmp/gpio_button_watch.sh.v02115 && "
+            "grep -q 'RUN_SECONDS \\* 50 \\/ POLL_INTERVAL_TENTHS' /tmp/gpio_button_watch.sh.v02115; then "
+            "mv /tmp/gpio_button_watch.sh.v02115 \"$SCRIPT\"; chmod 755 \"$SCRIPT\"; changed=1; "
+            "else rm -f /tmp/gpio_button_watch.sh.v02115; echo __M1S_BUTTON_TIMING_PATCH_FAILED__; exit 0; fi; "
+            "fi; "
+            "if ! grep -q 'tenths \\* 20000' \"$SCRIPT\"; then "
+            "echo __M1S_BUTTON_TIMING_UNSUPPORTED__; exit 0; fi; "
+            "grep -q '^DOUBLE_WINDOW_TENTHS=40$' \"$CONF\" || { sed -i 's/^DOUBLE_WINDOW_TENTHS=.*/DOUBLE_WINDOW_TENTHS=40/' \"$CONF\"; changed=1; }; "
+            "grep -q '^HOLD_TENTHS=60$' \"$CONF\" || { sed -i 's/^HOLD_TENTHS=.*/HOLD_TENTHS=60/' \"$CONF\"; changed=1; }; "
+            "grep -q '^HOLD_REPEAT_TENTHS=25$' \"$CONF\" || { sed -i 's/^HOLD_REPEAT_TENTHS=.*/HOLD_REPEAT_TENTHS=25/' \"$CONF\"; changed=1; }; "
+            "if [ \"$changed\" = '1' ]; then "
+            "cp \"$CONF\" /tmp/gpio_button_watch.conf.v02115; "
+            "sed -i 's/^ENABLE_GPIO_BUTTON_WATCH=.*/ENABLE_GPIO_BUTTON_WATCH=1/' \"$CONF\"; "
+            "sed -i 's/^DRY_RUN=.*/DRY_RUN=0/' \"$CONF\"; "
+            "sed -i 's/^RUN_SECONDS=.*/RUN_SECONDS=0/' \"$CONF\"; "
+            "self=$$; parent=$PPID; "
+            "for p in $(ps w | grep '[g]pio_button_watch.sh' | grep -v 'SCRIPT=' | awk '{print $1}'); do "
+            "[ \"$p\" = \"$self\" ] || [ \"$p\" = \"$parent\" ] || kill \"$p\" 2>/dev/null; done; "
+            "\"$SCRIPT\" >> /tmp/gpio_button_watch_boot_guard.log 2>&1 & "
+            "sleep 1; cp /tmp/gpio_button_watch.conf.v02115 \"$CONF\"; rm -f /tmp/gpio_button_watch.conf.v02115; "
+            "fi; "
+            "if grep -q 'tenths \\* 20000' \"$SCRIPT\" && "
+            "grep -q '^DOUBLE_WINDOW_TENTHS=40$' \"$CONF\" && "
+            "grep -q '^HOLD_TENTHS=60$' \"$CONF\" && "
+            "grep -q '^HOLD_REPEAT_TENTHS=25$' \"$CONF\"; then "
+            "echo __M1S_BUTTON_TIMING_OK__; else echo __M1S_BUTTON_TIMING_VERIFY_FAILED__; fi"
+        )
+        output = self.run_command(command, timeout=15.0)
+        return "__M1S_BUTTON_TIMING_OK__" in output
+

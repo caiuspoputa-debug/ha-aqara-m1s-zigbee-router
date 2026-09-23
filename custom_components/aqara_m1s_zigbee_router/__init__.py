@@ -128,6 +128,13 @@ async def async_setup_entry(
     except Exception:
         network_status = None
     if network_status is not None:
+        # v0.21.15: only migrate the physical-button watcher timing. Failures
+        # here must never block the rest of the integration from loading.
+        try:
+            await hass.async_add_executor_job(client.ensure_fast_button_polling)
+        except Exception:
+            pass
+
         updated_data = dict(entry.data)
         updated_data[CONF_DEVICE_MAC] = network_status["wifi_mac"]
         updated_data[CONF_BUTTON_TOPIC_ID] = network_status.get("button_topic_id", "")
