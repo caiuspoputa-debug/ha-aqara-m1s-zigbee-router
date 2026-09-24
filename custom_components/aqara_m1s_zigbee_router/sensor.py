@@ -101,8 +101,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         AqaraM1SRouterSensor(hass, entry, client, coordinator, definition)
         for definition in SENSORS
+        if client.zigbee_role != "coordinator" or definition.key != "jn5189_router"
     ]
-    entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
+    if client.zigbee_role != "coordinator":
+        entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
     async_add_entities(entities, coordinator.last_update_success)
 
 

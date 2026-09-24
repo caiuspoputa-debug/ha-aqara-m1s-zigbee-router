@@ -2,8 +2,8 @@
   "config": {
     "step": {
       "user": {
-        "title": "Aqara M1S Zigbee Router",
-        "description": "Connect to an Aqara M1S Gen 1 converted to a JN5189 Zigbee Router.",
+        "title": "Aqara M1S Zigbee Coordinator + Router",
+        "description": "Conectare la un Aqara M1S Gen 1 pregătit ca Router Zigbee JN5189 sau Coordinator dedicat.",
         "data": {
           "host": "Host",
           "port": "Port",
@@ -52,6 +52,7 @@
           "upload_sound": "Încarcă WAV sau ZIP / Upload WAV or ZIP",
           "delete_sound": "Șterge WAV-uri / Delete WAV files",
           "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
+          "coordinator_control": "Coordinator ON/OFF",
           "finish": "Finalizare și închidere / Finish and close",
           "change_wifi": "Schimbă rețeaua Wi-Fi / Change Wi-Fi network"
           ,"network_address": "Adresă de rețea / Network address"
@@ -66,9 +67,17 @@
       },
       "delete_sound": {
         "title": "Ștergere multiplă WAV / Delete multiple WAV files",
-        "description": "Selectează unul sau mai multe fișiere WAV din /data/musics, inclusiv sunetele originale Aqara. Niciun fișier nu este bifat implicit. După ștergere, spațiul devine disponibil pentru alte sunete, fereastra se închide și integrarea se reîncarcă automat. / Select one or more WAV files from /data/musics, including original Aqara sounds. No file is selected by default. After deletion, the space becomes available for other sounds, the dialog closes and the integration reloads automatically.",
+        "description": "Selectează unul sau mai multe fișiere WAV din /data/musics, inclusiv sunetele originale Aqara. Niciun fișier nu este bifat implicit. Înainte de ștergere se creează automat un backup pe hub.",
         "data": {
-          "path": "Fișiere audio / Sound files"
+          "path": "Fișiere audio / Sound files",
+          "confirm": "Confirm backupul și ștergerea fișierelor selectate"
+        }
+      },
+      "coordinator_control": {
+        "title": "Coordinator Zigbee ON/OFF",
+        "description": "Stare reală: {state}, port Zigbee2MQTT: {port}. Oprește Zigbee2MQTT înainte de OFF.",
+        "data": {
+          "enabled": "Coordinator activ"
         }
       },
       "rejoin_zigbee": {
@@ -118,8 +127,10 @@
       "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
       "delete_failed": "Delete failed. Verify the hub connection.",
       "no_files_selected": "Selectează cel puțin un fișier pentru ștergere. / Select at least one file to delete.",
+      "sound_delete_confirmation_required": "Confirmă explicit backupul și ștergerea fișierelor selectate.",
       "rejoin_confirmation_required": "Confirmation is required before clearing the current Zigbee association.",
       "rejoin_failed": "The JN5189 did not acknowledge the rejoin command. Verify the hub connection and compatible firmware.",
+      "coordinator_control_failed": "Coordinatorul nu a confirmat schimbarea stării. Verifică runtime-ul și oprește Zigbee2MQTT înainte de OFF.",
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",
       "wifi_invalid": "SSID-ul sau parola Wi-Fi nu sunt valide.",
       "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery.",
@@ -139,7 +150,7 @@
       ,"network_identity_mismatch": "Adresa IPv4 aleasă răspunde, dar aparține altui dispozitiv."
     },
     "abort": {
-      "no_managed_sounds": "No WAV files were found in /data/musics.",
+      "no_managed_sounds": "Nu au fost găsite fișiere WAV în /data/musics.",
       "wifi_change_started": "Testul noii rețele Wi-Fi a fost pornit pe hub. Conexiunea poate cădea temporar. Hubul păstrează noua rețea numai după obținerea unui IPv4 proaspăt."
     }
   },

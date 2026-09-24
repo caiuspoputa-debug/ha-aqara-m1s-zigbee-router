@@ -35,7 +35,6 @@ from .const import (
     DEFAULT_USERNAME,
     DATA_CLIENTS,
     DOMAIN,
-    MANAGED_SOUND_ROOT,
 )
 from .client import AqaraM1SClient, NetworkChangeError
 from .device import entry_title_with_host
@@ -231,14 +230,27 @@ class AqaraM1SZigbeeRouterOptionsFlow(
     async def async_step_init(self, user_input=None):
         menu_options = ["network_address", "change_wifi", "upload_sound"]
         try:
+            zigbee_status = await self.hass.async_add_executor_job(
+                self._client.coordinator_runtime_status
+            )
+        except (OSError, RuntimeError):
+            zigbee_status = {"role": "router"}
+        try:
             sounds = await self.hass.async_add_executor_job(
                 self._client.list_sounds
             )
         except (OSError, RuntimeError):
             sounds = []
-        if sounds:
+        if any(
+            self._client.is_deletable_sound_path(path)
+            for path in sounds
+        ):
             menu_options.append("delete_sound")
-        menu_options.extend(["rejoin_zigbee", "finish"])
+        if zigbee_status.get("role") == "coordinator":
+            menu_options.append("coordinator_control")
+        else:
+            menu_options.append("rejoin_zigbee")
+        menu_options.append("finish")
         return self.async_show_menu(
             step_id="init",
             menu_options=menu_options,
@@ -595,15 +607,16 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             selected_paths = user_input.get("path", [])
             if not selected_paths:
                 errors["base"] = "no_files_selected"
+            elif not user_input.get("confirm", False):
+                errors["base"] = "sound_delete_confirmation_required"
             else:
                 if isinstance(selected_paths, str):
                     selected_paths = [selected_paths]
                 try:
-                    for path in selected_paths:
-                        await self.hass.async_add_executor_job(
-                            self._client.delete_sound,
-                            path,
-                        )
+                    await self.hass.async_add_executor_job(
+                        self._client.delete_sounds,
+                        selected_paths,
+                    )
                 except (OSError, ValueError, RuntimeError):
                     errors["base"] = "delete_failed"
                 else:
@@ -615,7 +628,11 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             )
         except (OSError, RuntimeError):
             sounds = []
-        managed_sounds = sorted(sounds)
+        managed_sounds = sorted(
+            path
+            for path in sounds
+            if self._client.is_deletable_sound_path(path)
+        )
         if not managed_sounds:
             return await self.async_step_init()
 
@@ -629,14 +646,60 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                             multiple=True,
                             mode=SelectSelectorMode.LIST,
                         )
-                    )
+                    ),
+                    vol.Required("confirm", default=False): BooleanSelector(),
                 }
             ),
             errors=errors,
         )
 
+    async def async_step_coordinator_control(self, user_input=None):
+        """Enable or disable the dedicated Coordinator radio runtime."""
+        errors = {}
+        try:
+            status = await self.hass.async_add_executor_job(
+                self._client.coordinator_runtime_status
+            )
+        except (OSError, RuntimeError):
+            status = {"role": "router", "enabled": "0", "state": "UNAVAILABLE"}
+
+        if status.get("role") != "coordinator":
+            return await self.async_step_init()
+
+        if user_input is not None:
+            try:
+                await self.hass.async_add_executor_job(
+                    self._client.set_coordinator_enabled,
+                    bool(user_input["enabled"]),
+                )
+            except (OSError, RuntimeError):
+                errors["base"] = "coordinator_control_failed"
+            else:
+                return self.async_create_entry(title="", data={})
+
+        enabled = status.get("enabled") == "1" and status.get("state") == "ON"
+        return self.async_show_form(
+            step_id="coordinator_control",
+            data_schema=vol.Schema(
+                {vol.Required("enabled", default=enabled): BooleanSelector()}
+            ),
+            description_placeholders={
+                "state": status.get("state", "UNAVAILABLE"),
+                "port": status.get("port", "1886"),
+            },
+            errors=errors,
+        )
+
     async def async_step_rejoin_zigbee(self, user_input=None):
         """Move the JN5189 router to a different Zigbee coordinator."""
+        try:
+            status = await self.hass.async_add_executor_job(
+                self._client.coordinator_runtime_status
+            )
+        except (OSError, RuntimeError):
+            status = {"role": "router"}
+        if status.get("role") == "coordinator":
+            return await self.async_step_coordinator_control()
         errors = {}
         if user_input is not None:
             if not user_input.get("confirm", False):

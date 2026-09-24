@@ -86,7 +86,7 @@ upload_sound:
 
 delete_sound:
   name: Delete WAV sound
-  description: Delete a WAV file from /data/musics/music-ch on the Aqara M1S.
+  description: Back up and delete a WAV file anywhere below /data/musics on the Aqara M1S.
   fields:
     host:
       name: Hub IP

@@ -99,9 +99,11 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             self._was_online = True
             self._online_generation += 1
             self._schedule_post_online_cleanup(self._online_generation)
-            self._schedule_lux_refresh(force=True)
+            if self.client.zigbee_role != "coordinator":
+                self._schedule_lux_refresh(force=True)
         else:
-            self._schedule_lux_refresh(force=False)
+            if self.client.zigbee_role != "coordinator":
+                self._schedule_lux_refresh(force=False)
 
         previous = self.data or {}
         return {
@@ -162,6 +164,8 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
     async def _async_post_online_cleanup(self, generation: int) -> None:
         """Turn off the stock red boot ring without delaying availability."""
         try:
+            if self.client.zigbee_role == "coordinator":
+                return
             await asyncio.sleep(10)
             if not self._was_online or generation != self._online_generation:
                 return

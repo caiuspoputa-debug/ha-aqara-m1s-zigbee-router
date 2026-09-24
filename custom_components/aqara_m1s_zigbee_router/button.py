@@ -122,8 +122,9 @@ async def async_setup_entry(
         path: AqaraM1SSoundButton(hass, entry, client, coordinator, path)
         for path in sounds
     }
-    # v0.21.15: the sound list is rebuilt by the automatic config-entry reload
-    # after upload/delete, so the manual Refresh Sound List entity is redundant.
+    # v0.30.0: preserve the v0.21.15 behavior. Upload/delete already reload
+    # the config entry automatically, so the manual Refresh Sound List entity
+    # is redundant. Remove an older registry entry if it still exists.
     entity_registry = er.async_get(hass)
     refresh_entity_id = entity_registry.async_get_entity_id(
         "button", DOMAIN, f"{entry.entry_id}_refresh_sounds"

@@ -16,11 +16,14 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
+    if client.zigbee_role == "coordinator":
+        return
     async_add_entities([
         AqaraM1SRouterRingLight(
             hass,
             entry,
-            hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id],
+            client,
             hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id],
         )
     ])

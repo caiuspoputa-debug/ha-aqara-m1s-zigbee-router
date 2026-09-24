@@ -9,7 +9,7 @@ from zipfile import BadZipFile, ZipFile, is_zipfile
 from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.core import HomeAssistant
 
-from .const import MANAGED_SOUND_ROOT
+from .const import UPLOAD_SOUND_ROOT
 
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 MAX_BATCH_FILES = 64
@@ -133,7 +133,7 @@ def destination_for_filename(filename: str) -> str:
     safe_filename = Path(filename).name
     if not safe_filename.lower().endswith(".wav"):
         raise ValueError("Only .wav files can be uploaded")
-    return f"{MANAGED_SOUND_ROOT}/{safe_filename}"
+    return f"{UPLOAD_SOUND_ROOT}/{safe_filename}"
 
 
 def _validate_upload(filename: str, content: bytes) -> tuple[str, bytes]:

@@ -1,8 +1,28 @@
-# 0.21.14
+## 0.30.0 - Persistent role safety, verified Coordinator path, and restored v0.21.15 behavior
 
-- Sound manager: Delete WAV now lists every `.wav` under `/data/musics`, including original Aqara sound folders.
-- Deletion is strictly restricted to `.wav` files below `/data/musics`; paths outside that tree and non-WAV files are rejected.
-- Upload behavior is unchanged and continues to use `/data/musics/music-ch`.
+- Keep v0.30.0 as the base and preserve the Coordinator/Router runtime role, Coordinator ON/OFF, role persistence, and Router-only RGB/lux/rejoin protections.
+- Restore the v0.21.15 physical-button watcher migration from 100 ms polling to 20 ms polling while preserving the same 0.8 s double-click window, 1.2 s HOLD threshold and 0.5 s HOLD repeat timing.
+- Remove the redundant Home Assistant `Refresh Sound List` button entity again; successful upload/delete continues to rebuild the sound entities through config-entry reload.
+- Restore deletion visibility for every `.wav` below `/data/musics`, including original Aqara sound folders.
+- Retain the v0.30.0 safety additions for sound deletion: explicit confirmation and mandatory on-hub backup before deletion.
+- Upload behavior is unchanged and remains restricted to `/data/musics/music-ch`.
+
+- Keep role detection independent of IP addresses: Router hubs retain RGB/lux, while hubs reporting the Coordinator runtime hide Router-only UART entities.
+- Persist the last confirmed role in the Home Assistant config entry so an offline Coordinator cannot fall back to Router behavior during HA startup.
+- Record the completed Aqara M1S hardware checks: exact flash/readback, Spinel 4.3, channel 20 network formation, MAC traffic, ON/OFF and reboot recovery.
+- Keep LAB status because real-device pairing, bidirectional device traffic and Zigbee2MQTT restart recovery are still pending.
+- Preserve all existing media, network, button and confirmed sound-backup behavior.
+
+## 0.3.0 - Coordinator + Router role detection
+
+- Keep the existing integration domain for in-place Router upgrades.
+- Detect the Coordinator runtime and replace Router Rejoin with Coordinator ON/OFF.
+- Add a Coordinator switch backed by the real relay/reset state.
+- Suppress Router RGB/lux UART traffic while the ZOH RCP owns the serial link.
+- Extend confirmed sound deletion to every direct `/data/musics/music-*` regional directory.
+- Create a mandatory on-hub backup archive before deleting selected sounds.
+- Keep uploads in `music-ch` and never delete sounds automatically.
+- Mark the RCP and ZOH hardware path as unvalidated on Aqara M1S.
 
 ## 0.21.13 - Clean restored group startup
 

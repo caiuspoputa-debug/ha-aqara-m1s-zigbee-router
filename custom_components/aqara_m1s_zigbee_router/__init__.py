@@ -18,6 +18,7 @@ from .client import AqaraM1SClient
 from .const import (
     CONF_BUTTON_TOPIC_ID,
     CONF_DEVICE_MAC,
+    CONF_ZIGBEE_ROLE,
     DATA_CLIENTS,
     DATA_COORDINATORS,
     DATA_PLAYBACK_VOLUME,
@@ -128,8 +129,9 @@ async def async_setup_entry(
     except Exception:
         network_status = None
     if network_status is not None:
-        # v0.21.15: only migrate the physical-button watcher timing. Failures
-        # here must never block the rest of the integration from loading.
+        # v0.30.0: keep the v0.21.15 physical-button watcher timing migration.
+        # This changes only the Linux GPIO watcher and is independent of the
+        # JN5189 Router/Coordinator role. Failures must never block setup.
         try:
             await hass.async_add_executor_job(client.ensure_fast_button_polling)
         except Exception:
@@ -144,6 +146,20 @@ async def async_setup_entry(
                 data=updated_data,
                 unique_id=f"mac:{network_status['wifi_mac']}",
             )
+    try:
+        zigbee_status = await hass.async_add_executor_job(
+            client.coordinator_runtime_status
+        )
+        client.zigbee_role = zigbee_status.get("role", "router")
+        if entry.data.get(CONF_ZIGBEE_ROLE) != client.zigbee_role:
+            updated_data = dict(entry.data)
+            updated_data[CONF_ZIGBEE_ROLE] = client.zigbee_role
+            hass.config_entries.async_update_entry(entry, data=updated_data)
+    except Exception:
+        # Keep the last confirmed role when HA starts before an existing hub.
+        # Falling back to Router for a known Coordinator could send RGB/lux
+        # traffic to the RCP UART after connectivity returns.
+        client.zigbee_role = entry.data.get(CONF_ZIGBEE_ROLE, "router")
     coordinator = AqaraM1SRouterCoordinator(hass, client, entry)
 
     hass.data.setdefault(DOMAIN, {})

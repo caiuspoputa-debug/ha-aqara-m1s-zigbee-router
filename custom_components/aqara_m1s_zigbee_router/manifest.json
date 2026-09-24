@@ -1,6 +1,6 @@
 {
   "domain": "aqara_m1s_zigbee_router",
-  "name": "Aqara M1S Zigbee Router",
+  "name": "Aqara M1S Zigbee Coordinator + Router",
   "codeowners": [
     "@caiuspoputa-debug"
   ],
@@ -13,5 +13,5 @@
     "mqtt"
   ],
   "requirements": [],
-  "version": "0.21.15"
+  "version": "0.30.0"
 }

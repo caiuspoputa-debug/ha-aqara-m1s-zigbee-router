@@ -5,11 +5,12 @@ import base64
 import io
 import wave
 import hashlib
+import shlex
 import secrets
 from pathlib import Path, PurePosixPath
 from dataclasses import dataclass, field
 
-from .const import MANAGED_SOUND_ROOT
+from .const import MANAGED_SOUND_DIRECTORY_PREFIX, SOUND_ROOT
 from .device import normalize_mac
 
 UART_PORT = 1886
@@ -76,6 +77,7 @@ class AqaraM1SClient:
     username: str = "admin"
     password: str = ""
     timeout: float = 8.0
+    zigbee_role: str = field(default="router", init=False)
     _sock: socket.socket | None = field(default=None, init=False, repr=False)
     _uart_sock: socket.socket | None = field(default=None, init=False, repr=False)
     _uart_rx: bytearray = field(default_factory=bytearray, init=False, repr=False)
@@ -581,13 +583,83 @@ class AqaraM1SClient:
         candidate = PurePosixPath(path)
         if candidate.suffix.lower() != ".wav":
             raise ValueError("Only .wav files are supported")
-        if candidate.parent != PurePosixPath(MANAGED_SOUND_ROOT):
+        sound_root = PurePosixPath(SOUND_ROOT)
+        if (
+            not candidate.is_absolute()
+            or candidate.parent.parent != sound_root
+            or not candidate.parent.name.startswith(MANAGED_SOUND_DIRECTORY_PREFIX)
+            or candidate.parent.name == MANAGED_SOUND_DIRECTORY_PREFIX
+        ):
             raise ValueError(
-                f"Sound file must be directly inside {MANAGED_SOUND_ROOT}"
+                f"Sound file must be directly inside {SOUND_ROOT}/music-*"
             )
         if ".." in candidate.parts:
             raise ValueError("Invalid sound path")
         return str(candidate)
+
+    @classmethod
+    def is_managed_sound_path(cls, path: str) -> bool:
+        try:
+            cls._safe_sound_path(path)
+        except (TypeError, ValueError):
+            return False
+        return True
+
+    @staticmethod
+    def _safe_deletable_sound_path(path: str) -> str:
+        """Allow deletion of WAV files anywhere below /data/musics only."""
+        candidate = PurePosixPath(path)
+        root = PurePosixPath(SOUND_ROOT)
+        if candidate.suffix.lower() != ".wav":
+            raise ValueError("Only .wav files can be deleted")
+        if not candidate.is_absolute() or candidate == root:
+            raise ValueError("Invalid sound path")
+        if ".." in candidate.parts:
+            raise ValueError("Invalid sound path")
+        try:
+            candidate.relative_to(root)
+        except ValueError as err:
+            raise ValueError(f"Sound file must be inside {SOUND_ROOT}") from err
+        return str(candidate)
+
+    @classmethod
+    def is_deletable_sound_path(cls, path: str) -> bool:
+        try:
+            cls._safe_deletable_sound_path(path)
+        except (TypeError, ValueError):
+            return False
+        return True
+
+    def coordinator_runtime_status(self) -> dict[str, str]:
+        """Detect the dedicated Coordinator runtime and read its real state."""
+        output = self.run_command(
+            "if [ -x /data/m1s_coordinator/coordinator_status.sh ]; then "
+            "/data/m1s_coordinator/coordinator_status.sh; "
+            "else echo role=router; echo state=UNAVAILABLE; echo enabled=0; fi"
+        )
+        status: dict[str, str] = {}
+        for line in output.splitlines():
+            key, separator, value = line.strip().partition("=")
+            if separator and key in {
+                "role", "state", "enabled", "port", "gpio33", "gpio18"
+            }:
+                status[key] = value
+        if status.get("role") != "router":
+            status["role"] = "coordinator" if "state" in status else "router"
+        return status
+
+    def set_coordinator_enabled(self, enabled: bool) -> dict[str, str]:
+        """Persist and apply Coordinator radio state on a Coordinator hub only."""
+        action = "on" if enabled else "off"
+        output = self.run_command(
+            "test -x /data/m1s_coordinator/coordinator_set.sh && "
+            f"/data/m1s_coordinator/coordinator_set.sh {action}",
+            timeout=UPLOAD_COMMAND_TIMEOUT,
+        )
+        expected = "COORDINATOR_ON_OK" if enabled else "COORDINATOR_OFF_OK"
+        if expected not in output:
+            raise RuntimeError(f"Coordinator {action} failed: {output}")
+        return self.coordinator_runtime_status()
 
     def set_rgb(self, red: int, green: int, blue: int) -> None:
         values = [max(0, min(255, int(value))) for value in (red, green, blue)]
@@ -851,32 +923,37 @@ class AqaraM1SClient:
         if "__M1S_UPLOAD_OK__" not in output:
             raise IOError(f"Base64 WAV upload verification failed: {output}")
 
-    @staticmethod
-    def _safe_deletable_sound_path(path: str) -> str:
-        """Allow deletion of WAV files anywhere below /data/musics only."""
-        candidate = PurePosixPath(path)
-        root = PurePosixPath("/data/musics")
-        if candidate.suffix.lower() != ".wav":
-            raise ValueError("Only .wav files can be deleted")
-        if not candidate.is_absolute() or candidate == root:
-            raise ValueError("Invalid sound path")
-        if ".." in candidate.parts:
-            raise ValueError("Invalid sound path")
-        try:
-            candidate.relative_to(root)
-        except ValueError as err:
-            raise ValueError("Sound file must be inside /data/musics") from err
-        return str(candidate)
+    def delete_sounds(self, paths: list[str]) -> str:
+        """Back up one confirmed selection, then delete it."""
+        safe_paths = [self._safe_deletable_sound_path(path) for path in paths]
+        if not safe_paths:
+            raise ValueError("No sound files selected")
+        relative_paths = [path.removeprefix("/") for path in safe_paths]
+        tar_args = " ".join(shlex.quote(path) for path in relative_paths)
+        rm_args = " ".join(shlex.quote(path) for path in safe_paths)
+        command = (
+            "BACKUP_DIR=/data/m1s_sound_backups; "
+            "mkdir -p \"$BACKUP_DIR\" && "
+            "BACKUP=\"$BACKUP_DIR/sounds_before_delete_$(date +%Y%m%d_%H%M%S)_$$.tgz\"; "
+            f"(cd / && tar -czf \"$BACKUP\" {tar_args}) && "
+            f"rm -f {rm_args} && sync && "
+            "echo __M1S_SOUND_DELETE_OK__:$BACKUP"
+        )
+        output = self.run_command(command, timeout=UPLOAD_FINALIZE_TIMEOUT)
+        marker = "__M1S_SOUND_DELETE_OK__:"
+        for line in output.splitlines():
+            if marker in line:
+                return line.split(marker, 1)[1].strip()
+        raise IOError(f"Sound backup or deletion failed: {output}")
 
-    def delete_sound(self, path: str) -> None:
-        path = self._safe_deletable_sound_path(path)
-        self.run_command(f"rm -f '{path}'", timeout=UPLOAD_COMMAND_TIMEOUT)
+    def delete_sound(self, path: str) -> str:
+        return self.delete_sounds([path])
 
     def ensure_fast_button_polling(self) -> bool:
         """Migrate the existing hub GPIO watcher from 100 ms to 20 ms polling.
 
-        Only button timing is changed. The click window remains 0.8 s, HOLD
-        remains 1.2 s and HOLD repeat remains 0.5 s by scaling the existing
+        Only physical-button timing is changed. The click window remains 0.8 s,
+        HOLD remains 1.2 s and HOLD repeat remains 0.5 s by scaling the existing
         tick counters from 100 ms ticks to 20 ms ticks.
         """
         command = (
@@ -886,13 +963,13 @@ class AqaraM1SClient:
             "echo __M1S_BUTTON_TIMING_NOT_INSTALLED__; exit 0; fi; "
             "changed=0; "
             "if grep -q 'tenths \\* 100000' \"$SCRIPT\"; then "
-            "cp \"$SCRIPT\" /tmp/gpio_button_watch.sh.v02115; "
-            "sed -i 's/tenths \\* 100000/tenths * 20000/' /tmp/gpio_button_watch.sh.v02115; "
-            "sed -i 's/RUN_SECONDS \\* 10 \\/ POLL_INTERVAL_TENTHS/RUN_SECONDS * 50 \\/ POLL_INTERVAL_TENTHS/' /tmp/gpio_button_watch.sh.v02115; "
-            "if grep -q 'tenths \\* 20000' /tmp/gpio_button_watch.sh.v02115 && "
-            "grep -q 'RUN_SECONDS \\* 50 \\/ POLL_INTERVAL_TENTHS' /tmp/gpio_button_watch.sh.v02115; then "
-            "mv /tmp/gpio_button_watch.sh.v02115 \"$SCRIPT\"; chmod 755 \"$SCRIPT\"; changed=1; "
-            "else rm -f /tmp/gpio_button_watch.sh.v02115; echo __M1S_BUTTON_TIMING_PATCH_FAILED__; exit 0; fi; "
+            "cp \"$SCRIPT\" /tmp/gpio_button_watch.sh.v0301; "
+            "sed -i 's/tenths \\* 100000/tenths * 20000/' /tmp/gpio_button_watch.sh.v0301; "
+            "sed -i 's/RUN_SECONDS \\* 10 \\/ POLL_INTERVAL_TENTHS/RUN_SECONDS * 50 \\/ POLL_INTERVAL_TENTHS/' /tmp/gpio_button_watch.sh.v0301; "
+            "if grep -q 'tenths \\* 20000' /tmp/gpio_button_watch.sh.v0301 && "
+            "grep -q 'RUN_SECONDS \\* 50 \\/ POLL_INTERVAL_TENTHS' /tmp/gpio_button_watch.sh.v0301; then "
+            "mv /tmp/gpio_button_watch.sh.v0301 \"$SCRIPT\"; chmod 755 \"$SCRIPT\"; changed=1; "
+            "else rm -f /tmp/gpio_button_watch.sh.v0301; echo __M1S_BUTTON_TIMING_PATCH_FAILED__; exit 0; fi; "
             "fi; "
             "if ! grep -q 'tenths \\* 20000' \"$SCRIPT\"; then "
             "echo __M1S_BUTTON_TIMING_UNSUPPORTED__; exit 0; fi; "
@@ -900,7 +977,7 @@ class AqaraM1SClient:
             "grep -q '^HOLD_TENTHS=60$' \"$CONF\" || { sed -i 's/^HOLD_TENTHS=.*/HOLD_TENTHS=60/' \"$CONF\"; changed=1; }; "
             "grep -q '^HOLD_REPEAT_TENTHS=25$' \"$CONF\" || { sed -i 's/^HOLD_REPEAT_TENTHS=.*/HOLD_REPEAT_TENTHS=25/' \"$CONF\"; changed=1; }; "
             "if [ \"$changed\" = '1' ]; then "
-            "cp \"$CONF\" /tmp/gpio_button_watch.conf.v02115; "
+            "cp \"$CONF\" /tmp/gpio_button_watch.conf.v0301; "
             "sed -i 's/^ENABLE_GPIO_BUTTON_WATCH=.*/ENABLE_GPIO_BUTTON_WATCH=1/' \"$CONF\"; "
             "sed -i 's/^DRY_RUN=.*/DRY_RUN=0/' \"$CONF\"; "
             "sed -i 's/^RUN_SECONDS=.*/RUN_SECONDS=0/' \"$CONF\"; "
@@ -908,7 +985,7 @@ class AqaraM1SClient:
             "for p in $(ps w | grep '[g]pio_button_watch.sh' | grep -v 'SCRIPT=' | awk '{print $1}'); do "
             "[ \"$p\" = \"$self\" ] || [ \"$p\" = \"$parent\" ] || kill \"$p\" 2>/dev/null; done; "
             "\"$SCRIPT\" >> /tmp/gpio_button_watch_boot_guard.log 2>&1 & "
-            "sleep 1; cp /tmp/gpio_button_watch.conf.v02115 \"$CONF\"; rm -f /tmp/gpio_button_watch.conf.v02115; "
+            "sleep 1; cp /tmp/gpio_button_watch.conf.v0301 \"$CONF\"; rm -f /tmp/gpio_button_watch.conf.v0301; "
             "fi; "
             "if grep -q 'tenths \\* 20000' \"$SCRIPT\" && "
             "grep -q '^DOUBLE_WINDOW_TENTHS=40$' \"$CONF\" && "
@@ -918,4 +995,3 @@ class AqaraM1SClient:
         )
         output = self.run_command(command, timeout=15.0)
         return "__M1S_BUTTON_TIMING_OK__" in output
-

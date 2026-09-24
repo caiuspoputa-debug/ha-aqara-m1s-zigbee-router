@@ -1,18 +1,34 @@
-Aqara M1S Zigbee Router v0.21.13 validation
+Aqara M1S Zigbee Coordinator + Router v0.30.0 validation
 
-Base: v0.21.12
+Base: v0.3.0, derived from the established v0.21.13 Router integration.
 
-Intended changes:
-- Preserve the v0.21.12 shared live fanout buffer/audio path.
-- Gate only restored startup/reload playback until all enabled integration entries are registered, membership selection is stable for 2 seconds, and every selected hub is online with its group TCP receiver connected.
-- Arm the gate immediately when the group restore state is read, preventing member-switch restore callbacks from starting FFmpeg early.
-- Manual Play/Resume clears the startup gate and retains normal v0.21.12 behaviour.
-- Live group member enable/disable behaviour is unchanged; no automatic STOP/PLAY is added for membership changes.
-- Routine DRIFT BASELINE / DRIFT DIAGNOSTIC output is disabled and demoted to DEBUG; real failures stay visible.
+Validated package behavior:
+- The internal domain remains aqara_m1s_zigbee_router for in-place upgrades.
+- Coordinator/Router behavior is selected from the runtime role, never from an IP address.
+- Router hubs retain Rejoin, ring RGB and illuminance entities.
+- Coordinator hubs expose Coordinator ON/OFF and suppress Router Rejoin, RGB and lux UART traffic.
+- The last confirmed role is persisted for safe Home Assistant startup while a hub is offline.
+- Sound deletion accepts any WAV below /data/musics; upload remains restricted to /data/musics/music-ch.
+- Sound deletion still requires explicit confirmation and creates a mandatory hub-side backup first.
+- The v0.21.15 20 ms physical-button polling migration is restored.
+- The redundant Refresh Sound List button entity is not created and stale registry entries are removed.
+- No sound is selected by default; explicit confirmation is required.
+- A hub-side archive is mandatory before selected sounds are deleted.
 
-Static validation performed:
-- Python syntax compile of media_group.py.
-- manifest.json parsed successfully and version is 0.21.13.
-- Compared package files against v0.21.12; only media_group.py, manifest.json, CHANGELOG.md and VALIDATION.txt are intentionally changed.
-- No per-chunk deadline scheduler from v0.21.11 is present.
-- Individual media_player.py and sound_player.py are unchanged.
+Hardware evidence on Aqara M1S 192.168.0.107:
+- Exact JN5189 flash and 47,416-byte readback passed.
+- Spinel 4.3 and unmodified zigbee-on-host handshake passed.
+- Zigbee network formation on channel 20 and MAC transmission passed.
+- Coordinator ON/OFF and persistence across a controlled hub reboot passed.
+- Telnet, HomeKit, audio/MQTT, Wi-Fi recovery and button services remained active.
+
+Still pending before STABLE:
+- Pair and interview a real Zigbee device.
+- Verify bidirectional device traffic.
+- Verify Zigbee2MQTT restart recovery with a paired device.
+
+Static validation performed for this archive:
+- All Python files compile successfully.
+- All JSON files parse successfully.
+- manifest.json version is 0.30.0.
+- Role persistence, runtime role parsing, Coordinator ON/OFF markers and managed sound paths are covered by focused checks.

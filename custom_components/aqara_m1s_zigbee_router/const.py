@@ -1,4 +1,5 @@
 DOMAIN = "aqara_m1s_zigbee_router"
+CONF_ZIGBEE_ROLE = "zigbee_role"
 
 CONF_HOST = "host"
 CONF_PORT = "port"
@@ -30,7 +31,8 @@ SERVICE_RESYNC_MEDIA_GROUP = "resync_media_group"
 SERVICE_UPDATE_MEDIA_METADATA = "update_media_metadata"
 
 SOUND_ROOT = "/data/musics"
-MANAGED_SOUND_ROOT = "/data/musics/music-ch"
+MANAGED_SOUND_DIRECTORY_PREFIX = "music-"
+UPLOAD_SOUND_ROOT = "/data/musics/music-ch"
 
 
 def sound_list_signal(entry_id: str) -> str:

@@ -19,9 +19,46 @@ async def async_setup_entry(
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
     coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
     manager = hass.data[DOMAIN][DATA_MEDIA_GROUP]
-    async_add_entities([
+    entities = [
         AqaraM1SMediaGroupMemberSwitch(entry, client, coordinator, manager)
-    ])
+    ]
+    if client.zigbee_role == "coordinator":
+        status = await hass.async_add_executor_job(client.coordinator_runtime_status)
+        entities.append(
+            AqaraM1SCoordinatorRadioSwitch(entry, client, coordinator, status)
+        )
+    async_add_entities(entities)
+
+
+class AqaraM1SCoordinatorRadioSwitch(CoordinatorEntity, SwitchEntity):
+    """Control the persisted JN5189 Coordinator RCP radio state."""
+
+    _attr_name = "Zigbee Coordinator"
+    _attr_icon = "mdi:zigbee"
+    _attr_should_poll = False
+
+    def __init__(self, entry, client, coordinator, status) -> None:
+        super().__init__(coordinator)
+        self.client = client
+        self._attr_unique_id = f"{entry.entry_id}_coordinator_radio"
+        self._attr_device_info = device_info(entry)
+        self._attr_is_on = (
+            status.get("enabled") == "1" and status.get("state") == "ON"
+        )
+
+    async def async_turn_on(self, **kwargs) -> None:
+        status = await self.hass.async_add_executor_job(
+            self.client.set_coordinator_enabled, True
+        )
+        self._attr_is_on = status.get("state") == "ON"
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        status = await self.hass.async_add_executor_job(
+            self.client.set_coordinator_enabled, False
+        )
+        self._attr_is_on = status.get("state") == "ON"
+        self.async_write_ha_state()
 
 
 class AqaraM1SMediaGroupMemberSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
