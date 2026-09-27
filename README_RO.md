@@ -1,4 +1,12 @@
-# Aqara M1S Zigbee Coordinator + Router v0.30.0
+# Aqara M1S Zigbee Coordinator + Router v0.31.0
+
+## MQTT comun
+
+In Configure, alege **MQTT comun - toate huburile**. Serverul, portul si contul sunt salvate o singura data pentru integrare si aplicate huburilor Router si Coordinator. Huburile offline se sincronizeaza la revenire. Parola goala pastreaza valoarea salvata; la prima configurare este obligatorie.
+
+Foloseste adresa LAN a brokerului utilizat si de integrarea MQTT din HA. Nu se schimba automat brokerul HA si nu se creeaza utilizatori Mosquitto. Senzorul **MQTT configuration** confirma aplicarea pe fiecare hub; testeaza apoi o apasare fizica. Topicurile existente sunt pastrate.
+
+Detalii, limite si revenire: [RELEASE_0.31.0.md](RELEASE_0.31.0.md). Nicio setare de hub nu se schimba pana la salvarea formularului. Release testat local, nevalidat inca intr-un Home Assistant real.
 
 Integrare locală Home Assistant pentru huburi Aqara M1S Gen 1 pregătite fie ca Router Zigbee, fie ca hub Coordinator Zigbee-on-Host LAB.
 

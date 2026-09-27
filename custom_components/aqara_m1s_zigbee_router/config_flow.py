@@ -228,7 +228,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         return self.hass.data[DOMAIN][DATA_CLIENTS][self.config_entry.entry_id]
 
     async def async_step_init(self, user_input=None):
-        menu_options = ["network_address", "change_wifi", "upload_sound"]
+        menu_options = ["shared_mqtt", "network_address", "change_wifi", "upload_sound"]
         try:
             zigbee_status = await self.hass.async_add_executor_job(
                 self._client.coordinator_runtime_status
@@ -255,6 +255,30 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             step_id="init",
             menu_options=menu_options,
         )
+
+    async def async_step_shared_mqtt(self, user_input=None):
+        from .shared_mqtt import get_shared_mqtt
+
+        manager = await get_shared_mqtt(self.hass)
+        current = manager.settings or {}
+        errors = {}
+        if user_input is not None:
+            values = dict(user_input)
+            if not values.get("password"):
+                values["password"] = current.get("password", "")
+            try:
+                await manager.save(values)
+            except Exception:
+                errors["base"] = "shared_mqtt_failed"
+            else:
+                return self.async_create_entry(title="", data=dict(self.config_entry.options))
+        schema = vol.Schema({
+            vol.Required("host", default=current.get("host", "")): str,
+            vol.Required("port", default=current.get("port", 1883)): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+            vol.Required("username", default=current.get("username", "")): str,
+            vol.Optional("password"): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+        })
+        return self.async_show_form(step_id="shared_mqtt", data_schema=schema, errors=errors)
 
     async def _async_apply_network(self, mode: str, last_octet: int) -> None:
         data = dict(self.config_entry.data)

@@ -35,6 +35,10 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         self._watchdog_task: asyncio.Task | None = None
         self._lux_task: asyncio.Task | None = None
         self._last_lux_started = 0.0
+        self._mqtt_task = None
+        self._mqtt_applied = None
+        self._mqtt_retry_at = 0.0
+        self.mqtt_sync_state = "not_configured"
         self._visual_availability_online: bool | None = None
         super().__init__(
             hass,
@@ -80,6 +84,7 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         # for the shared Telnet/UART lock and is therefore a true watchdog.
         online = await self.hass.async_add_executor_job(self.client.check_online)
         if not online:
+            self.mqtt_sync_state = "offline"
             if self._was_online:
                 _LOGGER.warning(
                     "Aqara M1S hub %s became unavailable; retrying every %.0f seconds",
@@ -105,6 +110,14 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             if self.client.zigbee_role != "coordinator":
                 self._schedule_lux_refresh(force=False)
 
+        from .shared_mqtt import get_shared_mqtt
+        manager = await get_shared_mqtt(self.hass)
+        target = (manager.revision, self._online_generation)
+        if manager.settings and self._mqtt_applied != target:
+            if self._mqtt_task is None or self._mqtt_task.done():
+                if self.hass.loop.time() >= self._mqtt_retry_at:
+                    self.mqtt_sync_state = "pending"
+                    self._mqtt_task = self.hass.async_create_task(self._sync_shared_mqtt(manager, target))
         previous = self.data or {}
         return {
             "online": True,
@@ -113,6 +126,18 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             "illuminance": previous.get("illuminance"),
             "online_generation": self._online_generation,
         }
+
+    async def _sync_shared_mqtt(self, manager, target):
+        from .shared_mqtt import apply_to_hub
+        try:
+            await self.hass.async_add_executor_job(apply_to_hub, self.client, dict(manager.settings))
+        except Exception:
+            self.mqtt_sync_state = "failed"
+            self._mqtt_retry_at = self.hass.loop.time() + 60
+        else:
+            self._mqtt_applied = target
+            self._mqtt_retry_at = 0
+            self.mqtt_sync_state = "applied"
 
     @callback
     def _schedule_lux_refresh(self, *, force: bool) -> None:
@@ -177,7 +202,7 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             return
 
     async def async_shutdown(self) -> None:
-        for attr in ("_watchdog_task", "_lux_task", "_post_online_task"):
+        for attr in ("_watchdog_task", "_lux_task", "_post_online_task", "_mqtt_task"):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task is not None and not task.done():

@@ -1,4 +1,6 @@
-# Aqara M1S Zigbee Coordinator + Router v0.30.0
+# Aqara M1S Zigbee Coordinator + Router v0.31.0
+
+Shared MQTT settings are available under Configure on any hub and apply to all managed hubs, including offline hubs on reconnect. Use the LAN address of the same broker as HA MQTT. No settings change until the form is saved. See [release notes](RELEASE_0.31.0.md) for limitations, validation and rollback.
 
 Local Home Assistant integration for Aqara M1S Gen 1 hubs prepared either as a Zigbee Router or as the dedicated Zigbee-on-Host Coordinator LAB.
 

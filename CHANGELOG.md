@@ -1,3 +1,11 @@
+## 0.31.0 - Integration-wide MQTT configuration
+
+- One persisted broker address, port and account for all Router/Coordinator hubs.
+- Validate broker CONNACK before saving; retain previous settings on failure.
+- Atomic hub configuration update with backup; retries and per-hub diagnostic state.
+- Preserve button topic IDs and existing GPIO/radio behavior. New hubs inherit common settings.
+- No live deployment performed; isolated tests do not replace Home Assistant/hardware validation.
+
 ## 0.30.0 - Persistent role safety, verified Coordinator path, and restored v0.21.15 behavior
 
 - Keep v0.30.0 as the base and preserve the Coordinator/Router runtime role, Coordinator ON/OFF, role persistence, and Router-only RGB/lux/rejoin protections.

@@ -103,9 +103,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         for definition in SENSORS
         if client.zigbee_role != "coordinator" or definition.key != "jn5189_router"
     ]
+    entities.append(AqaraM1SMQTTSyncSensor(entry, coordinator))
     if client.zigbee_role != "coordinator":
         entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
     async_add_entities(entities, coordinator.last_update_success)
+
+
+class AqaraM1SMQTTSyncSensor(CoordinatorEntity, SensorEntity):
+    _attr_name = "MQTT configuration"
+    _attr_should_poll = False
+    _attr_entity_category = "diagnostic"
+
+    def __init__(self, entry, coordinator):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_mqtt_configuration"
+        self._attr_device_info = device_info(entry)
+
+    @property
+    def native_value(self):
+        return self.coordinator.mqtt_sync_state
 
 
 class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):

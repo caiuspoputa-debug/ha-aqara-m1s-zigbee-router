@@ -54,8 +54,9 @@
           "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
           "coordinator_control": "Coordinator ON/OFF",
           "finish": "Finalizare și închidere / Finish and close",
-          "change_wifi": "Schimbă rețeaua Wi-Fi / Change Wi-Fi network"
-          ,"network_address": "Adresă de rețea / Network address"
+          "change_wifi": "Schimbă rețeaua Wi-Fi / Change Wi-Fi network",
+          "network_address": "Adresă de rețea / Network address",
+          "shared_mqtt": "Shared MQTT - all hubs"
         }
       },
       "upload_sound": {
@@ -117,6 +118,16 @@
       },
       "network_finish": {
         "title": "Adresă confirmată / Address confirmed"
+      },
+      "shared_mqtt": {
+        "title": "Shared MQTT for all hubs",
+        "description": "Applies to every Router and Coordinator hub in this HA installation. Use the same broker as Home Assistant MQTT and an address reachable from hubs (not localhost or core-mosquitto). Plain TCP only. Leave password blank to retain the saved password. Credentials required, printable ASCII, username + password at most 80 characters. Offline hubs sync when back online. MQTT configuration sensor reports progress; applied confirms configuration, not message delivery.",
+        "data": {
+          "host": "Server MQTT",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password"
+        }
       }
     },
     "progress": {
@@ -142,12 +153,13 @@
       "network_alias_failed": "Hubul nu a putut crea sau verifica adresa temporară. / The hub could not create or verify its temporary address.",
       "network_activation_unconfirmed": "Hubul a acceptat configurația, dar noul IP activ nu a putut fi confirmat. Verifică starea hubului înainte de o nouă încercare. / The hub accepted the configuration, but the active address could not be confirmed. Check hub status before retrying.",
       "network_invalid_octet": "Ultimul număr trebuie să fie între 2 și 254.",
-      "network_change_failed": "Adresa nu a fost confirmată. Hubul păstrează sau revine automat la configurația anterioară."
-      ,"network_manager_busy": "The network manager is processing another change. Try again after it finishes."
-      ,"network_address_in_use": "The selected IPv4 address is already used by another device."
-      ,"network_already_current": "The selected IPv4 address is already the hub's current address."
-      ,"network_candidate_unreachable": "The temporary IPv4 address could not be verified. The hub will automatically return to its previous address."
-      ,"network_identity_mismatch": "The selected IPv4 address responds, but belongs to another device."
+      "network_change_failed": "Adresa nu a fost confirmată. Hubul păstrează sau revine automat la configurația anterioară.",
+      "network_manager_busy": "The network manager is processing another change. Try again after it finishes.",
+      "network_address_in_use": "The selected IPv4 address is already used by another device.",
+      "network_already_current": "The selected IPv4 address is already the hub's current address.",
+      "network_candidate_unreachable": "The temporary IPv4 address could not be verified. The hub will automatically return to its previous address.",
+      "network_identity_mismatch": "The selected IPv4 address responds, but belongs to another device.",
+      "shared_mqtt_failed": "Invalid settings, unreachable broker, rejected login or storage failure. Active settings were not changed."
     },
     "abort": {
       "no_managed_sounds": "No WAV files were found below /data/musics.",

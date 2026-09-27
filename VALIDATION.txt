@@ -1,4 +1,11 @@
-Aqara M1S Zigbee Coordinator + Router v0.30.0 validation
+Aqara M1S Zigbee Coordinator + Router v0.31.0 validation
+
+New release: 7 isolated regression tests PASS; Python AST and JSON validation PASS.
+Tests cover shared persistence, broker rejection, invalid settings, atomic shell
+write with quoted credentials, backup/idempotence, missing runtime, retry recovery,
+and storage failure. Paho callbacks are mocked; no real broker used in tests.
+Full Home Assistant runtime and live deployment NOT performed.
+The inherited v0.30.0 validation claims below describe the base release only.
 
 Base: v0.3.0, derived from the established v0.21.13 Router integration.
 
