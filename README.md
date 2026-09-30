@@ -1,32 +1,27 @@
-# Aqara M1S Zigbee Coordinator + Router v0.31.0
+# Aqara M1S Zigbee Coordinator + Router v0.32.0
 
-Shared MQTT settings are available under Configure on any hub and apply to all managed hubs, including offline hubs on reconnect. Use the LAN address of the same broker as HA MQTT. No settings change until the form is saved. See [release notes](RELEASE_0.31.0.md) for limitations, validation and rollback.
+Local Home Assistant integration for hardware-identical Aqara M1S Gen 1 hubs configured either as a Zigbee Router or a Zigbee-on-Host Coordinator. The internal domain remains `aqara_m1s_zigbee_router`, preserving existing installations and entity identities.
 
-Local Home Assistant integration for Aqara M1S Gen 1 hubs prepared either as a Zigbee Router or as the dedicated Zigbee-on-Host Coordinator LAB.
+## Role-aware behavior
 
-The internal domain remains `aqara_m1s_zigbee_router` to upgrade existing Router installations without recreating their entities.
+- Router: Configure exposes **Join another Zigbee coordinator**; RGB and lux use the Router UART protocol.
+- Coordinator: Home Assistant exposes no switch, option or service capable of stopping the Coordinator. On upgrade, the legacy `*_coordinator_radio` entity is removed from the entity registry.
+- Coordinator: **Ring Light** is an RGB Light entity and **Illuminance** is a lux Sensor. Both use `/data/m1s_coordinator/coordinator_io.sh` sideband commands without taking over Zigbee2MQTT's Spinel connection.
+- The confirmed role is persisted and is independent of the hub IP address.
+- Zigbee channel and network remain managed by Zigbee2MQTT through `serial.adapter: zoh` and `tcp://HUB_IP:1886`.
 
-## Role-aware Zigbee controls
+## Coordinator validation on 2026-09-30
 
-- Router runtime detected: Configure shows **Join another Zigbee coordinator**.
-- Coordinator runtime detected: Rejoin is removed; Configure shows **Coordinator ON/OFF** and the device gets a Coordinator switch.
-- The confirmed role is stored in the Home Assistant config entry, so a Coordinator remains protected from RGB/lux UART commands if HA starts while that hub is temporarily offline.
-- Role detection is not tied to an IP address: `.107` is currently the Coordinator, while every Router hub keeps RGB and lux.
-- The Zigbee channel and network are configured in Zigbee2MQTT.
-- Coordinator uses `serial.adapter: zoh` and `tcp://HUB_IP:1886`.
+On identical `.220` and `.222` hubs, the EXP4.4 Coordinator firmware and relay 0.4.1 were validated with Spinel `Protocol version: 4.3`, marker `M1S_IO_V2`, sideband property 59, associated-device Zigbee traffic, and live RGB/lux commands while Zigbee2MQTT remained connected. Reboot persistence for Telnet, Wi-Fi and the Coordinator runtime was also checked, together with protection from the stock factory-button commands.
 
-## Sound management
+Validated firmware SHA-256: `C102149FA5A88A69535AE6E204A3F60BACB6FBB970571567D506DC8CD7844C57`.
 
-- Uploads still go to `/data/musics/music-ch` for backward compatibility.
-- Manual deletion lists every `.wav` below `/data/musics`, including original Aqara sound folders.
-- Nothing is selected by default and an explicit confirmation is required.
-- Before deletion, one archive is created under `/data/m1s_sound_backups`; deletion is aborted if backup fails.
-- No sound is deleted during installation, startup or migration.
+Validated relay SHA-256: `B8FFD40CAC73048EF2868A33EE61410C4019D5CD55B673A6BB4FE64591391408`.
 
-## Coordinator LAB limits
+Coordinator RGB/lux requires that compatible runtime and a working `coordinator_io.sh`. This integration never writes firmware or flashes a hub. Lux is the firmware-provided measurement; absolute photometric calibration remains sensor- and installation-dependent.
 
-Exact flash/readback, Spinel 4.3 handshake, channel 20 network formation, MAC traffic, ON/OFF and reboot recovery have been validated on Aqara M1S `.107`. Router RGB/lux UART commands are disabled in Coordinator mode because the standard RCP does not implement that private protocol. Audio, radio, network, Telnet and button functions remain Linux-side features.
+## Shared MQTT and sounds
 
-The release remains LAB until a real Zigbee device join, bidirectional traffic and Zigbee2MQTT restart recovery are demonstrated.
+**Shared MQTT - all hubs** stores one broker configuration and applies it to Router and Coordinator hubs, including offline hubs after reconnect. Sound uploads remain under `/data/musics/music-ch`; deletion requires explicit selection, confirmation and a successful backup under `/data/m1s_sound_backups`.
 
-Version `0.30.0` is based on integration `0.3.0`, which in turn is based on `0.21.13`.
+See [RELEASE_0.32.0.md](RELEASE_0.32.0.md) for release details.

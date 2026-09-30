@@ -279,6 +279,14 @@ async def async_setup_entry(
     if obsolete_select_id is not None:
         entity_registry.async_remove(obsolete_select_id)
 
+    # Coordinator is an always-on runtime. Remove the legacy control entity so
+    # upgrades cannot expose a path that stops the Zigbee radio.
+    obsolete_coordinator_switch_id = entity_registry.async_get_entity_id(
+        "switch", DOMAIN, f"{entry.entry_id}_coordinator_radio"
+    )
+    if obsolete_coordinator_switch_id is not None:
+        entity_registry.async_remove(obsolete_coordinator_switch_id)
+
     # Remove the legacy absolute fine-volume Number entities from v0.5.0-v0.5.5.
     # v0.5.9 reintroduces only an individual *trim* control with a new unique ID
     # (*_radio_fine_trim), so the old entity must not be revived accidentally.

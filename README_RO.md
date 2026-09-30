@@ -1,38 +1,34 @@
-# Aqara M1S Zigbee Coordinator + Router v0.31.0
+# Aqara M1S Zigbee Coordinator + Router v0.32.0
+
+Integrare locală Home Assistant pentru huburi Aqara M1S Gen 1 identice hardware, configurate ca Router Zigbee sau Coordinator Zigbee-on-Host. Domeniul intern rămâne `aqara_m1s_zigbee_router`, astfel încât instalările existente se actualizează fără recrearea entităților.
+
+## Comportament în funcție de rol
+
+- Router: în Configure apare **Conectare la alt coordonator Zigbee**; RGB și lux folosesc protocolul UART Router.
+- Coordinator: nu există switch, setare sau serviciu Home Assistant pentru oprirea coordinatorului. La actualizare, vechea entitate cu ID unic `*_coordinator_radio` este eliminată automat din registru.
+- Coordinator: **Ring Light** este o entitate Light RGB, iar **Illuminance** este un senzor în lux. Comenzile folosesc exclusiv helperul sideband `/data/m1s_coordinator/coordinator_io.sh`, fără a prelua portul Spinel folosit de Zigbee2MQTT.
+- Rolul confirmat este memorat în intrarea Home Assistant și nu depinde de adresa IP.
+- Canalul și rețeaua Zigbee rămân administrate de Zigbee2MQTT, cu `serial.adapter: zoh` și `tcp://HUB_IP:1886`.
+
+## Validarea Coordinator din 30.09.2026
+
+Pe huburile identice `.220` și `.222` au fost verificate firmware-ul Coordinator EXP4.4, relay-ul 0.4.1, handshake-ul Spinel `Protocol version: 4.3`, markerul `M1S_IO_V2`, proprietatea sideband 59, traficul cu dispozitive Zigbee asociate și funcționarea Zigbee2MQTT în timpul comenzilor RGB/lux. Au fost verificate și persistența după reboot pentru Telnet, Wi-Fi și runtime-ul Coordinator, plus protecția față de comenzile butonului din fabrică.
+
+Firmware validat SHA-256: `C102149FA5A88A69535AE6E204A3F60BACB6FBB970571567D506DC8CD7844C57`.
+
+Relay validat SHA-256: `B8FFD40CAC73048EF2868A33EE61410C4019D5CD55B673A6BB4FE64591391408`.
+
+RGB/lux pentru Coordinator necesită acest runtime compatibil și un `coordinator_io.sh` funcțional. Integrarea nu modifică firmware-ul și nu face flash. Citirea lux este valoarea furnizată de firmware; calibrarea fotometrică absolută rămâne dependentă de senzor și montaj.
 
 ## MQTT comun
 
-In Configure, alege **MQTT comun - toate huburile**. Serverul, portul si contul sunt salvate o singura data pentru integrare si aplicate huburilor Router si Coordinator. Huburile offline se sincronizeaza la revenire. Parola goala pastreaza valoarea salvata; la prima configurare este obligatorie.
-
-Foloseste adresa LAN a brokerului utilizat si de integrarea MQTT din HA. Nu se schimba automat brokerul HA si nu se creeaza utilizatori Mosquitto. Senzorul **MQTT configuration** confirma aplicarea pe fiecare hub; testeaza apoi o apasare fizica. Topicurile existente sunt pastrate.
-
-Detalii, limite si revenire: [RELEASE_0.31.0.md](RELEASE_0.31.0.md). Nicio setare de hub nu se schimba pana la salvarea formularului. Release testat local, nevalidat inca intr-un Home Assistant real.
-
-Integrare locală Home Assistant pentru huburi Aqara M1S Gen 1 pregătite fie ca Router Zigbee, fie ca hub Coordinator Zigbee-on-Host LAB.
-
-Domeniul intern rămâne `aqara_m1s_zigbee_router`, pentru ca instalările Router existente să fie actualizate fără recrearea entităților.
-
-## Control Zigbee în funcție de rol
-
-- Runtime Router detectat: în Configure apare **Conectare la alt coordinator Zigbee**.
-- Runtime Coordinator detectat: Rejoin dispare; în Configure apare **Coordinator ON/OFF**, iar dispozitivul primește și un switch Coordinator.
-- Rolul confirmat este memorat în intrarea Home Assistant, astfel încât un Coordinator rămâne protejat de comenzile RGB/lux dacă HA pornește cât hubul este temporar offline.
-- Rolul nu este legat de IP: `.107` este Coordinator acum, iar toate huburile Router păstrează RGB și lux.
-- Canalul și rețeaua Zigbee se aleg în Zigbee2MQTT.
-- Coordinatorul folosește `serial.adapter: zoh` și `tcp://HUB_IP:1886`.
+În Configure, **MQTT comun - toate huburile** salvează o singură configurație și o aplică huburilor Router și Coordinator. Huburile offline se sincronizează la revenire. Parola goală păstrează valoarea salvată; la prima configurare este obligatorie. Senzorul **MQTT configuration** arată starea aplicării pe fiecare hub.
 
 ## Administrarea sunetelor
 
-- Uploadul rămâne în `/data/musics/music-ch`, pentru compatibilitate.
-- Ștergerea manuală listează toate fișierele `.wav` din `/data/musics`, inclusiv folderele cu sunete originale Aqara.
-- Nimic nu este selectat implicit și este necesară confirmare explicită.
-- Înainte de ștergere se creează o arhivă în `/data/m1s_sound_backups`; dacă backupul eșuează, nu se șterge nimic.
-- Instalarea, pornirea și migrarea nu șterg automat niciun sunet.
+- Uploadul rămâne în `/data/musics/music-ch`.
+- Ștergerea listează toate fișierele `.wav` din `/data/musics`; nimic nu este selectat implicit.
+- Confirmarea este obligatorie, iar înainte de ștergere se creează un backup în `/data/m1s_sound_backups`.
+- Instalarea, pornirea și migrarea nu șterg automat sunete.
 
-## Limite Coordinator LAB
-
-Pe Aqara M1S `.107` au fost validate scrierea și readback-ul exact, handshake-ul Spinel 4.3, formarea rețelei pe canalul 20, traficul MAC, ON/OFF și revenirea după reboot. Comenzile UART RGB/lux din Router sunt dezactivate în modul Coordinator, deoarece RCP-ul standard nu implementează acel protocol particular. Audio, radio, rețea, Telnet și butonul rămân funcții Linux.
-
-Versiunea rămâne LAB până când asocierea unui dispozitiv Zigbee real, traficul bidirecțional și revenirea Zigbee2MQTT după restart sunt demonstrate.
-
-Versiunea `0.30.0` pornește din integrarea `0.3.0`, bazată la rândul ei pe `0.21.13`.
+Detalii de release: [RELEASE_0.32.0.md](RELEASE_0.32.0.md).

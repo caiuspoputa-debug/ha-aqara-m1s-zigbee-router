@@ -104,11 +104,9 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             self._was_online = True
             self._online_generation += 1
             self._schedule_post_online_cleanup(self._online_generation)
-            if self.client.zigbee_role != "coordinator":
-                self._schedule_lux_refresh(force=True)
+            self._schedule_lux_refresh(force=True)
         else:
-            if self.client.zigbee_role != "coordinator":
-                self._schedule_lux_refresh(force=False)
+            self._schedule_lux_refresh(force=False)
 
         from .shared_mqtt import get_shared_mqtt
         manager = await get_shared_mqtt(self.hass)

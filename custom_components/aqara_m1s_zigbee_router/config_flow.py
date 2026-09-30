@@ -246,9 +246,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             for path in sounds
         ):
             menu_options.append("delete_sound")
-        if zigbee_status.get("role") == "coordinator":
-            menu_options.append("coordinator_control")
-        else:
+        if zigbee_status.get("role") != "coordinator":
             menu_options.append("rejoin_zigbee")
         menu_options.append("finish")
         return self.async_show_menu(
@@ -677,43 +675,6 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             errors=errors,
         )
 
-    async def async_step_coordinator_control(self, user_input=None):
-        """Enable or disable the dedicated Coordinator radio runtime."""
-        errors = {}
-        try:
-            status = await self.hass.async_add_executor_job(
-                self._client.coordinator_runtime_status
-            )
-        except (OSError, RuntimeError):
-            status = {"role": "router", "enabled": "0", "state": "UNAVAILABLE"}
-
-        if status.get("role") != "coordinator":
-            return await self.async_step_init()
-
-        if user_input is not None:
-            try:
-                await self.hass.async_add_executor_job(
-                    self._client.set_coordinator_enabled,
-                    bool(user_input["enabled"]),
-                )
-            except (OSError, RuntimeError):
-                errors["base"] = "coordinator_control_failed"
-            else:
-                return self.async_create_entry(title="", data={})
-
-        enabled = status.get("enabled") == "1" and status.get("state") == "ON"
-        return self.async_show_form(
-            step_id="coordinator_control",
-            data_schema=vol.Schema(
-                {vol.Required("enabled", default=enabled): BooleanSelector()}
-            ),
-            description_placeholders={
-                "state": status.get("state", "UNAVAILABLE"),
-                "port": status.get("port", "1886"),
-            },
-            errors=errors,
-        )
-
     async def async_step_rejoin_zigbee(self, user_input=None):
         """Move the JN5189 router to a different Zigbee coordinator."""
         try:
@@ -723,7 +684,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         except (OSError, RuntimeError):
             status = {"role": "router"}
         if status.get("role") == "coordinator":
-            return await self.async_step_coordinator_control()
+            return await self.async_step_init()
         errors = {}
         if user_input is not None:
             if not user_input.get("confirm", False):

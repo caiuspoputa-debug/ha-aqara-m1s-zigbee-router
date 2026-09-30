@@ -1,3 +1,11 @@
+## 0.32.0 - Always-on Coordinator with sideband RGB and lux
+
+- Remove the Coordinator ON/OFF option and switch, including automatic cleanup of the legacy registry entity.
+- Remove the integration client method that could invoke `coordinator_set.sh off`.
+- Expose Ring Light and Illuminance for compatible Coordinator EXP4.4/relay 0.4.1 runtimes through `coordinator_io.sh` sideband commands.
+- Keep Router RGB/lux behavior and existing entity unique IDs unchanged.
+- Record the 2026-09-30 hardware evidence from identical `.220` and `.222` hubs.
+
 ## 0.31.0 - Integration-wide MQTT configuration
 
 - One persisted broker address, port and account for all Router/Coordinator hubs.

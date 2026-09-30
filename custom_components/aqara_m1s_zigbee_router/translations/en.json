@@ -52,7 +52,6 @@
           "upload_sound": "Încarcă WAV sau ZIP / Upload WAV or ZIP",
           "delete_sound": "Șterge WAV-uri / Delete WAV files",
           "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
-          "coordinator_control": "Coordinator ON/OFF",
           "finish": "Finalizare și închidere / Finish and close",
           "change_wifi": "Schimbă rețeaua Wi-Fi / Change Wi-Fi network",
           "network_address": "Adresă de rețea / Network address",
@@ -72,13 +71,6 @@
         "data": {
           "path": "Fișiere audio / Sound files",
           "confirm": "Confirm backup and deletion of selected files"
-        }
-      },
-      "coordinator_control": {
-        "title": "Coordinator Zigbee ON/OFF",
-        "description": "Stare reală: {state}, port Zigbee2MQTT: {port}. Oprește Zigbee2MQTT înainte de OFF. / Real state: {state}, Zigbee2MQTT port: {port}. Stop Zigbee2MQTT before switching OFF.",
-        "data": {
-          "enabled": "Coordinator activ / Coordinator enabled"
         }
       },
       "rejoin_zigbee": {
@@ -141,7 +133,6 @@
       "sound_delete_confirmation_required": "Explicitly confirm backup and deletion of selected files.",
       "rejoin_confirmation_required": "Confirmation is required before clearing the current Zigbee association.",
       "rejoin_failed": "The JN5189 did not acknowledge the rejoin command. Verify the hub connection and compatible firmware.",
-      "coordinator_control_failed": "The Coordinator did not confirm the state change. Check the runtime and stop Zigbee2MQTT before OFF.",
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",
       "wifi_invalid": "SSID-ul sau parola Wi-Fi nu sunt valide.",
       "wifi_change_failed": "Schimbarea Wi-Fi nu a putut fi pornită. Verifică Telnet și instalarea modulului Wi-Fi recovery.",
