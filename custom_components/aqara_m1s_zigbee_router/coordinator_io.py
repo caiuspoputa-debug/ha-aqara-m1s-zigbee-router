@@ -1,7 +1,7 @@
 """Strict client for the Coordinator relay sideband channel."""
 import json
 
-RELAY = "/data/m1s_coordinator/bin/uart_tcp_relay_mipsel"
+HELPER = "/data/m1s_coordinator/coordinator_io.sh"
 
 
 def request(client, operation: str, values=()):
@@ -16,7 +16,7 @@ def request(client, operation: str, values=()):
     elif values:
         raise ValueError("Unexpected coordinator arguments")
 
-    command = f"{RELAY} --io {operation}" + "".join(f" {value}" for value in values)
+    command = f"{HELPER} {operation}" + "".join(f" {value}" for value in values)
     output = client.run_command(command, timeout=4.0)
     lines = [line.strip() for line in output.splitlines() if line.strip().startswith("{")]
     if len(lines) != 1:

@@ -55,7 +55,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.client.coordinator_io_state, GOOD)
         self.assertEqual(
             self.client.run_command.call_args.args[0],
-            io.RELAY + " --io rgb 2 3 4",
+            io.HELPER + " rgb 2 3 4",
         )
         self.client._uart_send_locked.assert_not_called()
 

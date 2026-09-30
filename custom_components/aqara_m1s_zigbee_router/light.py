@@ -17,21 +17,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
-    if client.zigbee_role == "coordinator":
-        coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
-        added = False
-
-        def discover() -> None:
-            nonlocal added
-            if not added and client.coordinator_io_state is not None:
-                added = True
-                async_add_entities([
-                    AqaraM1SRouterRingLight(hass, entry, client, coordinator)
-                ])
-
-        entry.async_on_unload(coordinator.async_add_listener(discover))
-        discover()
-        return
     async_add_entities([
         AqaraM1SRouterRingLight(
             hass,

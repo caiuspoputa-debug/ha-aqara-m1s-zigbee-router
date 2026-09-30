@@ -104,21 +104,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         if client.zigbee_role != "coordinator" or definition.key != "jn5189_router"
     ]
     entities.append(AqaraM1SMQTTSyncSensor(entry, coordinator))
-    if client.zigbee_role != "coordinator":
-        entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
-    else:
-        added = False
-
-        def discover() -> None:
-            nonlocal added
-            if not added and client.coordinator_io_state is not None:
-                added = True
-                async_add_entities([
-                    AqaraM1SRouterIlluminanceSensor(entry, client, coordinator)
-                ])
-
-        entry.async_on_unload(coordinator.async_add_listener(discover))
-        discover()
+    entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
     async_add_entities(entities, coordinator.last_update_success)
 
 

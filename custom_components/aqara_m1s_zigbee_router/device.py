@@ -4,7 +4,7 @@ import re
 
 from homeassistant.const import CONF_HOST
 
-from .const import CONF_DEVICE_MAC, DOMAIN
+from .const import CONF_DEVICE_MAC, CONF_ZIGBEE_ROLE, DOMAIN
 
 _OFFLINE_SUFFIXES = (" (🔴 Indisponibil)", " (Indisponibil)")
 _TRAILING_IPV4_RE = re.compile(r"\s+-\s+(?:\d{1,3}\.){3}\d{1,3}$")
@@ -58,11 +58,16 @@ def entry_title_with_host(name: str, host: str) -> str:
 
 def device_info(entry) -> dict:
     host = str(entry.data.get(CONF_HOST, ""))
+    role = entry.data.get(CONF_ZIGBEE_ROLE, "router")
     return {
         "identifiers": {device_identifier(entry)},
         "name": device_name_with_host(
             entry.data.get("name", f"Aqara M1S Router {host}"), host
         ),
         "manufacturer": "Aqara",
-        "model": "M1S Gen 1 / JN5189 Router",
+        "model": (
+            "M1S Gen 1 / JN5189 Coordinator"
+            if role == "coordinator"
+            else "M1S Gen 1 / JN5189 Router"
+        ),
     }

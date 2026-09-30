@@ -1,3 +1,10 @@
+## 0.33.1 - Coordinator entity discovery fix
+
+- Always register Ring Light and Illuminance for a detected Coordinator, matching
+  the Router device layout; keep them unavailable until sideband data is valid.
+- Use the installed `coordinator_io.sh` helper contract validated on relay 0.4.1.
+- Show `M1S Gen 1 / JN5189 Coordinator` in Home Assistant device information.
+
 ## 0.33.0 - Always-on Coordinator with validated sideband RGB and lux
 
 - Remove the Coordinator ON/OFF option and switch, including automatic cleanup of the legacy registry entity.
