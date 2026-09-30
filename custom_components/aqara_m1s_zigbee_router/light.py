@@ -17,8 +17,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
-    if client.zigbee_role == "coordinator":
-        return
     async_add_entities([
         AqaraM1SRouterRingLight(
             hass,
@@ -34,6 +32,20 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
     _attr_supported_color_modes = {ColorMode.RGB}
     _attr_color_mode = ColorMode.RGB
     _attr_should_poll = False
+
+    @property
+    def available(self):
+        return super().available and (
+            self.client.zigbee_role != "coordinator"
+            or self.client.coordinator_io_state is not None
+        )
+
+    @property
+    def is_on(self):
+        if self.client.zigbee_role == "coordinator":
+            state = self.client.coordinator_io_state
+            return bool(state and any(state["rgb"]))
+        return self._attr_is_on
 
     def __init__(self, hass, entry, client, coordinator) -> None:
         super().__init__(coordinator)
@@ -63,6 +75,16 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
         self._attr_is_on = False
 
     def _handle_coordinator_update(self) -> None:
+        if self.client.zigbee_role == "coordinator":
+            state = self.client.coordinator_io_state
+            if state and any(state["rgb"]):
+                peak = max(state["rgb"])
+                self._attr_brightness = peak
+                self._attr_rgb_color = tuple(
+                    round(value * 255 / peak) for value in state["rgb"]
+                )
+            super()._handle_coordinator_update()
+            return
         generation = (self.coordinator.data or {}).get(
             "online_generation", 0
         )

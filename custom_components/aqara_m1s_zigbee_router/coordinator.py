@@ -14,6 +14,7 @@ from .device import device_identifier
 _LOGGER = logging.getLogger(__name__)
 WATCHDOG_INTERVAL_SECONDS = 5.0
 LUX_INTERVAL_SECONDS = 15.0
+COORDINATOR_LUX_INTERVAL_SECONDS = 60.0
 OFFLINE_NAME_SUFFIX = " (🔴 Indisponibil)"
 LEGACY_OFFLINE_NAME_SUFFIX = " (Indisponibil)"
 
@@ -104,11 +105,9 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             self._was_online = True
             self._online_generation += 1
             self._schedule_post_online_cleanup(self._online_generation)
-            if self.client.zigbee_role != "coordinator":
-                self._schedule_lux_refresh(force=True)
+            self._schedule_lux_refresh(force=True)
         else:
-            if self.client.zigbee_role != "coordinator":
-                self._schedule_lux_refresh(force=False)
+            self._schedule_lux_refresh(force=False)
 
         from .shared_mqtt import get_shared_mqtt
         manager = await get_shared_mqtt(self.hass)
@@ -146,7 +145,12 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             return
 
         now = self.hass.loop.time()
-        if not force and now - self._last_lux_started < LUX_INTERVAL_SECONDS:
+        interval = (
+            COORDINATOR_LUX_INTERVAL_SECONDS
+            if self.client.zigbee_role == "coordinator"
+            else LUX_INTERVAL_SECONDS
+        )
+        if not force and now - self._last_lux_started < interval:
             return
         self._last_lux_started = now
         generation = self._online_generation
@@ -163,6 +167,12 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         except asyncio.CancelledError:
             raise
         except Exception:
+            if self.client.zigbee_role == "coordinator":
+                self.client.coordinator_io_state = None
+                if self._was_online and generation == self._online_generation:
+                    data = dict(self.data or {})
+                    data["illuminance"] = None
+                    self.async_set_updated_data(data)
             return
 
         if not self._was_online or generation != self._online_generation:

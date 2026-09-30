@@ -1,6 +1,6 @@
-# Aqara M1S Zigbee Coordinator + Router v0.34.0
+# Aqara M1S Zigbee Coordinator + Router v0.34.1 TEST
 
-Versiune de recuperare construită direct din baza locală `0.32.0b2`, păstrând modulele confirmate pentru sunete, media player, volum, buton fizic, MQTT comun, Wi-Fi și diagnostic.
+Versiune de test construită peste baza de recuperare `0.34.0`. Modulele confirmate pentru sunete, media player, volum, buton fizic, MQTT comun, Wi-Fi și diagnostic au rămas neschimbate.
 
 ## Coordinator
 
@@ -8,7 +8,10 @@ Versiune de recuperare construită direct din baza locală `0.32.0b2`, păstrân
 - Nu există switch, formular sau metodă internă pentru oprirea lui.
 - Vechea entitate `*_coordinator_radio` este eliminată automat din registru.
 - Rejoin este disponibil numai pentru Router.
-- RGB și LUX Coordinator nu sunt interogate în această versiune; nu există polling sideband și integrarea nu execută relay-ul Coordinator.
+- Ring Light pentru Coordinator folosește helperul validat `M1S_IO_V2` numai la o comandă trimisă din Home Assistant.
+- Illuminance pentru Coordinator folosește același helper o dată la 60 de secunde (`lux-start`, o secundă pentru conversie, `lux-get`).
+- Comenzile sideband folosesc sesiuni Telnet noi și nu folosesc traseul UART al Routerului sau portul 1886 al Coordinatorului.
+- O eroare sideband face indisponibile numai Ring Light și Illuminance; hubul, sunetele, MQTT și Zigbee2MQTT rămân independente.
 - Zigbee2MQTT continuă independent prin `zoh` la `tcp://HUB_IP:1886`.
 
 ## Funcții păstrate din 0.32
@@ -20,4 +23,4 @@ Versiune de recuperare construită direct din baza locală `0.32.0b2`, păstrân
 - Configurarea Wi-Fi și adresei de rețea.
 - RGB și Illuminance pentru huburile Router.
 
-Integrarea nu scrie firmware și nu face flash. RGB/LUX Coordinator vor fi adăugate numai după validarea separată a unei interfețe sideband care nu afectează Telnet, sunetele sau Zigbee2MQTT.
+Traseele RGB și Illuminance ale Routerului rămân neschimbate pe UART A5/A6. Integrarea nu scrie firmware și nu face flash. Această versiune a fost verificată fără conectare la un hub live și rămâne TEST până la confirmarea hardware.

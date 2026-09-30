@@ -1,3 +1,13 @@
+## 0.34.1 - Isolated Coordinator RGB and one-minute lux
+
+- Expose Ring Light and Illuminance for a confirmed Coordinator role using only
+  the `M1S_IO_V2` sideband helper.
+- Run sideband work through a fresh Telnet client that is disconnected without
+  invoking Router UART cleanup.
+- Read Coordinator lux once every minute using one start/get conversion.
+- Keep failures local to Ring Light and Illuminance; audio, hub availability,
+  MQTT and Zigbee2MQTT remain independent.
+
 ## 0.34.0 - Recovery from the confirmed 0.32 base
 
 - Preserve the confirmed 0.32 sound, media, MQTT, network, button and Router behavior.

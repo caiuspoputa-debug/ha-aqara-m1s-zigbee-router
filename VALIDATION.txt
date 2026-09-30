@@ -1,41 +1,31 @@
-Aqara M1S Zigbee Coordinator + Router v0.31.0 validation
+Aqara M1S Zigbee Coordinator + Router v0.34.1 TEST validation
 
-New release: 7 isolated regression tests PASS; Python AST and JSON validation PASS.
-Tests cover shared persistence, broker rejection, invalid settings, atomic shell
-write with quoted credentials, backup/idempotence, missing runtime, retry recovery,
-and storage failure. Paho callbacks are mocked; no real broker used in tests.
-Full Home Assistant runtime and live deployment NOT performed.
-The inherited v0.30.0 validation claims below describe the base release only.
+Static and isolated validation performed for this package:
+- 8 Coordinator sideband tests pass without a real hub.
+- 5 WAV deletion/mandatory-backup tests pass.
+- 7 shared-MQTT persistence and recovery tests pass.
+- All Python files compile and all JSON/YAML files parse.
+- manifest.json reports version 0.34.1.
+- Coordinator lux interval is 60 seconds; Router lux remains at 15 seconds.
+- Coordinator RGB/lux accepts only the validated M1S_IO_V2 helper protocol.
+- Coordinator operations use fresh Telnet sessions and disconnect without the
+  Router UART cleanup path.
+- Coordinator ON/OFF control is absent. The old coordinator_radio entity is
+  removed only as registry cleanup.
+- Confirmed audio, media-player, physical-button and shared-MQTT modules are
+  byte-identical to the v0.34.0 recovery base.
 
-Base: v0.3.0, derived from the established v0.21.13 Router integration.
+Isolation guarantees covered by tests and source checks:
+- Coordinator Ring Light runs only after a Home Assistant light command.
+- One lux sample uses exactly one lux-start, a one-second conversion delay and
+  one lux-get.
+- The sideband code does not use port 1886 or the Router UART A5/A6 path.
+- Invalid, incomplete, ambiguous or out-of-range helper responses are rejected.
+- A sideband failure affects Ring Light/Illuminance state only; it cannot mark
+  the hub or Zigbee2MQTT unavailable.
 
-Validated package behavior:
-- The internal domain remains aqara_m1s_zigbee_router for in-place upgrades.
-- Coordinator/Router behavior is selected from the runtime role, never from an IP address.
-- Router hubs retain Rejoin, ring RGB and illuminance entities.
-- Coordinator hubs expose Coordinator ON/OFF and suppress Router Rejoin, RGB and lux UART traffic.
-- The last confirmed role is persisted for safe Home Assistant startup while a hub is offline.
-- Sound deletion accepts any WAV below /data/musics; upload remains restricted to /data/musics/music-ch.
-- Sound deletion still requires explicit confirmation and creates a mandatory hub-side backup first.
-- The v0.21.15 20 ms physical-button polling migration is restored.
-- The redundant Refresh Sound List button entity is not created and stale registry entries are removed.
-- No sound is selected by default; explicit confirmation is required.
-- A hub-side archive is mandatory before selected sounds are deleted.
-
-Hardware evidence on Aqara M1S 192.168.0.107:
-- Exact JN5189 flash and 47,416-byte readback passed.
-- Spinel 4.3 and unmodified zigbee-on-host handshake passed.
-- Zigbee network formation on channel 20 and MAC transmission passed.
-- Coordinator ON/OFF and persistence across a controlled hub reboot passed.
-- Telnet, HomeKit, audio/MQTT, Wi-Fi recovery and button services remained active.
-
-Still pending before STABLE:
-- Pair and interview a real Zigbee device.
-- Verify bidirectional device traffic.
-- Verify Zigbee2MQTT restart recovery with a paired device.
-
-Static validation performed for this archive:
-- All Python files compile successfully.
-- All JSON files parse successfully.
-- manifest.json version is 0.30.0.
-- Role persistence, runtime role parsing, Coordinator ON/OFF markers and managed sound paths are covered by focused checks.
+Live hardware validation was NOT performed while creating this package. Before
+promoting it from TEST, verify on a Coordinator hub that Zigbee2MQTT stays
+connected, lux changes at the expected cadence, Ring Light ON/OFF and RGB work,
+sound playback remains functional, and all behavior survives HA/Z2M restarts.
+No firmware writing or flashing is performed by this integration.
