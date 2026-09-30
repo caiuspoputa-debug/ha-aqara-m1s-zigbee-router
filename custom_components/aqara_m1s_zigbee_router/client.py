@@ -672,13 +672,12 @@ class AqaraM1SClient:
         if self.zigbee_role == "coordinator":
             with self._lock:
                 self._coordinator_io("lux-start")
-                for _ in range(20):
-                    time.sleep(0.05)
-                    result = self._coordinator_io("lux-get")
-                    if result["valid"]:
-                        return {
-                            key: result[key] for key in ("raw", "millivolts", "lux")
-                        }
+                time.sleep(1.0)
+                result = self._coordinator_io("lux-get")
+                if result["valid"]:
+                    return {
+                        key: result[key] for key in ("raw", "millivolts", "lux")
+                    }
                 raise TimeoutError("Coordinator ADC measurement unavailable")
         with self._lock:
             last_error: Exception | None = None

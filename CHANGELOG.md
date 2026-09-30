@@ -1,3 +1,11 @@
+## 0.33.2 - Coordinator sideband transport compatibility
+
+- Try both relay 0.4.1 Coordinator interfaces: `coordinator_io.sh` and the
+  relay binary's `--io` mode.
+- Keep strict response validation and never fall back to Router UART A5/A6.
+- Use the hardware-validated one-second lux conversion sequence without rapid
+  repeated requests that can overload the relay or Telnet service.
+
 ## 0.33.1 - Coordinator entity discovery fix
 
 - Always register Ring Light and Illuminance for a detected Coordinator, matching

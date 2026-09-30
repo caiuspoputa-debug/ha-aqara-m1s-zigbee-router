@@ -61,9 +61,22 @@ class Tests(unittest.TestCase):
 
     def test_failure_never_falls_back_to_uart(self):
         self.client.run_command.side_effect = OSError("unavailable")
-        with self.assertRaises(OSError):
+        with self.assertRaises(RuntimeError):
             self.client.set_rgb(1, 2, 3)
         self.assertIsNone(self.client.coordinator_io_state)
+        self.assertEqual(self.client.run_command.call_count, 2)
+        self.client._uart_send_locked.assert_not_called()
+
+    def test_relay_transport_fallback(self):
+        self.client.run_command.side_effect = [
+            RuntimeError("wrapper unavailable"),
+            json.dumps(GOOD),
+        ]
+        self.client.set_rgb(2, 3, 4)
+        self.assertEqual(
+            self.client.run_command.call_args.args[0],
+            io.RELAY + " --io rgb 2 3 4",
+        )
         self.client._uart_send_locked.assert_not_called()
 
     def test_legacy_helper_rejected(self):
@@ -86,7 +99,7 @@ class Tests(unittest.TestCase):
         with patch.object(client_module.time, "sleep"):
             with self.assertRaises(TimeoutError):
                 self.client.read_illuminance()
-        self.assertEqual(self.client.run_command.call_count, 21)
+        self.assertEqual(self.client.run_command.call_count, 2)
 
     def test_bad_response_types_and_ranges(self):
         changes = [

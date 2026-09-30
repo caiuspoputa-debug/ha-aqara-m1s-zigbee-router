@@ -1,4 +1,4 @@
-# Aqara M1S Zigbee Coordinator + Router v0.33.1
+# Aqara M1S Zigbee Coordinator + Router v0.33.2
 
 Local Home Assistant integration for hardware-identical Aqara M1S Gen 1 hubs configured either as a Zigbee Router or a Zigbee-on-Host Coordinator. The internal domain remains `aqara_m1s_zigbee_router`, preserving existing installations and entity identities.
 
@@ -24,4 +24,4 @@ Coordinator RGB/lux requires that compatible runtime and a working `coordinator_
 
 **Shared MQTT - all hubs** stores one broker configuration and applies it to Router and Coordinator hubs, including offline hubs after reconnect. Sound uploads remain under `/data/musics/music-ch`; deletion requires explicit selection, confirmation and a successful backup under `/data/m1s_sound_backups`.
 
-See [RELEASE_0.33.1.md](RELEASE_0.33.1.md) for release details.
+See [RELEASE_0.33.2.md](RELEASE_0.33.2.md) for release details.
