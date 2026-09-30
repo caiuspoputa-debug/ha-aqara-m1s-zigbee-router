@@ -88,6 +88,12 @@ delete_sound:
   name: Delete WAV sound
   description: Back up and delete a WAV file anywhere below /data/musics on the Aqara M1S.
   fields:
+    confirm:
+      name: Confirm deletion
+      description: Must be enabled explicitly before the selected WAV can be deleted.
+      required: true
+      selector:
+        boolean:
     host:
       name: Hub IP
       description: Required when more than one Router hub is configured.

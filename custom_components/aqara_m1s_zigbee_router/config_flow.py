@@ -662,6 +662,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             step_id="delete_sound",
             data_schema=vol.Schema(
                 {
+                    vol.Required("confirm", default=False): BooleanSelector(),
                     vol.Optional("path", default=[]): SelectSelector(
                         SelectSelectorConfig(
                             options=managed_sounds,
@@ -669,7 +670,6 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                             mode=SelectSelectorMode.LIST,
                         )
                     ),
-                    vol.Required("confirm", default=False): BooleanSelector(),
                 }
             ),
             errors=errors,

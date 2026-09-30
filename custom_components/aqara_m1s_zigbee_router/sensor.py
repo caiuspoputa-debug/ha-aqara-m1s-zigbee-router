@@ -104,7 +104,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         if client.zigbee_role != "coordinator" or definition.key != "jn5189_router"
     ]
     entities.append(AqaraM1SMQTTSyncSensor(entry, coordinator))
-    entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
+    if client.zigbee_role != "coordinator":
+        entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
     async_add_entities(entities, coordinator.last_update_success)
 
 
@@ -161,16 +162,6 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
 
 
 class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
-    @property
-    def available(self):
-        if self.client.zigbee_role == "coordinator":
-            return (
-                super().available
-                and self.client.coordinator_io_state is not None
-                and bool((self.coordinator.data or {}).get("illuminance"))
-            )
-        return super().available
-
     _attr_name = "Illuminance"
     _attr_icon = "mdi:brightness-5"
     _attr_device_class = SensorDeviceClass.ILLUMINANCE
@@ -199,11 +190,7 @@ class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
         self._attr_extra_state_attributes = {
             "adc_raw": reading.get("raw"),
             "millivolts": reading.get("millivolts"),
-            "source": (
-                "JN5189 Coordinator sideband"
-                if self.client.zigbee_role == "coordinator"
-                else "JN5189 UART A6"
-            ),
+            "source": "JN5189 UART A6",
         }
 
     def _handle_coordinator_update(self) -> None:

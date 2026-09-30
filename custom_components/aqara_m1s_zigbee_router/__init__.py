@@ -279,8 +279,6 @@ async def async_setup_entry(
     if obsolete_select_id is not None:
         entity_registry.async_remove(obsolete_select_id)
 
-    # Coordinator is an always-on runtime. Remove the legacy control entity so
-    # upgrades cannot expose a path that stops the Zigbee radio.
     obsolete_coordinator_switch_id = entity_registry.async_get_entity_id(
         "switch", DOMAIN, f"{entry.entry_id}_coordinator_radio"
     )
@@ -428,6 +426,8 @@ async def async_setup_entry(
         async_dispatcher_send(hass, sound_list_signal(selected_entry_id))
 
     async def delete_sound(call: ServiceCall) -> None:
+        if call.data.get("confirm") is not True:
+            raise ValueError("Explicit confirmation is required for WAV deletion")
         selected_entry_id, selected_client = await _get_target(call)
         await hass.async_add_executor_job(
             selected_client.delete_sound, call.data["path"]

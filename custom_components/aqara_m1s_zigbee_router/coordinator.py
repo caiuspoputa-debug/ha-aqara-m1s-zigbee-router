@@ -84,8 +84,6 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         # for the shared Telnet/UART lock and is therefore a true watchdog.
         online = await self.hass.async_add_executor_job(self.client.check_online)
         if not online:
-            if self.client.zigbee_role == "coordinator":
-                self.client.coordinator_io_state = None
             self.mqtt_sync_state = "offline"
             if self._was_online:
                 _LOGGER.warning(
@@ -99,8 +97,6 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
 
         self._set_visual_availability(True)
         if not self._was_online:
-            if self.client.zigbee_role == "coordinator":
-                self.client.coordinator_io_state = None
             _LOGGER.info(
                 "Aqara M1S hub %s is reachable again",
                 self.client.host,
@@ -108,9 +104,11 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             self._was_online = True
             self._online_generation += 1
             self._schedule_post_online_cleanup(self._online_generation)
-            self._schedule_lux_refresh(force=True)
+            if self.client.zigbee_role != "coordinator":
+                self._schedule_lux_refresh(force=True)
         else:
-            self._schedule_lux_refresh(force=False)
+            if self.client.zigbee_role != "coordinator":
+                self._schedule_lux_refresh(force=False)
 
         from .shared_mqtt import get_shared_mqtt
         manager = await get_shared_mqtt(self.hass)
@@ -165,14 +163,6 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         except asyncio.CancelledError:
             raise
         except Exception:
-            if (
-                self.client.zigbee_role == "coordinator"
-                and self._was_online
-                and generation == self._online_generation
-            ):
-                data = dict(self.data or {})
-                data["illuminance"] = None
-                self.async_set_updated_data(data)
             return
 
         if not self._was_online or generation != self._online_generation:

@@ -78,7 +78,6 @@ class AqaraM1SClient:
     password: str = ""
     timeout: float = 8.0
     zigbee_role: str = field(default="router", init=False)
-    coordinator_io_state: dict | None = field(default=None, init=False)
     _sock: socket.socket | None = field(default=None, init=False, repr=False)
     _uart_sock: socket.socket | None = field(default=None, init=False, repr=False)
     _uart_rx: bytearray = field(default_factory=bytearray, init=False, repr=False)
@@ -651,12 +650,6 @@ class AqaraM1SClient:
 
     def set_rgb(self, red: int, green: int, blue: int) -> None:
         values = [max(0, min(255, int(value))) for value in (red, green, blue)]
-        if self.zigbee_role == "coordinator":
-            result = self._coordinator_io("rgb", values)
-            if result["rgb"] != values:
-                self.coordinator_io_state = None
-                raise RuntimeError("Coordinator RGB state was not confirmed")
-            return
         checksum = 0xA5 ^ values[0] ^ values[1] ^ values[2]
         frame = bytes([0xA5, *values, checksum])
         with self._lock:
@@ -669,16 +662,6 @@ class AqaraM1SClient:
 
     def read_illuminance(self) -> dict[str, int]:
         """Read a validated A6 lux response from the JN5189 firmware."""
-        if self.zigbee_role == "coordinator":
-            with self._lock:
-                self._coordinator_io("lux-start")
-                time.sleep(1.0)
-                result = self._coordinator_io("lux-get")
-                if result["valid"]:
-                    return {
-                        key: result[key] for key in ("raw", "millivolts", "lux")
-                    }
-                raise TimeoutError("Coordinator ADC measurement unavailable")
         with self._lock:
             last_error: Exception | None = None
             for attempt in range(2):
@@ -735,18 +718,6 @@ class AqaraM1SClient:
                         continue
             assert last_error is not None
             raise last_error
-
-    def _coordinator_io(self, operation: str, values=()) -> dict:
-        from .coordinator_io import request
-
-        with self._lock:
-            try:
-                result = request(self, operation, values)
-            except Exception:
-                self.coordinator_io_state = None
-                raise
-            self.coordinator_io_state = result
-            return result
 
     def rejoin_zigbee_network(self) -> None:
         """Clear JN5189 Zigbee context and start steering after its reset."""

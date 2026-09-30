@@ -1,27 +1,11 @@
-## 0.33.2 - Coordinator sideband transport compatibility
+## 0.34.0 - Recovery from the confirmed 0.32 base
 
-- Try both relay 0.4.1 Coordinator interfaces: `coordinator_io.sh` and the
-  relay binary's `--io` mode.
-- Keep strict response validation and never fall back to Router UART A5/A6.
-- Use the hardware-validated one-second lux conversion sequence without rapid
-  repeated requests that can overload the relay or Telnet service.
-
-## 0.33.1 - Coordinator entity discovery fix
-
-- Always register Ring Light and Illuminance for a detected Coordinator, matching
-  the Router device layout; keep them unavailable until sideband data is valid.
-- Use the installed `coordinator_io.sh` helper contract validated on relay 0.4.1.
-- Show `M1S Gen 1 / JN5189 Coordinator` in Home Assistant device information.
-
-## 0.33.0 - Always-on Coordinator with validated sideband RGB and lux
-
-- Remove the Coordinator ON/OFF option and switch, including automatic cleanup of the legacy registry entity.
-- Remove the integration client method that could invoke `coordinator_set.sh off`.
-- Expose Ring Light and Illuminance for compatible Coordinator EXP4.4/relay 0.4.1 runtimes through `coordinator_io.sh` sideband commands.
-- Keep Router RGB/lux behavior and existing entity unique IDs unchanged.
-- Record the 2026-09-30 hardware evidence from identical `.220` and `.222` hubs.
-- Incorporate the strict protocol validation, capability discovery, real RGB state,
-  unavailable-state handling and nine sideband regression tests developed in 0.32.0b2.
+- Preserve the confirmed 0.32 sound, media, MQTT, network, button and Router behavior.
+- Remove every Home Assistant path that can stop the Coordinator.
+- Remove the experimental Coordinator sideband client and all RGB/lux polling.
+- Keep Zigbee2MQTT and the Coordinator relay untouched by the integration.
+- Place the mandatory WAV deletion confirmation above the file list so it is
+  visible without scrolling through the complete sound collection.
 
 ## 0.31.0 - Integration-wide MQTT configuration
 
