@@ -1,4 +1,4 @@
-# Aqara M1S Zigbee Coordinator + Router v0.32.0
+# Aqara M1S Zigbee Coordinator + Router v0.33.0
 
 Integrare locală Home Assistant pentru huburi Aqara M1S Gen 1 identice hardware, configurate ca Router Zigbee sau Coordinator Zigbee-on-Host. Domeniul intern rămâne `aqara_m1s_zigbee_router`, astfel încât instalările existente se actualizează fără recrearea entităților.
 
@@ -31,4 +31,4 @@ RGB/lux pentru Coordinator necesită acest runtime compatibil și un `coordinato
 - Confirmarea este obligatorie, iar înainte de ștergere se creează un backup în `/data/m1s_sound_backups`.
 - Instalarea, pornirea și migrarea nu șterg automat sunete.
 
-Detalii de release: [RELEASE_0.32.0.md](RELEASE_0.32.0.md).
+Detalii de release: [RELEASE_0.33.0.md](RELEASE_0.33.0.md).

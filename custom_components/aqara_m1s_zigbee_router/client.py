@@ -5,7 +5,6 @@ import base64
 import io
 import wave
 import hashlib
-import json
 import shlex
 import secrets
 from pathlib import Path, PurePosixPath
@@ -79,6 +78,7 @@ class AqaraM1SClient:
     password: str = ""
     timeout: float = 8.0
     zigbee_role: str = field(default="router", init=False)
+    coordinator_io_state: dict | None = field(default=None, init=False)
     _sock: socket.socket | None = field(default=None, init=False, repr=False)
     _uart_sock: socket.socket | None = field(default=None, init=False, repr=False)
     _uart_rx: bytearray = field(default_factory=bytearray, init=False, repr=False)
@@ -649,33 +649,13 @@ class AqaraM1SClient:
             status["role"] = "coordinator" if "state" in status else "router"
         return status
 
-    @staticmethod
-    def _parse_coordinator_io(output: str) -> dict:
-        """Return the JSON object emitted by the Coordinator sideband helper."""
-        for line in reversed(output.splitlines()):
-            candidate = line.strip()
-            if not candidate.startswith("{"):
-                continue
-            try:
-                payload = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                return payload
-        raise RuntimeError(f"Invalid Coordinator I/O response: {output}")
-
     def set_rgb(self, red: int, green: int, blue: int) -> None:
         values = [max(0, min(255, int(value))) for value in (red, green, blue)]
         if self.zigbee_role == "coordinator":
-            output = self.run_command(
-                "test -x /data/m1s_coordinator/coordinator_io.sh && "
-                "/data/m1s_coordinator/coordinator_io.sh rgb "
-                f"{values[0]} {values[1]} {values[2]}",
-                timeout=UPLOAD_COMMAND_TIMEOUT,
-            )
-            payload = self._parse_coordinator_io(output)
-            if payload.get("rgb") != values:
-                raise RuntimeError(f"Coordinator RGB was not confirmed: {output}")
+            result = self._coordinator_io("rgb", values)
+            if result["rgb"] != values:
+                self.coordinator_io_state = None
+                raise RuntimeError("Coordinator RGB state was not confirmed")
             return
         checksum = 0xA5 ^ values[0] ^ values[1] ^ values[2]
         frame = bytes([0xA5, *values, checksum])
@@ -690,20 +670,16 @@ class AqaraM1SClient:
     def read_illuminance(self) -> dict[str, int]:
         """Read a validated A6 lux response from the JN5189 firmware."""
         if self.zigbee_role == "coordinator":
-            output = self.run_command(
-                "test -x /data/m1s_coordinator/coordinator_io.sh && "
-                "/data/m1s_coordinator/coordinator_io.sh lux-start >/dev/null && "
-                "sleep 1 && /data/m1s_coordinator/coordinator_io.sh lux-get",
-                timeout=UPLOAD_COMMAND_TIMEOUT,
-            )
-            payload = self._parse_coordinator_io(output)
-            if payload.get("valid") is not True:
-                raise RuntimeError(f"Coordinator lux sample is invalid: {output}")
-            return {
-                "raw": int(payload["raw"]),
-                "millivolts": int(payload["millivolts"]),
-                "lux": int(payload["lux"]),
-            }
+            with self._lock:
+                self._coordinator_io("lux-start")
+                for _ in range(20):
+                    time.sleep(0.05)
+                    result = self._coordinator_io("lux-get")
+                    if result["valid"]:
+                        return {
+                            key: result[key] for key in ("raw", "millivolts", "lux")
+                        }
+                raise TimeoutError("Coordinator ADC measurement unavailable")
         with self._lock:
             last_error: Exception | None = None
             for attempt in range(2):
@@ -760,6 +736,18 @@ class AqaraM1SClient:
                         continue
             assert last_error is not None
             raise last_error
+
+    def _coordinator_io(self, operation: str, values=()) -> dict:
+        from .coordinator_io import request
+
+        with self._lock:
+            try:
+                result = request(self, operation, values)
+            except Exception:
+                self.coordinator_io_state = None
+                raise
+            self.coordinator_io_state = result
+            return result
 
     def rejoin_zigbee_network(self) -> None:
         """Clear JN5189 Zigbee context and start steering after its reset."""
