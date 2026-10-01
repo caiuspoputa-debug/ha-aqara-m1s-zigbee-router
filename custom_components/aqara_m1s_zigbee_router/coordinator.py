@@ -104,7 +104,11 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             )
             self._was_online = True
             self._online_generation += 1
-            self._schedule_post_online_cleanup(self._online_generation)
+            # The stock red boot-ring cleanup belongs only to initial setup.
+            # A later generation is a confirmed reconnect; the light entity
+            # restores its remembered state without an unconditional OFF.
+            if self._online_generation == 1:
+                self._schedule_post_online_cleanup(self._online_generation)
             self._schedule_lux_refresh(force=True)
         else:
             self._schedule_lux_refresh(force=False)

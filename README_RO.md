@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.34.1 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.34.2 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.34.1 TEST` este construită peste baza `0.34.0 RECOVERY`. Modulele confirmate pentru sunete, media player, volum, buton fizic, MQTT comun, Wi-Fi și diagnostic sunt păstrate. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
+Versiunea `0.34.2 TEST` este construită peste baza `0.34.1 TEST`. Păstrează modulele confirmate pentru sunete, media player, volum, buton fizic, MQTT comun, Wi-Fi, RGB/lux Coordinator și diagnostic și confirmă disponibilitatea prin încercări Telnet limitate. Dacă toate încercările eșuează, izolarea imediată existentă a membrului media rămâne activă; codul de redare și sincronizare nu este modificat. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
@@ -104,7 +104,7 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.34.1` a trecut:
+Sursa `0.34.2` a trecut:
 
 - 8 teste izolate pentru RGB/lux Coordinator și siguranța transportului.
 - 5 teste pentru ștergerea WAV și backupul obligatoriu.

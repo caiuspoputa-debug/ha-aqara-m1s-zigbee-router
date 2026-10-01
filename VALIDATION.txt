@@ -1,19 +1,21 @@
-Aqara M1S Zigbee Coordinator + Router v0.34.1 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.34.2 TEST validation
 
 Static and isolated validation performed for this package:
-- 8 Coordinator sideband tests pass without a real hub.
+- 10 Coordinator/availability tests pass without a real hub.
 - 5 WAV deletion/mandatory-backup tests pass.
 - 7 shared-MQTT persistence and recovery tests pass.
 - All Python files compile and all JSON/YAML files parse.
-- manifest.json reports version 0.34.1.
+- manifest.json reports version 0.34.2.
 - Coordinator lux interval is 60 seconds; Router lux remains at 15 seconds.
 - Coordinator RGB/lux accepts only the validated M1S_IO_V2 helper protocol.
 - Coordinator operations use fresh Telnet sessions and disconnect without the
   Router UART cleanup path.
 - Coordinator ON/OFF control is absent. The old coordinator_radio entity is
   removed only as registry cleanup.
-- Confirmed audio, media-player, physical-button and shared-MQTT modules are
-  byte-identical to the v0.34.0 recovery base.
+- media_player.py and media_group.py are byte-identical to v0.34.1; playback,
+  group synchronization, member isolation and late-rejoin logic are unchanged.
+- A transient Telnet accept failure is retried inside one availability check.
+  Failure of every attempt retains the existing immediate offline transition.
 
 Isolation guarantees covered by tests and source checks:
 - Coordinator Ring Light runs only after a Home Assistant light command.
@@ -24,8 +26,10 @@ Isolation guarantees covered by tests and source checks:
 - A sideband failure affects Ring Light/Illuminance state only; it cannot mark
   the hub or Zigbee2MQTT unavailable.
 
-Live hardware validation was NOT performed while creating this package. Before
-promoting it from TEST, verify on a Coordinator hub that Zigbee2MQTT stays
-connected, lux changes at the expected cadence, Ring Light ON/OFF and RGB work,
-sound playback remains functional, and all behavior survives HA/Z2M restarts.
-No firmware writing or flashing is performed by this integration.
+Read-only live diagnosis was performed on hubs .220-.225 before creating this
+package. All six remained associated to the same AP, returned 0% packet loss to
+the gateway and Home Assistant, and had Telnet/MQTT processes running. The
+v0.34.2 candidate itself was NOT installed or hardware-tested. Before promoting
+it from TEST, verify that Zigbee2MQTT stays connected, lux and Ring Light work,
+sound playback remains synchronized, and real hub power loss still isolates and
+rejoins only that member. No firmware writing or flashing is performed.

@@ -138,6 +138,38 @@ class CoordinatorIOTests(unittest.TestCase):
         self.assertEqual(values["COORDINATOR_LUX_INTERVAL_SECONDS"], 60.0)
         self.assertEqual(values["LUX_INTERVAL_SECONDS"], 15.0)
 
+    def test_online_probe_retries_transient_telnet_accept_delays(self):
+        connected = Mock()
+        with (
+            patch.object(
+                client_module.socket,
+                "create_connection",
+                side_effect=[OSError("busy"), OSError("busy"), connected],
+            ) as create_connection,
+            patch.object(client_module.time, "sleep") as sleep,
+        ):
+            self.assertTrue(self.client.check_online())
+
+        self.assertEqual(create_connection.call_count, 3)
+        for call in create_connection.call_args_list:
+            self.assertEqual(call.kwargs["timeout"], 2.0)
+        self.assertEqual(sleep.call_count, 2)
+        connected.close.assert_called_once_with()
+
+    def test_online_probe_reports_offline_after_all_attempts_fail(self):
+        with (
+            patch.object(
+                client_module.socket,
+                "create_connection",
+                side_effect=OSError("offline"),
+            ) as create_connection,
+            patch.object(client_module.time, "sleep") as sleep,
+        ):
+            self.assertFalse(self.client.check_online())
+
+        self.assertEqual(create_connection.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

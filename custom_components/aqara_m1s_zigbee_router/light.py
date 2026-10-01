@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from homeassistant.components.light import ATTR_BRIGHTNESS, ATTR_RGB_COLOR, ColorMode, LightEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -9,6 +12,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DATA_CLIENTS, DATA_COORDINATORS, DOMAIN
 from .device import device_info
+
+
+_LOGGER = logging.getLogger(__name__)
+RECONNECT_RESTORE_DELAY_SECONDS = 2.0
 
 
 async def async_setup_entry(
@@ -56,6 +63,7 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
         self._attr_is_on = False
         self._attr_brightness = 64
         self._attr_rgb_color = (255, 0, 0)
+        self._restore_task: asyncio.Task | None = None
         self._online_generation = (coordinator.data or {}).get(
             "online_generation", 0
         )
@@ -89,9 +97,62 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
             "online_generation", 0
         )
         if generation != self._online_generation:
+            previous_generation = self._online_generation
             self._online_generation = generation
-            self._attr_is_on = False
+            if previous_generation > 0 and generation > previous_generation:
+                self._schedule_reconnect_restore(generation)
         super()._handle_coordinator_update()
+
+    def _schedule_reconnect_restore(self, generation: int) -> None:
+        task = self._restore_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._restore_task = self.hass.async_create_task(
+            self._async_restore_after_reconnect(generation)
+        )
+
+    async def _async_restore_after_reconnect(self, generation: int) -> None:
+        """Restore the last requested Router ring state after a real reconnect."""
+        try:
+            await asyncio.sleep(RECONNECT_RESTORE_DELAY_SECONDS)
+            if (
+                self.client.zigbee_role == "coordinator"
+                or generation != self._online_generation
+                or not self.coordinator.last_update_success
+            ):
+                return
+
+            if self._attr_is_on:
+                brightness = self._attr_brightness or 255
+                red, green, blue = self._attr_rgb_color or (255, 255, 255)
+                rgb = (
+                    round(red * brightness / 255),
+                    round(green * brightness / 255),
+                    round(blue * brightness / 255),
+                )
+            else:
+                rgb = (0, 0, 0)
+
+            await self.hass.async_add_executor_job(self.client.set_rgb, *rgb)
+            self.async_write_ha_state()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            _LOGGER.debug(
+                "Could not restore Aqara M1S ring state after reconnect host=%s: %s",
+                self.client.host,
+                err,
+            )
+        finally:
+            if self._restore_task is asyncio.current_task():
+                self._restore_task = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        task = self._restore_task
+        self._restore_task = None
+        if task is not None and not task.done():
+            task.cancel()
+        await super().async_will_remove_from_hass()
 
     async def async_turn_on(self, **kwargs) -> None:
         if ATTR_RGB_COLOR in kwargs:

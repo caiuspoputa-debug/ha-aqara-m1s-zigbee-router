@@ -27,6 +27,9 @@ UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
 UPLOAD_COMMAND_TIMEOUT = 30.0
 UPLOAD_FINALIZE_TIMEOUT = 45.0
 UPLOAD_BASE64_CHUNK_SIZE = 1024
+ONLINE_CHECK_ATTEMPTS = 3
+ONLINE_CHECK_TIMEOUT_SECONDS = 2.0
+ONLINE_CHECK_RETRY_DELAY_SECONDS = 0.2
 
 
 def _upload_cleanup_command() -> str:
@@ -573,25 +576,29 @@ class AqaraM1SClient:
     def check_online(self) -> bool:
         """Return True when the hub's Telnet TCP endpoint is reachable.
 
-        This probe intentionally uses a fresh, short-lived socket and does not
-        take the client's Telnet/UART lock.  Availability therefore continues
-        to be checked even while another integration operation is busy or a
-        stale persistent Telnet session is being recovered.
+        A short Telnet accept delay must not look like a complete hub outage.
+        Retry inside this single watchdog check; if every connection attempt
+        fails, the caller still marks the hub offline immediately so media
+        group isolation semantics remain unchanged.
         """
-        try:
-            sock = socket.create_connection(
-                (self.host, int(self.port)),
-                timeout=0.75,
-            )
-        except OSError:
-            return False
-        try:
-            return True
-        finally:
+        for attempt in range(ONLINE_CHECK_ATTEMPTS):
             try:
-                sock.close()
+                sock = socket.create_connection(
+                    (self.host, int(self.port)),
+                    timeout=ONLINE_CHECK_TIMEOUT_SECONDS,
+                )
             except OSError:
-                pass
+                if attempt + 1 < ONLINE_CHECK_ATTEMPTS:
+                    time.sleep(ONLINE_CHECK_RETRY_DELAY_SECONDS)
+                continue
+            try:
+                return True
+            finally:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+        return False
 
     @staticmethod
     def _safe_sound_path(path: str) -> str:

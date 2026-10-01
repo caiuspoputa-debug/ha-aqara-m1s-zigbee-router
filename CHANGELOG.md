@@ -1,3 +1,14 @@
+## 0.34.2 - Confirmed availability and reconnect state preservation
+
+- Confirm a watchdog check with up to three two-second Telnet connection attempts
+  before reporting failure instead of treating one 750 ms accept delay as an outage.
+- If all attempts fail, keep the existing immediate offline transition and media
+  member isolation; no playback, synchronization or media-group code is changed.
+- Run the stock red boot-ring cleanup only during the integration's initial setup,
+  never after every reconnect.
+- Preserve and restore the last requested Router ring-light state after a confirmed
+  offline/online cycle.
+
 ## 0.34.1 - Isolated Coordinator RGB and one-minute lux
 
 - Expose Ring Light and Illuminance for a confirmed Coordinator role using only
