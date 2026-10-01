@@ -163,6 +163,21 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         # Never open a Telnet sideband request from the HA watchdog.
         if self.client.zigbee_role == "coordinator":
             return
+        mqtt_io = None
+        if self.config_entry is not None:
+            mqtt_io = (
+                self.hass.data.get(DOMAIN, {})
+                .get(DATA_COORDINATOR_MQTT, {})
+                .get(self.config_entry.entry_id)
+            )
+        if mqtt_io is not None and (
+            self.client.mqtt_io_confirmed or mqtt_io.seen
+        ):
+            if force and mqtt_io.available:
+                self._lux_task = self.hass.async_create_task(
+                    mqtt_io.async_refresh_lux()
+                )
+            return
         task = self._lux_task
         if task is not None and not task.done():
             return
@@ -222,6 +237,17 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
                 return
             await asyncio.sleep(10)
             if not self._was_online or generation != self._online_generation:
+                return
+            mqtt_io = None
+            if self.config_entry is not None:
+                mqtt_io = (
+                    self.hass.data.get(DOMAIN, {})
+                    .get(DATA_COORDINATOR_MQTT, {})
+                    .get(self.config_entry.entry_id)
+                )
+            if mqtt_io is not None and self.client.mqtt_io_confirmed:
+                if mqtt_io.available:
+                    await mqtt_io.async_set_rgb(0, 0, 0)
                 return
             await self.hass.async_add_executor_job(self.client.set_rgb, 0, 0, 0)
         except asyncio.CancelledError:

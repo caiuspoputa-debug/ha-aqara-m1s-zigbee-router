@@ -1,37 +1,48 @@
-Aqara M1S Zigbee Coordinator + Router v0.35.0 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.36.0 TEST validation
 
 Static validation performed for this package:
-- 10 Coordinator MQTT IO, telemetry, topic and transport-safety tests pass.
-- 1 stored-WAV priority test confirms suspend, MQTT prepare, MQTT stop and
-  restoration of the remembered media state in that order.
+- 14 role-aware MQTT IO, topic, telemetry, UART-isolation and Router rejoin
+  tests pass.
+- 1 stored-WAV priority test confirms suspend, MQTT prepare, the 400 ms clean
+  end cushion, MQTT stop and restoration of the remembered media state.
 - 5 WAV deletion/mandatory-backup tests pass.
 - 7 shared-MQTT persistence and recovery tests pass.
-- All Python files compile and manifest.json reports version 0.35.0.
-- All hub shell scripts pass `sh -n`.
-- The static MIPS agent builds with `-Wall -Wextra -Werror`.
-- media_player.py (including radio playback) and media_group.py are
-  byte-identical to v0.34.2; group playback and synchronization are unchanged.
+- All Python files compile and manifest.json reports version 0.36.0.
+- All Router upgrade shell scripts pass `sh -n`.
+- The Router agent builds as a stripped, static MIPS32 little-endian executable
+  with `-Wall -Wextra -Werror`.
+- media_player.py, media_group.py and shared_mqtt.py are byte-identical to
+  v0.35.0. sound_player.py differs only by the intentional 200 -> 400 ms clean
+  WAV end cushion and its named constant.
 
-Hardware evidence on Coordinator 192.168.0.220:
-- Temporary-agent MQTT command -> sideband -> JN5189 RGB ON confirmed.
-- RGB OFF confirmed and left OFF after the test.
-- Lux sample and retained telemetry confirmed.
+Hardware evidence retained for Coordinator 192.168.0.220:
+- MQTT command -> sideband -> JN5189 RGB ON/OFF was confirmed.
+- Lux and retained telemetry were confirmed.
 - Exactly one established Zigbee2MQTT connection remained on TCP port 1886.
 - No JN5189 firmware write or flash was performed.
 
-Staged deployment rule:
-- Install the hub agent with MQTT_IO_ENABLED=0.
-- Install v0.35.0 in Home Assistant and restart Home Assistant.
-- Only then run /data/m1s_coordinator/mqtt_io_activate.sh.
-- The activation script requires successful initial state/lux/telemetry and an
-  established Z2M session; otherwise it stops and disables the agent.
+Read-only Router reference evidence from 192.168.0.221:
+- The installed post_init.sh SHA-256 is
+  fa501b558644870ec27d7896e2d470df4f709edab128925bad77893078f0bda0,
+  exactly matching Router kit v0.10.0.
+- /dev/ttyS1 uses 115200 raw mode and existing RGB/lux uses A5/A6.
+- Existing MQTT publishes the physical button only; no permanent RGB/lux agent
+  was present during inspection.
+- No files, settings, firmware or runtime services were changed on .221.
+
+Staged Router deployment rule:
+- Stage the upgrade with MQTT_IO_ENABLED=0.
+- Install v0.36.0 in Home Assistant and restart Home Assistant.
+- Only then run /data/m1s_router/mqtt_io_activate.sh.
+- Activation requires successful initial RGB state, validated A6 lux and
+  telemetry publication. Failure stops and disables the agent.
 
 Isolation guarantees:
-- Coordinator RGB/lux is MQTT-only from Home Assistant and never falls back to
-  Router A5/A6 or a Telnet sideband command.
-- The agent talks only to /tmp/m1s-coordinator-io.sock. It never opens UART or
-  TCP port 1886 and cannot issue Coordinator OFF.
-- Stored-WAV MQTT commands prepare/stop only the dedicated ports 12347/12348,
-  FIFO and exact PID files already used by the confirmed sound implementation.
-- Radio/group audio remains on the existing transport and is never sent over MQTT.
-- Router behavior is unchanged.
+- Router MQTT owns /dev/ttyS1 only after explicit activation and disables the
+  old temporary TCP UART tunnel.
+- Router MQTT subscribes only to RGB set and lux refresh topics. It contains no
+  radio, WAV, play, pause, stop, volume or PCM transport command.
+- Router rejoin uses a temporary, 90-second self-recovering maintenance window.
+- Coordinator RGB/lux remains MQTT-only through its isolated sideband socket.
+- Hardware activation of the new Router agent is still pending; this package
+  therefore remains TEST.

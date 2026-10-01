@@ -66,6 +66,7 @@ class FakeProcess:
 class SoundPriorityTests(unittest.IsolatedAsyncioTestCase):
     async def test_wav_stops_media_then_resumes_it_after_mqtt_playback(self):
         events = []
+        sleep_delays = []
         bridge = types.SimpleNamespace(
             async_prepare_sound=AsyncMock(side_effect=lambda path: events.append("prepare")),
             async_stop_sound=AsyncMock(side_effect=lambda: events.append("stop")),
@@ -99,6 +100,7 @@ class SoundPriorityTests(unittest.IsolatedAsyncioTestCase):
         real_sleep = asyncio.sleep
 
         async def fast_sleep(delay):
+            sleep_delays.append(delay)
             await real_sleep(0)
 
         with (
@@ -123,6 +125,8 @@ class SoundPriorityTests(unittest.IsolatedAsyncioTestCase):
             "/data/musics/music-ch/test.wav"
         )
         bridge.async_stop_sound.assert_awaited_once_with()
+        self.assertEqual(sound_player.SOUND_END_CUSHION_SECONDS, 0.4)
+        self.assertIn(0.4, sleep_delays)
 
 
 if __name__ == "__main__":

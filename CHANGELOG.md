@@ -1,3 +1,24 @@
+## 0.36.0 TEST - Persistent Router MQTT IO
+
+- Add one persistent on-hub MQTT agent for Router Ring Light, 30-second
+  illuminance and diagnostic telemetry.
+- Derive every Router IO topic from the hub's current IPv4 suffix; historical
+  entity IDs never select an MQTT topic.
+- Keep physical-button MQTT unchanged and keep all Router radio,
+  play/stop/pause, volume, FFmpeg/aplay and media-group synchronization paths
+  unchanged from `0.35.0`.
+- Increase only the clean stored-WAV end cushion from 200 ms to 400 ms before
+  remote stop and restoration of the remembered playback, preventing the last
+  milliseconds of a WAV from being cut short.
+- Prevent legacy A5/A6 Telnet UART sessions once the Router agent is enabled.
+- Preserve the explicit Router rejoin action through a bounded UART maintenance
+  window that stops the agent, performs A7, then restores the agent; the window
+  self-recovers after 90 seconds if Home Assistant disconnects.
+- Reject retained state or telemetry whose published role does not match the
+  config entry role.
+- Keep old Router installations compatible: they continue using the proven
+  UART A5/A6 fallback until the Router MQTT upgrade is explicitly activated.
+
 ## 0.35.0 - Persistent Coordinator MQTT IO
 
 - Move Coordinator Ring Light, one-minute illuminance and diagnostic telemetry

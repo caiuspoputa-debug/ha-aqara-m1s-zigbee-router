@@ -19,6 +19,7 @@ from .client import AqaraM1SClient
 from .const import (
     CONF_BUTTON_TOPIC_ID,
     CONF_DEVICE_MAC,
+    CONF_MQTT_IO_CONFIRMED,
     CONF_ZIGBEE_ROLE,
     DATA_CLIENTS,
     DATA_COORDINATOR_MQTT,
@@ -44,7 +45,7 @@ from .const import (
 )
 from .device import device_identifier, entry_title_with_host
 from .coordinator import AqaraM1SRouterCoordinator
-from .coordinator_mqtt import CoordinatorMQTTIO
+from .coordinator_mqtt import M1SHubMQTTIO
 from .media_group import AqaraM1SMediaGroupManager
 from .media_player import AqaraM1SRadioPlayer
 from .sound_player import AqaraM1SSoundPlayer
@@ -157,6 +158,10 @@ async def async_setup_entry(
             client.coordinator_runtime_status
         )
         client.zigbee_role = zigbee_status.get("role", "router")
+        client.mqtt_io_confirmed = bool(
+            client.zigbee_role == "coordinator"
+            or zigbee_status.get("mqtt_io_enabled") == "1"
+        )
         if entry.data.get(CONF_ZIGBEE_ROLE) != client.zigbee_role:
             updated_data = dict(entry.data)
             updated_data[CONF_ZIGBEE_ROLE] = client.zigbee_role
@@ -166,6 +171,14 @@ async def async_setup_entry(
         # Falling back to Router for a known Coordinator could send RGB/lux
         # traffic to the RCP UART after connectivity returns.
         client.zigbee_role = entry.data.get(CONF_ZIGBEE_ROLE, "router")
+        client.mqtt_io_confirmed = bool(
+            entry.data.get(CONF_MQTT_IO_CONFIRMED)
+            or client.zigbee_role == "coordinator"
+        )
+    if entry.data.get(CONF_MQTT_IO_CONFIRMED) is not client.mqtt_io_confirmed:
+        updated_data = dict(entry.data)
+        updated_data[CONF_MQTT_IO_CONFIRMED] = client.mqtt_io_confirmed
+        hass.config_entries.async_update_entry(entry, data=updated_data)
     coordinator = AqaraM1SRouterCoordinator(hass, client, entry)
 
     hass.data.setdefault(DOMAIN, {})
@@ -196,10 +209,8 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_COORDINATORS][
         entry.entry_id
     ] = coordinator
-    coordinator_mqtt = None
-    if client.zigbee_role == "coordinator":
-        coordinator_mqtt = CoordinatorMQTTIO(hass, client, coordinator)
-        hass.data[DOMAIN][DATA_COORDINATOR_MQTT][entry.entry_id] = coordinator_mqtt
+    coordinator_mqtt = M1SHubMQTTIO(hass, client, coordinator)
+    hass.data[DOMAIN][DATA_COORDINATOR_MQTT][entry.entry_id] = coordinator_mqtt
     hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][
         entry.entry_id
     ] = 50
@@ -322,7 +333,7 @@ async def async_setup_entry(
             await coordinator_mqtt.async_start()
         except Exception as err:
             _LOGGER.warning(
-                "Coordinator MQTT IO could not subscribe for %s: %s",
+                "M1S MQTT IO could not subscribe for %s: %s",
                 client.host,
                 err,
             )

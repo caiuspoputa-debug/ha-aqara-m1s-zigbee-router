@@ -48,20 +48,21 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
 
     @property
     def available(self):
-        return super().available and (
-            self.client.zigbee_role != "coordinator"
-            or (
-                self.coordinator_mqtt is not None
+        if self.client.zigbee_role == "coordinator" or self.client.mqtt_io_confirmed:
+            return (
+                super().available
+                and self.coordinator_mqtt is not None
                 and self.coordinator_mqtt.available
                 and self.client.coordinator_io_state is not None
             )
-        )
+        return super().available
 
     @property
     def is_on(self):
-        if self.client.zigbee_role == "coordinator":
+        if self.client.zigbee_role == "coordinator" or self.client.mqtt_io_confirmed:
             state = self.client.coordinator_io_state
-            return bool(state and any(state["rgb"]))
+            if state and state.get("rgb_valid", True):
+                return bool(any(state["rgb"]))
         return self._attr_is_on
 
     def __init__(self, hass, entry, client, coordinator, coordinator_mqtt) -> None:
@@ -94,14 +95,16 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
         self._attr_is_on = False
 
     def _handle_coordinator_update(self) -> None:
-        if self.client.zigbee_role == "coordinator":
+        if self.client.zigbee_role == "coordinator" or self.client.mqtt_io_confirmed:
             state = self.client.coordinator_io_state
-            if state and any(state["rgb"]):
-                peak = max(state["rgb"])
-                self._attr_brightness = peak
-                self._attr_rgb_color = tuple(
-                    round(value * 255 / peak) for value in state["rgb"]
-                )
+            if state and state.get("rgb_valid", True):
+                self._attr_is_on = bool(any(state["rgb"]))
+                if self._attr_is_on:
+                    peak = max(state["rgb"])
+                    self._attr_brightness = peak
+                    self._attr_rgb_color = tuple(
+                        round(value * 255 / peak) for value in state["rgb"]
+                    )
             super()._handle_coordinator_update()
             return
         generation = (self.coordinator.data or {}).get(
@@ -128,6 +131,7 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
             await asyncio.sleep(RECONNECT_RESTORE_DELAY_SECONDS)
             if (
                 self.client.zigbee_role == "coordinator"
+                or self.client.mqtt_io_confirmed
                 or generation != self._online_generation
                 or not self.coordinator.last_update_success
             ):
@@ -177,9 +181,11 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
             round(green * brightness / 255),
             round(blue * brightness / 255),
         )
-        if self.client.zigbee_role == "coordinator":
+        if self.client.zigbee_role == "coordinator" or self.client.mqtt_io_confirmed:
             if self.coordinator_mqtt is None:
-                raise RuntimeError("Coordinator MQTT IO is not configured")
+                raise RuntimeError("M1S MQTT IO is not configured")
+            if not self.coordinator_mqtt.available:
+                raise RuntimeError("M1S MQTT IO is unavailable")
             await self.coordinator_mqtt.async_set_rgb(*rgb)
         else:
             await self.hass.async_add_executor_job(self.client.set_rgb, *rgb)
@@ -187,9 +193,11 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
-        if self.client.zigbee_role == "coordinator":
+        if self.client.zigbee_role == "coordinator" or self.client.mqtt_io_confirmed:
             if self.coordinator_mqtt is None:
-                raise RuntimeError("Coordinator MQTT IO is not configured")
+                raise RuntimeError("M1S MQTT IO is not configured")
+            if not self.coordinator_mqtt.available:
+                raise RuntimeError("M1S MQTT IO is unavailable")
             await self.coordinator_mqtt.async_set_rgb(0, 0, 0)
         else:
             await self.hass.async_add_executor_job(self.client.set_rgb, 0, 0, 0)

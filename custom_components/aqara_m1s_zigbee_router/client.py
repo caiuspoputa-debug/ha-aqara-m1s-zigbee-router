@@ -17,6 +17,10 @@ UART_PORT = 1886
 UART_FIFO = "/tmp/ha_m1s_uart_fifo"
 UART_CAT_PID = "/tmp/ha_m1s_uart_cat.pid"
 UART_NC_PID = "/tmp/ha_m1s_uart_nc.pid"
+ROUTER_MQTT_IO_PID = "/tmp/m1s_router_mqtt_io.pid"
+ROUTER_MQTT_IO_CONF = "/data/m1s_router/mqtt_io.conf"
+ROUTER_MQTT_UART_MAINTENANCE = "/tmp/m1s_router_mqtt_uart_maintenance"
+ROUTER_MQTT_IO_OWNER_MARKER = "__M1S_ROUTER_MQTT_OWNS_UART__"
 UART_REQUEST_LUX = bytes([0xA6, 0x00, 0x00, 0x00, 0xA6])
 UART_REQUEST_REJOIN = bytes([0xA7, 0x52, 0x4A, 0x4E, 0xF1])
 UART_RESPONSE_REJOIN = bytes([0xA7, 0x4F, 0x4B, 0x00, 0xA3])
@@ -46,7 +50,12 @@ UART_STOP_COMMAND = (
 )
 
 UART_START_COMMAND = (
-    "if ! netstat -lnt 2>/dev/null | grep -q ':1886 '; then "
+    f"if {{ grep -q '^MQTT_IO_ENABLED=1$' {ROUTER_MQTT_IO_CONF} 2>/dev/null || "
+    f"{{ [ -r {ROUTER_MQTT_IO_PID} ] && "
+    f"kill -0 \"$(cat {ROUTER_MQTT_IO_PID})\" 2>/dev/null; }}; }} && "
+    f"[ ! -e {ROUTER_MQTT_UART_MAINTENANCE} ]; then "
+    f"echo {ROUTER_MQTT_IO_OWNER_MARKER}; "
+    "elif ! netstat -lnt 2>/dev/null | grep -q ':1886 '; then "
     + UART_STOP_COMMAND
     + f"; mkfifo {UART_FIFO}; "
     + "stty -F /dev/ttyS1 115200 raw -echo; "
@@ -73,6 +82,10 @@ class NetworkChangeError(RuntimeError):
         self.error_key = error_key
 
 
+class RouterMQTTIOActiveError(RuntimeError):
+    """Raised when the persistent Router MQTT agent owns the JN5189 UART."""
+
+
 @dataclass
 class AqaraM1SClient:
     host: str
@@ -81,6 +94,7 @@ class AqaraM1SClient:
     password: str = ""
     timeout: float = 8.0
     zigbee_role: str = field(default="router", init=False)
+    mqtt_io_confirmed: bool = field(default=False, init=False)
     coordinator_io_state: dict | None = field(default=None, init=False)
     _sock: socket.socket | None = field(default=None, init=False, repr=False)
     _uart_sock: socket.socket | None = field(default=None, init=False, repr=False)
@@ -202,7 +216,11 @@ class AqaraM1SClient:
         if self._uart_sock is not None:
             return self._uart_sock
 
-        self.run_command(UART_START_COMMAND)
+        output = self.run_command(UART_START_COMMAND)
+        if ROUTER_MQTT_IO_OWNER_MARKER in output:
+            raise RouterMQTTIOActiveError(
+                "Persistent Router MQTT IO owns the JN5189 UART"
+            )
         last_error: OSError | None = None
         for _ in range(20):
             try:
@@ -657,13 +675,22 @@ class AqaraM1SClient:
         output = self.run_command(
             "if [ -x /data/m1s_coordinator/coordinator_status.sh ]; then "
             "/data/m1s_coordinator/coordinator_status.sh; "
-            "else echo role=router; echo state=UNAVAILABLE; echo enabled=0; fi"
+            "else echo role=router; echo state=UNAVAILABLE; echo enabled=0; "
+            "if [ -x /data/m1s_router/mqtt_io_service.sh ]; then "
+            "echo mqtt_io_installed=1; else echo mqtt_io_installed=0; fi; "
+            "if grep -q '^MQTT_IO_ENABLED=1$' "
+            "/data/m1s_router/mqtt_io.conf 2>/dev/null; then "
+            "echo mqtt_io_enabled=1; else echo mqtt_io_enabled=0; fi; "
+            "if [ -r /tmp/m1s_router_mqtt_io.pid ] && "
+            "kill -0 \"$(cat /tmp/m1s_router_mqtt_io.pid)\" 2>/dev/null; then "
+            "echo mqtt_io_running=1; else echo mqtt_io_running=0; fi; fi"
         )
         status: dict[str, str] = {}
         for line in output.splitlines():
             key, separator, value = line.strip().partition("=")
             if separator and key in {
-                "role", "state", "enabled", "port", "gpio33", "gpio18"
+                "role", "state", "enabled", "port", "gpio33", "gpio18",
+                "mqtt_io_installed", "mqtt_io_enabled", "mqtt_io_running",
             }:
                 status[key] = value
         if status.get("role") != "router":
@@ -679,10 +706,22 @@ class AqaraM1SClient:
         with self._lock:
             try:
                 self._uart_send_locked(frame)
+            except RouterMQTTIOActiveError:
+                raise
             except Exception:
                 # Keep RGB usable even if the optional TCP UART proxy cannot start.
                 escaped = "".join(f"\\{value:03o}" for value in frame)
-                self.run_command(f"printf '{escaped}' > /dev/ttyS1")
+                output = self.run_command(
+                    f"if grep -q '^MQTT_IO_ENABLED=1$' {ROUTER_MQTT_IO_CONF} "
+                    f"2>/dev/null || {{ [ -r {ROUTER_MQTT_IO_PID} ] && "
+                    f"kill -0 \"$(cat {ROUTER_MQTT_IO_PID})\" 2>/dev/null; }}; then "
+                    f"echo {ROUTER_MQTT_IO_OWNER_MARKER}; else "
+                    f"printf '{escaped}' > /dev/ttyS1; fi"
+                )
+                if ROUTER_MQTT_IO_OWNER_MARKER in output:
+                    raise RouterMQTTIOActiveError(
+                        "Persistent Router MQTT IO owns the JN5189 UART"
+                    )
 
     def read_illuminance(self) -> dict[str, int]:
         """Read a validated A6 lux response from the JN5189 firmware."""
@@ -759,46 +798,67 @@ class AqaraM1SClient:
     def rejoin_zigbee_network(self) -> None:
         """Clear JN5189 Zigbee context and start steering after its reset."""
         with self._lock:
-            last_error: Exception | None = None
-            for attempt in range(2):
-                try:
-                    sock = self._connect_uart_locked()
+            restart_mqtt_io = False
+            if self.mqtt_io_confirmed:
+                self._close_uart_locked()
+                output = self.run_command(
+                    "if [ -x /data/m1s_router/mqtt_io_service.sh ] && "
+                    "/data/m1s_router/mqtt_io_service.sh uart-pause >/dev/null; "
+                    "then "
+                    "echo __M1S_ROUTER_MQTT_PAUSED__; fi",
+                    timeout=15.0,
+                )
+                restart_mqtt_io = "__M1S_ROUTER_MQTT_PAUSED__" in output
+                if not restart_mqtt_io:
+                    raise RuntimeError("Router MQTT IO could not enter UART maintenance")
+            try:
+                last_error: Exception | None = None
+                for attempt in range(2):
+                    try:
+                        sock = self._connect_uart_locked()
 
-                    # Do not let an old lux response be mistaken for the ACK.
-                    self._uart_rx.clear()
-                    sock.settimeout(0.02)
-                    while True:
-                        try:
-                            stale = sock.recv(256)
-                            if not stale:
-                                raise ConnectionError("UART tunnel closed")
-                        except socket.timeout:
-                            break
+                        # Do not let an old lux response be mistaken for the ACK.
+                        self._uart_rx.clear()
+                        sock.settimeout(0.02)
+                        while True:
+                            try:
+                                stale = sock.recv(256)
+                                if not stale:
+                                    raise ConnectionError("UART tunnel closed")
+                            except socket.timeout:
+                                break
 
-                    sock.sendall(UART_REQUEST_REJOIN)
-                    deadline = time.monotonic() + 2.5
-                    sock.settimeout(0.25)
-                    while time.monotonic() < deadline:
-                        try:
-                            chunk = sock.recv(256)
-                            if not chunk:
-                                raise ConnectionError("UART tunnel closed")
-                            self._uart_rx.extend(chunk)
-                        except socket.timeout:
-                            pass
+                        sock.sendall(UART_REQUEST_REJOIN)
+                        deadline = time.monotonic() + 2.5
+                        sock.settimeout(0.25)
+                        while time.monotonic() < deadline:
+                            try:
+                                chunk = sock.recv(256)
+                                if not chunk:
+                                    raise ConnectionError("UART tunnel closed")
+                                self._uart_rx.extend(chunk)
+                            except socket.timeout:
+                                pass
 
-                        if UART_RESPONSE_REJOIN in self._uart_rx:
-                            self._close_uart_locked()
-                            return
+                            if UART_RESPONSE_REJOIN in self._uart_rx:
+                                self._close_uart_locked()
+                                return
 
-                    raise TimeoutError("No rejoin acknowledgement from JN5189")
-                except (OSError, ConnectionError, TimeoutError) as err:
-                    last_error = err
-                    self._close_uart_locked()
-                    if attempt == 0:
-                        continue
-            assert last_error is not None
-            raise last_error
+                        raise TimeoutError("No rejoin acknowledgement from JN5189")
+                    except (OSError, ConnectionError, TimeoutError) as err:
+                        last_error = err
+                        self._close_uart_locked()
+                        if attempt == 0:
+                            continue
+                assert last_error is not None
+                raise last_error
+            finally:
+                self._close_uart_locked()
+                if restart_mqtt_io:
+                    self.run_command(
+                        "/data/m1s_router/mqtt_io_service.sh uart-resume",
+                        timeout=15.0,
+                    )
 
     @staticmethod
     def _xor_checksum(data: bytes) -> int:

@@ -1,4 +1,4 @@
-"""MQTT transport for Coordinator-only RGB and illuminance sideband IO."""
+"""MQTT transport for role-specific M1S RGB, illuminance and telemetry IO."""
 from __future__ import annotations
 
 import asyncio
@@ -10,38 +10,49 @@ from typing import Any
 from homeassistant.components import mqtt
 from homeassistant.core import HomeAssistant, callback
 
+from .const import CONF_MQTT_IO_CONFIRMED
+
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def coordinator_io_base_topic(host: str) -> str:
-    """Use the Coordinator's current IP suffix, never a historical entity ID."""
+def hub_io_base_topic(host: str) -> str:
+    """Use the hub's current IP suffix, never a historical entity ID."""
     topic_id = str(host).strip().rsplit(".", 1)[-1]
     if not topic_id.isdigit() or not 0 <= int(topic_id) <= 255:
-        raise ValueError("Coordinator host does not contain a valid IPv4 suffix")
+        raise ValueError("M1S host does not contain a valid IPv4 suffix")
     return f"m1s/{topic_id}/io"
 
 
+coordinator_io_base_topic = hub_io_base_topic
+
+
 def validate_state(payload: str) -> dict[str, Any]:
-    """Validate the complete M1S_IO_V2 state published by the hub daemon."""
+    """Validate the complete IO state published by either role's hub daemon."""
     state = json.loads(payload)
     if not isinstance(state, dict):
-        raise ValueError("Coordinator IO state is not an object")
+        raise ValueError("M1S IO state is not an object")
     if state.get("version") != 1 or state.get("capabilities") != 3:
-        raise ValueError("Coordinator IO capability marker does not match")
+        raise ValueError("M1S IO capability marker does not match")
     rgb = state.get("rgb")
     if (
         not isinstance(rgb, list)
         or len(rgb) != 3
         or any(type(value) is not int or not 0 <= value <= 255 for value in rgb)
     ):
-        raise ValueError("Coordinator RGB state is invalid")
+        raise ValueError("M1S RGB state is invalid")
+    rgb_valid = state.get("rgb_valid", True)
+    if type(rgb_valid) is not bool:
+        raise ValueError("M1S RGB validity is invalid")
     if type(state.get("valid")) is not bool:
-        raise ValueError("Coordinator lux validity is invalid")
+        raise ValueError("M1S lux validity is invalid")
     for key, limit in (("raw", 4095), ("millivolts", 3600), ("lux", 65535)):
         value = state.get(key)
         if type(value) is not int or not 0 <= value <= limit:
-            raise ValueError(f"Coordinator {key} state is invalid")
+            raise ValueError(f"M1S {key} state is invalid")
+    role = state.get("role")
+    if role is not None and role not in {"router", "coordinator"}:
+        raise ValueError("M1S IO role is invalid")
     return state
 
 
@@ -49,18 +60,18 @@ def validate_telemetry(payload: str) -> dict[str, Any]:
     """Validate the retained diagnostic snapshot from the hub agent."""
     state = json.loads(payload)
     if not isinstance(state, dict):
-        raise ValueError("Coordinator telemetry is not an object")
+        raise ValueError("M1S telemetry is not an object")
     temperature = state.get("temperature")
     if temperature is not None and (
         type(temperature) not in (int, float) or not 5 <= temperature <= 100
     ):
-        raise ValueError("Coordinator temperature is invalid")
+        raise ValueError("M1S temperature is invalid")
     address = state.get("wifi_ip")
     try:
         if not isinstance(address, str) or ipaddress.ip_address(address).version != 4:
             raise ValueError
     except ValueError as err:
-        raise ValueError("Coordinator Wi-Fi address is invalid") from err
+        raise ValueError("M1S Wi-Fi address is invalid") from err
     for key in (
         "homekit_process",
         "mqtt_process",
@@ -69,19 +80,28 @@ def validate_telemetry(payload: str) -> dict[str, Any]:
         "mqtt_io_process",
     ):
         if state.get(key) not in {"running", "stopped"}:
-            raise ValueError(f"Coordinator {key} state is invalid")
+            raise ValueError(f"M1S {key} state is invalid")
+    role = state.get("role", "coordinator")
+    if role not in {"router", "coordinator"}:
+        raise ValueError("M1S telemetry role is invalid")
+    if role == "router" and state.get("jn5189_router") not in {
+        "running",
+        "check GPIO",
+    }:
+        raise ValueError("Router JN5189 state is invalid")
     return state
 
 
-class CoordinatorMQTTIO:
-    """Own Coordinator MQTT subscriptions without touching Telnet or UART."""
+class M1SHubMQTTIO:
+    """Own role-specific MQTT IO subscriptions without touching audio."""
 
     def __init__(self, hass: HomeAssistant, client, coordinator) -> None:
         self.hass = hass
         self.client = client
         self.coordinator = coordinator
-        self.base_topic = coordinator_io_base_topic(client.host)
+        self.base_topic = hub_io_base_topic(client.host)
         self.available = False
+        self.seen = bool(client.mqtt_io_confirmed)
         self.telemetry: dict[str, Any] | None = None
         self._unsubscribers: list = []
         self._sound_lock = asyncio.Lock()
@@ -90,34 +110,36 @@ class CoordinatorMQTTIO:
     async def async_start(self) -> None:
         """Wait for HA MQTT and subscribe to retained hub state."""
         await mqtt.async_wait_for_mqtt_client(self.hass)
-        self._unsubscribers.extend(
-            [
-                await mqtt.async_subscribe(
-                    self.hass,
-                    f"{self.base_topic}/state",
-                    self._state_message,
-                    qos=0,
-                ),
-                await mqtt.async_subscribe(
-                    self.hass,
-                    f"m1s/{self.client.host.rsplit('.', 1)[-1]}/telemetry",
-                    self._telemetry_message,
-                    qos=0,
-                ),
+        subscriptions = [
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self.base_topic}/state",
+                self._state_message,
+                qos=0,
+            ),
+            await mqtt.async_subscribe(
+                self.hass,
+                f"m1s/{self.client.host.rsplit('.', 1)[-1]}/telemetry",
+                self._telemetry_message,
+                qos=0,
+            ),
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self.base_topic}/availability",
+                self._availability_message,
+                qos=0,
+            ),
+        ]
+        if self.client.zigbee_role == "coordinator":
+            subscriptions.append(
                 await mqtt.async_subscribe(
                     self.hass,
                     f"m1s/{self.client.host.rsplit('.', 1)[-1]}/sound/status",
                     self._sound_status_message,
                     qos=0,
-                ),
-                await mqtt.async_subscribe(
-                    self.hass,
-                    f"{self.base_topic}/availability",
-                    self._availability_message,
-                    qos=0,
-                ),
-            ]
-        )
+                )
+            )
+        self._unsubscribers.extend(subscriptions)
 
     async def async_stop(self) -> None:
         """Remove subscriptions owned by this config entry."""
@@ -131,7 +153,7 @@ class CoordinatorMQTTIO:
         self._sound_result = None
 
     async def async_set_rgb(self, red: int, green: int, blue: int) -> None:
-        """Publish one non-retained RGB command for the Coordinator daemon."""
+        """Publish one non-retained RGB command for the role-specific daemon."""
         values = tuple(max(0, min(255, int(value))) for value in (red, green, blue))
         await mqtt.async_publish(
             self.hass,
@@ -142,7 +164,7 @@ class CoordinatorMQTTIO:
         )
 
     async def async_refresh_lux(self) -> None:
-        """Request an immediate sample in addition to the hub's 60-second cycle."""
+        """Request an immediate sample in addition to the hub's configured cycle."""
         await mqtt.async_publish(
             self.hass,
             f"{self.base_topic}/lux/refresh",
@@ -153,12 +175,16 @@ class CoordinatorMQTTIO:
 
     async def async_prepare_sound(self, path: str) -> None:
         """Prepare the unchanged TCP/FFmpeg/aplay WAV pipeline through MQTT."""
+        if self.client.zigbee_role != "coordinator":
+            raise RuntimeError("Router sound transport remains on Telnet")
         if not self.client.is_deletable_sound_path(path):
             raise ValueError("Sound path must be a WAV below /data/musics")
         await self._async_sound_command("prepare", path, "ready")
 
     async def async_stop_sound(self) -> None:
         """Stop only the dedicated local-sound pipeline through MQTT."""
+        if self.client.zigbee_role != "coordinator":
+            raise RuntimeError("Router sound transport remains on Telnet")
         await self._async_sound_command("stop", "stop", "stopped")
 
     async def _async_sound_command(
@@ -188,8 +214,17 @@ class CoordinatorMQTTIO:
         try:
             state = validate_state(message.payload)
         except (TypeError, ValueError, json.JSONDecodeError) as err:
-            _LOGGER.warning("Ignored invalid Coordinator MQTT state: %s", err)
+            _LOGGER.warning("Ignored invalid M1S MQTT state: %s", err)
             return
+        published_role = state.get("role", "coordinator")
+        if published_role != self.client.zigbee_role:
+            _LOGGER.warning(
+                "Ignored M1S MQTT state for role %s on %s entry",
+                published_role,
+                self.client.zigbee_role,
+            )
+            return
+        self._mark_seen()
         self.client.coordinator_io_state = state
         self.available = True
         data = dict(self.coordinator.data or {})
@@ -218,8 +253,17 @@ class CoordinatorMQTTIO:
         try:
             telemetry = validate_telemetry(message.payload)
         except (TypeError, ValueError, json.JSONDecodeError) as err:
-            _LOGGER.warning("Ignored invalid Coordinator MQTT telemetry: %s", err)
+            _LOGGER.warning("Ignored invalid M1S MQTT telemetry: %s", err)
             return
+        published_role = telemetry.get("role", "coordinator")
+        if published_role != self.client.zigbee_role:
+            _LOGGER.warning(
+                "Ignored M1S MQTT telemetry for role %s on %s entry",
+                published_role,
+                self.client.zigbee_role,
+            )
+            return
+        self._mark_seen()
         self.telemetry = telemetry
         data = dict(self.coordinator.data or {})
         data["telemetry"] = telemetry
@@ -233,3 +277,19 @@ class CoordinatorMQTTIO:
         status = str(message.payload).strip().lower()
         if status in {"ready", "stopped", "error"}:
             result.set_result(status)
+
+    @callback
+    def _mark_seen(self) -> None:
+        """Remember that this entry uses the persistent on-hub MQTT transport."""
+        self.seen = True
+        self.client.mqtt_io_confirmed = True
+        entry = self.coordinator.config_entry
+        if entry is None or entry.data.get(CONF_MQTT_IO_CONFIRMED) is True:
+            return
+        data = dict(entry.data)
+        data[CONF_MQTT_IO_CONFIRMED] = True
+        self.hass.config_entries.async_update_entry(entry, data=data)
+
+
+# Keep the previous internal name for existing imports and work files.
+CoordinatorMQTTIO = M1SHubMQTTIO

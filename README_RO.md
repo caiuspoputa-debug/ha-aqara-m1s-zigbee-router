@@ -1,16 +1,17 @@
-# Aqara M1S Zigbee Coordinator + Router v0.35.0 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.36.0 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.35.0 TEST` este construită peste baza confirmată `0.34.2 TEST`. Numai pe Coordinator, un agent MQTT persistent pe hub înlocuiește comenzile Telnet individuale pentru Ring Light, iluminanță, telemetria de diagnostic și pregătirea redării WAV locale. Routerele își păstrează traseele existente. Radioul, grupul media comun, sincronizarea, arbitrarea priorității și transportul audio TCP/FFmpeg/aplay nu sunt modificate. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
+Versiunea `0.36.0 TEST` este construită peste baza confirmată `0.35.0 TEST`. Agentul MQTT persistent este folosit acum pentru Ring Light, iluminanță și telemetria de diagnostic pe ambele roluri. Pe Router, agentul deține serializat UART-ul JN5189 și înlocuiește sesiunile Telnet A5/A6 numai după activarea explicită a upgrade-ului. Butonul fizic își păstrează topicul existent. Radioul, play/stop/pause, volumul, grupul media comun, sincronizarea și transportul audio TCP/FFmpeg/aplay sunt neschimbate față de `0.35.0`. Singura ajustare WAV este o rezervă de 400 ms după terminarea normală a fișierului, înainte de oprirea traseului WAV și reluarea redării memorate. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
 - Home Assistant `2024.1.0` sau mai nou.
 - Acces prin rețeaua locală de la Home Assistant la hub.
 - Telnet activ pe hub; conexiunea implicită folosește portul `23`, utilizatorul `admin` și parolă goală.
-- Un setup Router compatibil sau kitul Coordinator MQTT IO `1.1.0`, cu sideband `M1S_IO_V2`.
-- Un broker MQTT accesibil prin adresa sa LAN pentru butonul fizic, configurarea MQTT comună și IO Coordinator.
+- Un setup Router compatibil; pentru traseul rapid MQTT este necesar upgrade-ul Router MQTT IO `1.0.0`. Routerele fără upgrade păstrează automat A5/A6 prin traseul vechi.
+- Kitul Coordinator MQTT complet `1.2.0` sau un runtime compatibil cu sideband `M1S_IO_V2`.
+- Un broker MQTT accesibil prin adresa sa LAN pentru butonul fizic, configurarea MQTT comună și IO-ul ambelor roluri.
 - Zigbee2MQTT cu adaptorul `zoh` atunci când hubul este folosit drept Coordinator.
 
 ## Instalare și actualizare
@@ -28,12 +29,23 @@ Domeniul intern rămâne `aqara_m1s_zigbee_router`, astfel încât o instalare e
 | Funcție | Rol Router | Rol Coordinator |
 | --- | --- | --- |
 | Transport Zigbee | Runtime-ul existent JN5189 Router | Zigbee-on-Host prin `tcp://IP_HUB:1886` |
-| Ring Light | Traseul UART A5 existent | Comandă MQTT către agentul persistent, apoi sideband izolat `M1S_IO_V2` |
-| Illuminance | Traseul UART A6 existent, la 15 secunde | Stare MQTT retained; eșantion pe hub la 60 de secunde |
+| Ring Light | MQTT persistent către A5; fallback vechi numai înainte de activarea upgrade-ului | Comandă MQTT către agentul persistent, apoi sideband izolat `M1S_IO_V2` |
+| Illuminance | Stare MQTT retained; A6 serializat pe hub la 30 de secunde | Stare MQTT retained; eșantion pe hub la 60 de secunde |
 | Conectare la alt coordinator | Disponibilă cu confirmare explicită | Ascunsă și blocată |
 | Coordinator ON/OFF | Nu se aplică | Eliminat intenționat |
 
-Comportamentul RGB, lux și rejoin al Routerului rămâne neschimbat. RGB/lux pentru Coordinator nu revine niciodată la traseul UART al Routerului.
+Acțiunea Routerului de conectare la alt coordinator rămâne explicită. Integrarea oprește temporar agentul, execută cadrul A7 printr-o fereastră UART limitată, apoi repornește agentul. Fereastra se închide automat după 90 de secunde dacă Home Assistant se deconectează. RGB/lux pentru Coordinator nu revine niciodată la traseul UART al Routerului.
+
+## Protecția Routerului și traseul MQTT
+
+- Topicurile sunt construite din IP-ul actual al hubului: de exemplu, Routerul `192.168.0.221` folosește `m1s/221/io/...`, indiferent de numele sau ID-ul istoric al entității.
+- Agentul Router se abonează numai la `io/rgb/set` și `io/lux/refresh`; publică starea IO, disponibilitatea și telemetria.
+- Luxul este citit la 30 de secunde. O citire A6 fără checksum valid nu devine `0 lx`, ci rămâne invalidă.
+- După activare există un singur proprietar pentru `/dev/ttyS1`. Tunelul temporar TCP `1886` folosit anterior pentru A5/A6 este oprit și nu poate porni peste agent.
+- Un mesaj retained cu rol `coordinator` este ignorat de un Router și invers.
+- Dacă agentul este configurat dar indisponibil, numai Ring Light, luxul și diagnosticele MQTT devin indisponibile; integrarea nu încearcă automat UART-ul vechi peste agent.
+- Disponibilitatea generală a Routerului continuă să folosească verificarea LAN ușoară existentă. Astfel o problemă a brokerului MQTT nu scoate automat playerul din grup și nu schimbă sincronizarea audio.
+- Comenzile radio, WAV, play, stop, pause, volum și fluxul PCM nu există în agentul Router.
 
 ## Protecția Coordinatorului și RGB/lux
 
@@ -91,7 +103,9 @@ Starea `applied` înseamnă că configurația a fost scrisă cu succes pe hub; c
 - Instalarea, pornirea și migrarea nu șterg automat niciun sunet.
 - După un upload sau o ștergere reușită, integrarea se reîncarcă și reconstruiește entitățile sunetelor.
 
-Pentru un WAV local se păstrează exact prioritatea confirmată: redarea individuală sau de grup este suspendată, WAV-ul rulează prin traseul existent TCP/FFmpeg/aplay, apoi redarea memorată este reluată. MQTT înlocuiește numai comanda Coordinatorului care pregătește sau oprește traseul dedicat WAV. Nu transportă audio radio/grup și nu modifică sincronizarea.
+Pentru un WAV local se păstrează exact prioritatea confirmată: redarea individuală sau de grup este suspendată, WAV-ul rulează prin traseul existent TCP/FFmpeg/aplay, apoi redarea memorată este reluată. Pe Coordinator, MQTT înlocuiește numai comanda care pregătește sau oprește traseul dedicat WAV. Pe Router, tot traseul WAV rămâne pe implementarea existentă. MQTT nu transportă audio radio/grup și nu modifică sincronizarea.
+
+După ce FFmpeg termină normal un WAV, integrarea păstrează traseul încă 400 ms înainte de comanda de oprire și de reluarea redării anterioare. Această rezervă era 200 ms în `0.35.0`; nu se aplică la Stop manual, eroare FFmpeg, radio sau grupul media.
 
 Media Player individual și grupul comun M1S Media Group, controalele de volum, radioul, actualizarea metadatelor și butoanele existente pentru sunetele Aqara sunt păstrate din baza confirmată.
 
@@ -107,17 +121,18 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.35.0` a trecut:
+Sursa `0.36.0` a trecut:
 
-- 10 teste izolate pentru MQTT RGB/lux, telemetrie, topicuri și siguranța transportului Coordinatorului.
-- 1 test dedicat priorității, cu ordinea `suspendare -> WAV -> oprire WAV -> reluare`.
+- 14 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART și rejoin Router.
+- 1 test dedicat priorității, cu ordinea `suspendare -> WAV -> rezervă 400 ms -> oprire WAV -> reluare`.
 - 5 teste pentru ștergerea WAV și backupul obligatoriu.
 - 7 teste pentru persistența și revenirea configurării MQTT comune.
 - Compilarea Python și parsarea fișierelor JSON/YAML.
-- Comparația byte-cu-byte care confirmă că `media_player.py` (inclusiv radioul) și `media_group.py` sunt neschimbate față de `0.34.2`.
+- Verificarea de sintaxă a tuturor scripturilor Router și compilarea agentului static MIPS32 cu avertismente tratate ca erori.
+- Comparația byte-cu-byte confirmă că `media_player.py`, `media_group.py` și `shared_mqtt.py` sunt neschimbate față de `0.35.0`; `sound_player.py` diferă numai prin rezerva WAV intenționată de 400 ms.
 
-Agentul temporar a fost testat hardware pe Coordinatorul `192.168.0.220`: RGB ON/OFF, lux, telemetrie retained și o singură conexiune Z2M stabilită pe portul `1886` au fost confirmate. Nu s-a scris firmware. Agentul persistent se activează numai după instalarea acestei integrări și restartarea Home Assistant, astfel încât vechiul poller Telnet sideband și agentul nou să nu ruleze simultan.
+Agentul Coordinatorului a fost testat hardware pe `192.168.0.220`: RGB ON/OFF, lux, telemetrie retained și o singură conexiune Z2M stabilită pe portul `1886` au fost confirmate. Routerul `192.168.0.221` a fost inspectat read-only și corespunde exact bazei `0.10.0`; agentul Router nou nu a fost încă activat pe hardware. Nu s-a scris firmware și nu s-a modificat `.221`, de aceea versiunea rămâne `TEST`.
 
 ## Revenire
 
-Dacă MQTT IO pentru Coordinator nu funcționează corect, dezactivează-l în `/data/m1s_coordinator/mqtt_io.conf`, oprește `mqtt_io_service.sh`, restaurează integrarea `0.34.2` și repornește Home Assistant. Înlocuirea integrării nu modifică firmware-ul, datele rețelei Zigbee sau fișierele audio.
+Dacă MQTT IO pentru Router nu funcționează corect, rulează rollbackul din kitul Router, restaurează integrarea `0.35.0` și repornește Home Assistant. Pentru Coordinator rămâne rollbackul kitului Coordinator. Înlocuirea integrării nu modifică firmware-ul, datele rețelei Zigbee sau fișierele audio.

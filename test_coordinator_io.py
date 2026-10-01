@@ -3,6 +3,7 @@ import asyncio
 import importlib.util
 import json
 import pathlib
+import socket
 import sys
 import types
 import unittest
@@ -45,6 +46,7 @@ client_module = load("client")
 GOOD = dict(
     version=1,
     capabilities=3,
+    role="coordinator",
     rgb=[2, 3, 4],
     valid=True,
     raw=500,
@@ -54,8 +56,9 @@ GOOD = dict(
 
 
 class FakeCoordinator:
-    def __init__(self):
+    def __init__(self, entry=None):
         self.data = {"online": True, "online_generation": 1}
+        self.config_entry = entry
 
     def async_set_updated_data(self, data):
         self.data = data
@@ -63,12 +66,20 @@ class FakeCoordinator:
 
 class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.entry = types.SimpleNamespace(data={})
         self.client = types.SimpleNamespace(
             host="192.168.0.220",
+            zigbee_role="coordinator",
+            mqtt_io_confirmed=False,
             coordinator_io_state=None,
         )
-        self.coordinator = FakeCoordinator()
-        self.hass = types.SimpleNamespace(loop=asyncio.get_running_loop())
+        self.coordinator = FakeCoordinator(self.entry)
+        config_entries = types.SimpleNamespace(
+            async_update_entry=lambda entry, data: setattr(entry, "data", data)
+        )
+        self.hass = types.SimpleNamespace(
+            loop=asyncio.get_running_loop(), config_entries=config_entries
+        )
         self.bridge = coordinator_mqtt.CoordinatorMQTTIO(
             self.hass, self.client, self.coordinator
         )
@@ -92,8 +103,8 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
             [
                 "m1s/220/io/state",
                 "m1s/220/telemetry",
-                "m1s/220/sound/status",
                 "m1s/220/io/availability",
+                "m1s/220/sound/status",
             ],
         )
         await self.bridge.async_set_rgb(2, 3, 4)
@@ -130,6 +141,8 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
     async def test_state_updates_rgb_and_lux(self):
         self.bridge._state_message(types.SimpleNamespace(payload=json.dumps(GOOD)))
         self.assertTrue(self.bridge.available)
+        self.assertTrue(self.client.mqtt_io_confirmed)
+        self.assertTrue(self.entry.data["mqtt_io_confirmed"])
         self.assertEqual(self.client.coordinator_io_state, GOOD)
         self.assertEqual(
             self.coordinator.data["illuminance"],
@@ -138,6 +151,7 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_telemetry_updates_all_coordinator_diagnostics(self):
         telemetry = {
+            "role": "coordinator",
             "temperature": 29.0,
             "wifi_ip": "192.168.0.220",
             "homekit_process": "running",
@@ -205,6 +219,95 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(create_connection.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
         connected.close.assert_called_once_with()
+
+    async def test_router_uses_current_ip_topics_without_sound_transport(self):
+        entry = types.SimpleNamespace(data={})
+        client = types.SimpleNamespace(
+            host="192.168.0.221",
+            zigbee_role="router",
+            mqtt_io_confirmed=False,
+            coordinator_io_state=None,
+        )
+        coordinator = FakeCoordinator(entry)
+        bridge = coordinator_mqtt.M1SHubMQTTIO(self.hass, client, coordinator)
+        unsubscribers = [Mock(), Mock(), Mock()]
+        mqtt.async_wait_for_mqtt_client = AsyncMock()
+        mqtt.async_subscribe = AsyncMock(side_effect=unsubscribers)
+        mqtt.async_publish = AsyncMock()
+
+        await bridge.async_start()
+        topics = [call.args[1] for call in mqtt.async_subscribe.call_args_list]
+        self.assertEqual(
+            topics,
+            [
+                "m1s/221/io/state",
+                "m1s/221/telemetry",
+                "m1s/221/io/availability",
+            ],
+        )
+        self.assertFalse(any("/sound/" in topic for topic in topics))
+        with self.assertRaisesRegex(RuntimeError, "remains on Telnet"):
+            await bridge.async_prepare_sound("/data/musics/test.wav")
+        with self.assertRaisesRegex(RuntimeError, "remains on Telnet"):
+            await bridge.async_stop_sound()
+        await bridge.async_stop()
+
+    async def test_router_state_and_telemetry_confirm_only_router_role(self):
+        entry = types.SimpleNamespace(data={})
+        client = types.SimpleNamespace(
+            host="192.168.0.221",
+            zigbee_role="router",
+            mqtt_io_confirmed=False,
+            coordinator_io_state=None,
+        )
+        coordinator = FakeCoordinator(entry)
+        bridge = coordinator_mqtt.M1SHubMQTTIO(self.hass, client, coordinator)
+        bridge._state_message(types.SimpleNamespace(payload=json.dumps(GOOD)))
+        self.assertFalse(bridge.available)
+        self.assertFalse(client.mqtt_io_confirmed)
+
+        router_state = dict(GOOD, role="router", rgb_valid=False)
+        bridge._state_message(types.SimpleNamespace(payload=json.dumps(router_state)))
+        self.assertTrue(bridge.available)
+        self.assertTrue(client.mqtt_io_confirmed)
+        self.assertEqual(client.coordinator_io_state, router_state)
+
+        router_telemetry = {
+            "role": "router",
+            "temperature": 29.0,
+            "wifi_ip": "192.168.0.221",
+            "homekit_process": "running",
+            "mqtt_process": "running",
+            "telnet_process": "running",
+            "coordinator_process": "stopped",
+            "mqtt_io_process": "running",
+            "jn5189_router": "running",
+        }
+        bridge._telemetry_message(
+            types.SimpleNamespace(payload=json.dumps(router_telemetry))
+        )
+        self.assertEqual(bridge.telemetry, router_telemetry)
+
+    async def test_router_rejoin_pauses_and_resumes_persistent_uart_owner(self):
+        client = client_module.AqaraM1SClient("192.168.0.221")
+        client.mqtt_io_confirmed = True
+        uart = Mock()
+        uart.recv.side_effect = [socket.timeout(), client_module.UART_RESPONSE_REJOIN]
+        client._connect_uart_locked = Mock(return_value=uart)
+        client._close_uart_locked = Mock()
+        client.run_command = Mock(
+            side_effect=["__M1S_ROUTER_MQTT_PAUSED__", "ROUTER_MQTT_IO_UART_RESUMED"]
+        )
+
+        client.rejoin_zigbee_network()
+
+        self.assertIn("uart-pause", client.run_command.call_args_list[0].args[0])
+        self.assertIn("uart-resume", client.run_command.call_args_list[1].args[0])
+        uart.sendall.assert_called_once_with(client_module.UART_REQUEST_REJOIN)
+
+    async def test_uart_guard_allows_only_explicit_maintenance_window(self):
+        self.assertIn(client_module.ROUTER_MQTT_UART_MAINTENANCE, client_module.UART_START_COMMAND)
+        self.assertIn(client_module.ROUTER_MQTT_IO_OWNER_MARKER, client_module.UART_START_COMMAND)
 
     async def test_online_probe_reports_offline_after_all_attempts_fail(self):
         client = client_module.AqaraM1SClient("192.168.0.220")

@@ -1,5 +1,6 @@
 DOMAIN = "aqara_m1s_zigbee_router"
 CONF_ZIGBEE_ROLE = "zigbee_role"
+CONF_MQTT_IO_CONFIRMED = "mqtt_io_confirmed"
 
 CONF_HOST = "host"
 CONF_PORT = "port"

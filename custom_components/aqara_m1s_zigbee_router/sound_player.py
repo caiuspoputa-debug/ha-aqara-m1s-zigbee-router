@@ -27,6 +27,7 @@ REMOTE_APLAY_PID = "/tmp/aqara_m1s_sound_aplay.pid"
 FFMPEG_NICE_TARGET = -5
 APLAY_NICE_TARGET = -3
 SOUND_SETTLE_DELAY = 0.35
+SOUND_END_CUSHION_SECONDS = 0.4
 
 REMOTE_STOP_COMMAND = (
     f"for f in {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID}; do "
@@ -288,7 +289,7 @@ class AqaraM1SSoundPlayer:
                 "\n".join(stderr_tail)[-1000:],
             )
         elif process.returncode == 0:
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(SOUND_END_CUSHION_SECONDS)
         if timing_start is not None and timing is not None:
             _LOGGER.info(
                 "Aqara M1S sound timing complete entity=%s host=%s "

@@ -163,7 +163,7 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def available(self):
-        if self.client.zigbee_role == "coordinator":
+        if self.client.zigbee_role == "coordinator" or self.client.mqtt_io_confirmed:
             return (
                 super().available
                 and self.coordinator_mqtt is not None
@@ -173,7 +173,7 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
         return super().available
 
     async def async_update(self) -> None:
-        if self.client.zigbee_role == "coordinator":
+        if self.client.zigbee_role == "coordinator" or self.client.mqtt_io_confirmed:
             self._apply_coordinator_telemetry()
             return
         try:
@@ -186,7 +186,7 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        if self.client.zigbee_role == "coordinator":
+        if self.client.zigbee_role == "coordinator" or self.client.mqtt_io_confirmed:
             self._apply_coordinator_telemetry()
             self.async_write_ha_state()
             return
@@ -210,7 +210,12 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
             self._attr_native_value = telemetry.get("temperature")
         elif key == "wifi_ip":
             self._attr_native_value = telemetry.get("wifi_ip")
-        elif key in {"homekit_process", "mqtt_process", "telnet_process"}:
+        elif key in {
+            "homekit_process",
+            "mqtt_process",
+            "telnet_process",
+            "jn5189_router",
+        }:
             self._attr_native_value = telemetry.get(key)
         else:
             self._attr_native_value = None
@@ -224,7 +229,7 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
 class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
     @property
     def available(self):
-        if self.client.zigbee_role == "coordinator":
+        if self.client.zigbee_role == "coordinator" or self.client.mqtt_io_confirmed:
             return (
                 super().available
                 and self.coordinator_mqtt is not None
@@ -266,7 +271,11 @@ class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
             "source": (
                 "JN5189 Coordinator M1S_IO_V2 via MQTT"
                 if self.client.zigbee_role == "coordinator"
-                else "JN5189 UART A6"
+                else (
+                    "JN5189 Router A6 via MQTT"
+                    if self.client.mqtt_io_confirmed
+                    else "JN5189 UART A6"
+                )
             ),
         }
 
