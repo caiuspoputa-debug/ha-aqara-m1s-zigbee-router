@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DATA_CLIENTS,
+    DATA_COORDINATOR_MQTT,
     DATA_COORDINATORS,
     DOMAIN,
 )
@@ -99,12 +100,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
     coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
     entities = [
-        AqaraM1SRouterSensor(hass, entry, client, coordinator, definition)
+        AqaraM1SRouterSensor(
+            hass,
+            entry,
+            client,
+            coordinator,
+            definition,
+            hass.data[DOMAIN][DATA_COORDINATOR_MQTT].get(entry.entry_id),
+        )
         for definition in SENSORS
         if client.zigbee_role != "coordinator" or definition.key != "jn5189_router"
     ]
     entities.append(AqaraM1SMQTTSyncSensor(entry, coordinator))
-    entities.append(AqaraM1SRouterIlluminanceSensor(entry, client, coordinator))
+    entities.append(
+        AqaraM1SRouterIlluminanceSensor(
+            entry,
+            client,
+            coordinator,
+            hass.data[DOMAIN][DATA_COORDINATOR_MQTT].get(entry.entry_id),
+        )
+    )
     async_add_entities(entities, coordinator.last_update_success)
 
 
@@ -124,12 +139,21 @@ class AqaraM1SMQTTSyncSensor(CoordinatorEntity, SensorEntity):
 
 
 class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
-    def __init__(self, hass, entry, client, coordinator, definition: SensorDef) -> None:
+    def __init__(
+        self,
+        hass,
+        entry,
+        client,
+        coordinator,
+        definition: SensorDef,
+        coordinator_mqtt,
+    ) -> None:
         super().__init__(coordinator)
         self.hass = hass
         self.entry = entry
         self.client = client
         self.definition = definition
+        self.coordinator_mqtt = coordinator_mqtt
         self._was_online = coordinator.last_update_success
         self._attr_name = definition.name
         self._attr_unique_id = f"{entry.entry_id}_{definition.key}"
@@ -137,7 +161,21 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_class = definition.device_class
         self._attr_device_info = device_info(entry)
 
+    @property
+    def available(self):
+        if self.client.zigbee_role == "coordinator":
+            return (
+                super().available
+                and self.coordinator_mqtt is not None
+                and self.coordinator_mqtt.available
+                and self.coordinator_mqtt.telemetry is not None
+            )
+        return super().available
+
     async def async_update(self) -> None:
+        if self.client.zigbee_role == "coordinator":
+            self._apply_coordinator_telemetry()
+            return
         try:
             output = await self.hass.async_add_executor_job(
                 self.client.run_command, self.definition.command
@@ -148,11 +186,34 @@ class AqaraM1SRouterSensor(CoordinatorEntity, SensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
+        if self.client.zigbee_role == "coordinator":
+            self._apply_coordinator_telemetry()
+            self.async_write_ha_state()
+            return
         online = self.coordinator.last_update_success
         if online and not self._was_online:
             self.hass.async_create_task(self._async_refresh_after_reconnect())
         self._was_online = online
         super()._handle_coordinator_update()
+
+    def _apply_coordinator_telemetry(self) -> None:
+        telemetry = (
+            self.coordinator_mqtt.telemetry
+            if self.coordinator_mqtt is not None
+            else None
+        )
+        if not isinstance(telemetry, dict):
+            self._attr_native_value = None
+            return
+        key = self.definition.key
+        if key == "temperature":
+            self._attr_native_value = telemetry.get("temperature")
+        elif key == "wifi_ip":
+            self._attr_native_value = telemetry.get("wifi_ip")
+        elif key in {"homekit_process", "mqtt_process", "telnet_process"}:
+            self._attr_native_value = telemetry.get(key)
+        else:
+            self._attr_native_value = None
 
     async def _async_refresh_after_reconnect(self) -> None:
         await self.async_update()
@@ -166,6 +227,8 @@ class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
         if self.client.zigbee_role == "coordinator":
             return (
                 super().available
+                and self.coordinator_mqtt is not None
+                and self.coordinator_mqtt.available
                 and self.client.coordinator_io_state is not None
                 and isinstance((self.coordinator.data or {}).get("illuminance"), dict)
             )
@@ -178,10 +241,11 @@ class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_should_poll = False
 
-    def __init__(self, entry: ConfigEntry, client, coordinator) -> None:
+    def __init__(self, entry: ConfigEntry, client, coordinator, coordinator_mqtt) -> None:
         super().__init__(coordinator)
         self.entry = entry
         self.client = client
+        self.coordinator_mqtt = coordinator_mqtt
         # Preserve the v0.1.3 unique ID so the existing registry entity is
         # upgraded in place instead of leaving a duplicate orphan.
         self._attr_unique_id = f"{entry.entry_id}_illuminance_raw"
@@ -200,7 +264,7 @@ class AqaraM1SRouterIlluminanceSensor(CoordinatorEntity, SensorEntity):
             "adc_raw": reading.get("raw"),
             "millivolts": reading.get("millivolts"),
             "source": (
-                "JN5189 Coordinator M1S_IO_V2 sideband"
+                "JN5189 Coordinator M1S_IO_V2 via MQTT"
                 if self.client.zigbee_role == "coordinator"
                 else "JN5189 UART A6"
             ),

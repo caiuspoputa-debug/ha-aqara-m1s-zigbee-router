@@ -1,16 +1,16 @@
-# Aqara M1S Zigbee Coordinator + Router v0.34.2 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.35.0 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.34.2 TEST` is built on the `0.34.1 TEST` base. It preserves the confirmed sound, media-player, volume, physical-button, shared-MQTT, Wi-Fi, Coordinator RGB/lux and diagnostic modules, and confirms availability with bounded Telnet retries. If every attempt fails, the existing immediate media-member isolation still applies; playback and synchronization code is unchanged. This is an integration package, not a firmware kit: it does not write or flash the JN5189.
+Version `0.35.0 TEST` is built on the confirmed `0.34.2 TEST` base. On the Coordinator only, a persistent on-hub MQTT agent replaces per-command Telnet for Ring Light, illuminance, diagnostic telemetry and preparation of stored WAV playback. Routers keep their existing paths. Radio playback, the shared media group, synchronization, priority arbitration and the TCP/FFmpeg/aplay audio transport are unchanged. This is an integration package, not a firmware kit: it does not write or flash the JN5189.
 
 ## Requirements
 
 - Home Assistant `2024.1.0` or newer.
 - Local network access from Home Assistant to the hub.
 - Telnet enabled on the hub; default connection is port `23`, user `admin`, blank password.
-- A compatible Router setup, or the Coordinator runtime with `/data/m1s_coordinator/coordinator_io.sh` and the `M1S_IO_V2` capability.
-- An MQTT broker reachable through its LAN address for physical-button events and shared MQTT configuration.
+- A compatible Router setup, or Coordinator MQTT IO kit `1.1.0` with `M1S_IO_V2` sideband support.
+- An MQTT broker reachable through its LAN address for physical-button events, shared MQTT configuration and Coordinator IO.
 - Zigbee2MQTT with the `zoh` adapter when the hub is used as Coordinator.
 
 ## Installation and update
@@ -28,8 +28,8 @@ The internal domain remains `aqara_m1s_zigbee_router`, so an existing installati
 | Function | Router role | Coordinator role |
 | --- | --- | --- |
 | Zigbee transport | Existing JN5189 Router runtime | Zigbee-on-Host through `tcp://HUB_IP:1886` |
-| Ring Light | Existing UART A5 path | Isolated `M1S_IO_V2` sideband helper |
-| Illuminance | Existing UART A6 path, every 15 seconds | Isolated sideband sample every 60 seconds |
+| Ring Light | Existing UART A5 path | MQTT command to persistent agent, then isolated `M1S_IO_V2` sideband |
+| Illuminance | Existing UART A6 path, every 15 seconds | Retained MQTT state; on-hub sample every 60 seconds |
 | Join another coordinator | Available with explicit confirmation | Hidden and blocked |
 | Coordinator ON/OFF | Not applicable | Deliberately absent |
 
@@ -40,11 +40,12 @@ Router RGB, lux and rejoin behavior remains unchanged. Coordinator RGB/lux never
 - Home Assistant cannot stop the Coordinator. There is no switch, options form, service or internal method for Coordinator ON/OFF.
 - A stale `*_coordinator_radio` entity from an older version is removed automatically from the entity registry.
 - Coordinator Ring Light runs only after a Home Assistant light command.
-- Coordinator Illuminance performs one `lux-start`, waits one second for conversion, then performs one `lux-get` every 60 seconds.
-- Every sideband operation uses a fresh Telnet client and only `/data/m1s_coordinator/coordinator_io.sh`.
+- The persistent Coordinator agent serializes Ring Light and illuminance operations through `/tmp/m1s-coordinator-io.sock`; Home Assistant never opens a Telnet sideband command.
+- Coordinator Illuminance is sampled on the hub every 60 seconds and is published as retained MQTT state. Home Assistant may request an immediate refresh over MQTT.
+- Topics follow the Coordinator's current address identity (`m1s/220/...` for `192.168.0.220`), never the historical suffix retained in old entity IDs.
 - The helper response must be one valid JSON object with protocol version `1`, capabilities `3`, a valid RGB triplet and bounded ADC/lux values.
 - The sideband path does not connect to port `1886`, does not send Router A5/A6 frames and does not invoke Router UART cleanup.
-- An invalid or missing response makes only Ring Light and Illuminance unavailable. Hub connectivity, sound, MQTT and Zigbee2MQTT remain independent.
+- An invalid or missing response makes only the MQTT IO features unavailable. It cannot issue a Coordinator OFF command or replace the ZOH owner of port `1886`.
 - An invalid lux measurement is never published as zero.
 
 Zigbee2MQTT owns the Coordinator connection. A typical serial section is:
@@ -90,6 +91,8 @@ The username and password must use printable ASCII and may contain at most 80 ch
 - Installation, startup and migration never delete sounds automatically.
 - A successful upload or deletion reloads the integration and rebuilds the sound entities.
 
+For a stored WAV, the confirmed priority sequence is preserved exactly: current individual/group playback is suspended, the WAV runs through the existing TCP/FFmpeg/aplay path, and the remembered playback is restored after completion. MQTT replaces only the Coordinator command that prepares or stops this dedicated WAV pipeline. It does not transport radio/group audio and does not alter synchronization.
+
 The individual Media Player and the shared M1S Media Group, volume controls, radio playback, metadata updates and the existing Aqara sound buttons are retained from the confirmed base.
 
 ## Network management
@@ -104,16 +107,17 @@ The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_soun
 
 ## Validation and TEST status
 
-The `0.34.2` source passed:
+The `0.35.0` source passed:
 
-- 8 isolated Coordinator RGB/lux and transport-safety tests.
+- 10 isolated Coordinator MQTT RGB/lux, telemetry, topic and transport-safety tests.
+- 1 dedicated priority test confirming `suspend -> WAV -> stop WAV -> resume`.
 - 5 WAV deletion and mandatory-backup tests.
 - 7 shared-MQTT persistence and recovery tests.
 - Python compilation plus JSON/YAML parsing.
-- Byte-for-byte comparison of the confirmed sound, media, button and MQTT modules against `0.34.0 RECOVERY`.
+- Byte-for-byte comparison proving `media_player.py` (including radio playback) and `media_group.py` are unchanged from `0.34.2`.
 
-No live hub was contacted and no firmware was written while this integration package was built. Before promotion from TEST, confirm on Coordinator hardware that Zigbee2MQTT stays connected, Ring Light ON/OFF and colors work, lux follows real light changes at the 60-second cadence, audio and the physical button still work, and the system recovers after Home Assistant and Zigbee2MQTT restarts.
+A temporary agent was hardware-tested on Coordinator `192.168.0.220`: RGB ON/OFF, lux, retained telemetry and one established Z2M connection on port `1886` were confirmed. No firmware was written. The permanent agent must be activated only after this integration is installed and Home Assistant has restarted, so the former Telnet sideband poller and the new agent never run together.
 
 ## Rollback
 
-If the Coordinator sideband entities do not behave correctly, replace the custom integration with `0.34.0 RECOVERY` and restart Home Assistant. That version keeps the Coordinator permanently protected and leaves its RGB/lux unavailable. Replacing the integration does not alter firmware, Zigbee network data or sound files.
+If Coordinator MQTT IO does not behave correctly, disable it in `/data/m1s_coordinator/mqtt_io.conf`, stop `mqtt_io_service.sh`, restore integration `0.34.2`, and restart Home Assistant. Replacing the integration does not alter firmware, Zigbee network data or sound files.

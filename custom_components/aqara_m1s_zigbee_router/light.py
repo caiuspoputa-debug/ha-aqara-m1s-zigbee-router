@@ -10,7 +10,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DATA_CLIENTS, DATA_COORDINATORS, DOMAIN
+from .const import (
+    DATA_CLIENTS,
+    DATA_COORDINATOR_MQTT,
+    DATA_COORDINATORS,
+    DOMAIN,
+)
 from .device import device_info
 
 
@@ -30,6 +35,7 @@ async def async_setup_entry(
             entry,
             client,
             hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id],
+            hass.data[DOMAIN][DATA_COORDINATOR_MQTT].get(entry.entry_id),
         )
     ])
 
@@ -44,7 +50,11 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
     def available(self):
         return super().available and (
             self.client.zigbee_role != "coordinator"
-            or self.client.coordinator_io_state is not None
+            or (
+                self.coordinator_mqtt is not None
+                and self.coordinator_mqtt.available
+                and self.client.coordinator_io_state is not None
+            )
         )
 
     @property
@@ -54,11 +64,12 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
             return bool(state and any(state["rgb"]))
         return self._attr_is_on
 
-    def __init__(self, hass, entry, client, coordinator) -> None:
+    def __init__(self, hass, entry, client, coordinator, coordinator_mqtt) -> None:
         super().__init__(coordinator)
         self.hass = hass
         self.entry = entry
         self.client = client
+        self.coordinator_mqtt = coordinator_mqtt
         self._attr_unique_id = f"{entry.entry_id}_ring_light"
         self._attr_is_on = False
         self._attr_brightness = 64
@@ -161,16 +172,26 @@ class AqaraM1SRouterRingLight(CoordinatorEntity, RestoreEntity, LightEntity):
             self._attr_brightness = max(1, min(255, int(kwargs[ATTR_BRIGHTNESS])))
         brightness = self._attr_brightness or 255
         red, green, blue = self._attr_rgb_color or (255, 255, 255)
-        await self.hass.async_add_executor_job(
-            self.client.set_rgb,
+        rgb = (
             round(red * brightness / 255),
             round(green * brightness / 255),
             round(blue * brightness / 255),
         )
+        if self.client.zigbee_role == "coordinator":
+            if self.coordinator_mqtt is None:
+                raise RuntimeError("Coordinator MQTT IO is not configured")
+            await self.coordinator_mqtt.async_set_rgb(*rgb)
+        else:
+            await self.hass.async_add_executor_job(self.client.set_rgb, *rgb)
         self._attr_is_on = True
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
-        await self.hass.async_add_executor_job(self.client.set_rgb, 0, 0, 0)
+        if self.client.zigbee_role == "coordinator":
+            if self.coordinator_mqtt is None:
+                raise RuntimeError("Coordinator MQTT IO is not configured")
+            await self.coordinator_mqtt.async_set_rgb(0, 0, 0)
+        else:
+            await self.hass.async_add_executor_job(self.client.set_rgb, 0, 0, 0)
         self._attr_is_on = False
         self.async_write_ha_state()

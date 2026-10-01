@@ -12,6 +12,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .client import AqaraM1SClient
+from .const import DATA_COORDINATOR_MQTT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,10 +130,16 @@ class AqaraM1SSoundPlayer:
             try:
                 # Keep this sequence identical to v0.6.0 after focus arbitration.
                 stage_started = time.perf_counter()
-                await self.hass.async_add_executor_job(
-                    self.client.run_command,
-                    remote_start_command(path),
-                )
+                coordinator_mqtt = self._coordinator_mqtt()
+                if self.client.zigbee_role == "coordinator":
+                    if coordinator_mqtt is None:
+                        raise RuntimeError("Coordinator MQTT IO is not configured")
+                    await coordinator_mqtt.async_prepare_sound(path)
+                else:
+                    await self.hass.async_add_executor_job(
+                        self.client.run_command,
+                        remote_start_command(path),
+                    )
                 timing["remote_sound_start_ms"] = self._elapsed_ms(stage_started)
 
                 stage_started = time.perf_counter()
@@ -358,9 +365,20 @@ class AqaraM1SSoundPlayer:
 
     async def _remote_stop(self) -> None:
         try:
-            await self.hass.async_add_executor_job(
-                self.client.run_command,
-                REMOTE_STOP_COMMAND,
-            )
+            coordinator_mqtt = self._coordinator_mqtt()
+            if self.client.zigbee_role == "coordinator":
+                if coordinator_mqtt is None:
+                    raise RuntimeError("Coordinator MQTT IO is not configured")
+                await coordinator_mqtt.async_stop_sound()
+            else:
+                await self.hass.async_add_executor_job(
+                    self.client.run_command,
+                    REMOTE_STOP_COMMAND,
+                )
         except Exception as err:
             _LOGGER.debug("Could not stop Aqara sound pipeline: %s", err)
+
+    def _coordinator_mqtt(self):
+        return self.hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR_MQTT, {}).get(
+            self.entry_id
+        )

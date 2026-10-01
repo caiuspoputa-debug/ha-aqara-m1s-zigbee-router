@@ -673,11 +673,7 @@ class AqaraM1SClient:
     def set_rgb(self, red: int, green: int, blue: int) -> None:
         values = [max(0, min(255, int(value))) for value in (red, green, blue)]
         if self.zigbee_role == "coordinator":
-            result = self._coordinator_io("rgb", values)
-            if result["rgb"] != values:
-                self.coordinator_io_state = None
-                raise RuntimeError("Coordinator RGB state was not confirmed")
-            return
+            raise RuntimeError("Coordinator RGB is MQTT-only")
         checksum = 0xA5 ^ values[0] ^ values[1] ^ values[2]
         frame = bytes([0xA5, *values, checksum])
         with self._lock:
@@ -691,12 +687,7 @@ class AqaraM1SClient:
     def read_illuminance(self) -> dict[str, int]:
         """Read a validated A6 lux response from the JN5189 firmware."""
         if self.zigbee_role == "coordinator":
-            self._coordinator_io("lux-start")
-            time.sleep(1.0)
-            result = self._coordinator_io("lux-get")
-            if not result["valid"]:
-                raise TimeoutError("Coordinator ADC measurement unavailable")
-            return {key: result[key] for key in ("raw", "millivolts", "lux")}
+            raise RuntimeError("Coordinator illuminance is MQTT-only")
         with self._lock:
             last_error: Exception | None = None
             for attempt in range(2):

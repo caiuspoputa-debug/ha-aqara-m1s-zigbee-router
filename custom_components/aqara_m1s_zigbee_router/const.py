@@ -18,6 +18,7 @@ SERVICE_RUN_COMMAND = "run_command"
 
 DATA_CLIENTS = "clients"
 DATA_COORDINATORS = "coordinators"
+DATA_COORDINATOR_MQTT = "coordinator_mqtt"
 DATA_PLAYBACK_VOLUME = "playback_volume"
 
 DATA_RADIO_PLAYERS = "radio_players"

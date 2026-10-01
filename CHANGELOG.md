@@ -1,3 +1,19 @@
+## 0.35.0 - Persistent Coordinator MQTT IO
+
+- Move Coordinator Ring Light, one-minute illuminance and diagnostic telemetry
+  from per-command Telnet to one persistent on-hub MQTT agent.
+- Keep Router RGB/lux behavior unchanged and derive Coordinator topics from the
+  current hub address (`m1s/220/...`), independent of historical entity IDs.
+- Prepare and stop stored Coordinator WAV playback over MQTT while preserving
+  the established priority sequence: suspend current playback, play WAV, then
+  restore the remembered individual/group playback.
+- Keep radio/group audio transport and synchronization unchanged; MQTT never
+  carries the audio stream.
+- Prefer retained MQTT availability for the Coordinator watchdog and retain a
+  Telnet connectivity fallback while the agent is unavailable.
+- Require staged activation after the Home Assistant update so the former
+  Telnet sideband poller and the persistent agent cannot run together.
+
 ## 0.34.2 - Confirmed availability and reconnect state preservation
 
 - Confirm a watchdog check with up to three two-second Telnet connection attempts

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 
 from homeassistant.config_entries import ConfigEntry
@@ -20,6 +21,7 @@ from .const import (
     CONF_DEVICE_MAC,
     CONF_ZIGBEE_ROLE,
     DATA_CLIENTS,
+    DATA_COORDINATOR_MQTT,
     DATA_COORDINATORS,
     DATA_PLAYBACK_VOLUME,
     DATA_RADIO_PLAYERS,
@@ -42,6 +44,7 @@ from .const import (
 )
 from .device import device_identifier, entry_title_with_host
 from .coordinator import AqaraM1SRouterCoordinator
+from .coordinator_mqtt import CoordinatorMQTTIO
 from .media_group import AqaraM1SMediaGroupManager
 from .media_player import AqaraM1SRadioPlayer
 from .sound_player import AqaraM1SSoundPlayer
@@ -57,6 +60,9 @@ PLATFORMS = [
     "sensor",
     "switch",
 ]
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 _OFFLINE_SUFFIXES = (" (🔴 Indisponibil)", " (Indisponibil)")
@@ -168,6 +174,7 @@ async def async_setup_entry(
         DATA_COORDINATORS,
         {},
     )
+    hass.data[DOMAIN].setdefault(DATA_COORDINATOR_MQTT, {})
     hass.data[DOMAIN].setdefault(
         DATA_PLAYBACK_VOLUME,
         {},
@@ -189,6 +196,10 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_COORDINATORS][
         entry.entry_id
     ] = coordinator
+    coordinator_mqtt = None
+    if client.zigbee_role == "coordinator":
+        coordinator_mqtt = CoordinatorMQTTIO(hass, client, coordinator)
+        hass.data[DOMAIN][DATA_COORDINATOR_MQTT][entry.entry_id] = coordinator_mqtt
     hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][
         entry.entry_id
     ] = 50
@@ -306,6 +317,15 @@ async def async_setup_entry(
     # a long delay or a manual Reload.  A normal refresh records the initial
     # availability state without aborting the config entry setup.
     await coordinator.async_refresh()
+    if coordinator_mqtt is not None:
+        try:
+            await coordinator_mqtt.async_start()
+        except Exception as err:
+            _LOGGER.warning(
+                "Coordinator MQTT IO could not subscribe for %s: %s",
+                client.host,
+                err,
+            )
     await hass.config_entries.async_forward_entry_setups(
         entry,
         PLATFORMS,
@@ -504,6 +524,12 @@ async def async_unload_entry(
     )
     if not unloaded:
         return False
+
+    coordinator_mqtt = hass.data[DOMAIN][DATA_COORDINATOR_MQTT].pop(
+        entry.entry_id, None
+    )
+    if coordinator_mqtt is not None:
+        await coordinator_mqtt.async_stop()
 
     group_manager = hass.data[DOMAIN].get(DATA_MEDIA_GROUP)
     if group_manager is not None:

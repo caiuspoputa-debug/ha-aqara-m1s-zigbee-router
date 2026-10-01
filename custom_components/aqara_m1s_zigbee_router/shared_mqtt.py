@@ -66,7 +66,11 @@ def apply_to_hub(client, settings):
         "sh -n \"$t\" || exit 1; "
         "if cmp -s \"$t\" \"$f\"; then echo M1S_MQTT_SYNC_OK; exit 0; fi; "
         "cp -p \"$f\" \"$f.before_shared\" && chmod 600 \"$f.before_shared\" && "
-        "chmod 600 \"$t\" && mv \"$t\" \"$f\" && echo M1S_MQTT_SYNC_OK )"
+        "chmod 600 \"$t\" && mv \"$t\" \"$f\" || exit 1; "
+        "if [ -x /data/m1s_coordinator/mqtt_io_service.sh ]; then "
+        "/data/m1s_coordinator/mqtt_io_service.sh restart "
+        ">/tmp/m1s_mqtt_io_config_restart.log 2>&1 || exit 1; fi; "
+        "echo M1S_MQTT_SYNC_OK )"
     )
     output = client.run_command(command, timeout=12)
     if "M1S_MQTT_SYNC_OK" not in output.splitlines():

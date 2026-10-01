@@ -1,16 +1,16 @@
-# Aqara M1S Zigbee Coordinator + Router v0.34.2 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.35.0 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.34.2 TEST` este construită peste baza `0.34.1 TEST`. Păstrează modulele confirmate pentru sunete, media player, volum, buton fizic, MQTT comun, Wi-Fi, RGB/lux Coordinator și diagnostic și confirmă disponibilitatea prin încercări Telnet limitate. Dacă toate încercările eșuează, izolarea imediată existentă a membrului media rămâne activă; codul de redare și sincronizare nu este modificat. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
+Versiunea `0.35.0 TEST` este construită peste baza confirmată `0.34.2 TEST`. Numai pe Coordinator, un agent MQTT persistent pe hub înlocuiește comenzile Telnet individuale pentru Ring Light, iluminanță, telemetria de diagnostic și pregătirea redării WAV locale. Routerele își păstrează traseele existente. Radioul, grupul media comun, sincronizarea, arbitrarea priorității și transportul audio TCP/FFmpeg/aplay nu sunt modificate. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
 - Home Assistant `2024.1.0` sau mai nou.
 - Acces prin rețeaua locală de la Home Assistant la hub.
 - Telnet activ pe hub; conexiunea implicită folosește portul `23`, utilizatorul `admin` și parolă goală.
-- Un setup Router compatibil sau runtime-ul Coordinator cu `/data/m1s_coordinator/coordinator_io.sh` și capabilitatea `M1S_IO_V2`.
-- Un broker MQTT accesibil prin adresa sa LAN pentru evenimentele butonului fizic și configurarea MQTT comună.
+- Un setup Router compatibil sau kitul Coordinator MQTT IO `1.1.0`, cu sideband `M1S_IO_V2`.
+- Un broker MQTT accesibil prin adresa sa LAN pentru butonul fizic, configurarea MQTT comună și IO Coordinator.
 - Zigbee2MQTT cu adaptorul `zoh` atunci când hubul este folosit drept Coordinator.
 
 ## Instalare și actualizare
@@ -28,8 +28,8 @@ Domeniul intern rămâne `aqara_m1s_zigbee_router`, astfel încât o instalare e
 | Funcție | Rol Router | Rol Coordinator |
 | --- | --- | --- |
 | Transport Zigbee | Runtime-ul existent JN5189 Router | Zigbee-on-Host prin `tcp://IP_HUB:1886` |
-| Ring Light | Traseul UART A5 existent | Helper sideband izolat `M1S_IO_V2` |
-| Illuminance | Traseul UART A6 existent, la 15 secunde | Eșantion sideband izolat la 60 de secunde |
+| Ring Light | Traseul UART A5 existent | Comandă MQTT către agentul persistent, apoi sideband izolat `M1S_IO_V2` |
+| Illuminance | Traseul UART A6 existent, la 15 secunde | Stare MQTT retained; eșantion pe hub la 60 de secunde |
 | Conectare la alt coordinator | Disponibilă cu confirmare explicită | Ascunsă și blocată |
 | Coordinator ON/OFF | Nu se aplică | Eliminat intenționat |
 
@@ -40,11 +40,12 @@ Comportamentul RGB, lux și rejoin al Routerului rămâne neschimbat. RGB/lux pe
 - Home Assistant nu poate opri Coordinatorul. Nu există switch, formular de opțiuni, serviciu sau metodă internă pentru Coordinator ON/OFF.
 - O entitate veche `*_coordinator_radio`, rămasă de la o versiune anterioară, este eliminată automat din registrul de entități.
 - Ring Light pentru Coordinator rulează numai după o comandă de lumină trimisă din Home Assistant.
-- Illuminance pentru Coordinator execută un `lux-start`, așteaptă o secundă pentru conversie, apoi execută un `lux-get` o dată la 60 de secunde.
-- Fiecare operație sideband folosește un client Telnet nou și numai `/data/m1s_coordinator/coordinator_io.sh`.
+- Agentul persistent serializează operațiile Ring Light și iluminanță prin `/tmp/m1s-coordinator-io.sock`; Home Assistant nu mai deschide comenzi Telnet sideband.
+- Illuminance pentru Coordinator este măsurată pe hub o dată la 60 de secunde și publicată retained prin MQTT. Home Assistant poate cere o actualizare imediată tot prin MQTT.
+- Topicurile folosesc identitatea adresei actuale a Coordinatorului (`m1s/220/...` pentru `192.168.0.220`), nu sufixul istoric păstrat în unele ID-uri vechi de entități.
 - Răspunsul helperului trebuie să fie un singur obiect JSON valid, cu versiunea de protocol `1`, capabilități `3`, un triplet RGB valid și valori ADC/lux în limite.
 - Traseul sideband nu se conectează la portul `1886`, nu trimite cadrele Router A5/A6 și nu execută rutina de curățare UART a Routerului.
-- Un răspuns lipsă sau invalid face indisponibile numai Ring Light și Illuminance. Conectivitatea hubului, sunetele, MQTT și Zigbee2MQTT rămân independente.
+- Un răspuns lipsă sau invalid face indisponibile numai funcțiile MQTT IO. Agentul nu poate executa Coordinator OFF și nu poate înlocui proprietarul ZOH al portului `1886`.
 - O măsurare lux invalidă nu este publicată niciodată ca valoare zero.
 
 Zigbee2MQTT deține conexiunea Coordinatorului. O secțiune serială tipică este:
@@ -90,6 +91,8 @@ Starea `applied` înseamnă că configurația a fost scrisă cu succes pe hub; c
 - Instalarea, pornirea și migrarea nu șterg automat niciun sunet.
 - După un upload sau o ștergere reușită, integrarea se reîncarcă și reconstruiește entitățile sunetelor.
 
+Pentru un WAV local se păstrează exact prioritatea confirmată: redarea individuală sau de grup este suspendată, WAV-ul rulează prin traseul existent TCP/FFmpeg/aplay, apoi redarea memorată este reluată. MQTT înlocuiește numai comanda Coordinatorului care pregătește sau oprește traseul dedicat WAV. Nu transportă audio radio/grup și nu modifică sincronizarea.
+
 Media Player individual și grupul comun M1S Media Group, controalele de volum, radioul, actualizarea metadatelor și butoanele existente pentru sunetele Aqara sunt păstrate din baza confirmată.
 
 ## Administrarea rețelei
@@ -104,16 +107,17 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.34.2` a trecut:
+Sursa `0.35.0` a trecut:
 
-- 8 teste izolate pentru RGB/lux Coordinator și siguranța transportului.
+- 10 teste izolate pentru MQTT RGB/lux, telemetrie, topicuri și siguranța transportului Coordinatorului.
+- 1 test dedicat priorității, cu ordinea `suspendare -> WAV -> oprire WAV -> reluare`.
 - 5 teste pentru ștergerea WAV și backupul obligatoriu.
 - 7 teste pentru persistența și revenirea configurării MQTT comune.
 - Compilarea Python și parsarea fișierelor JSON/YAML.
-- Comparația byte-cu-byte a modulelor confirmate pentru sunete, media, buton și MQTT cu `0.34.0 RECOVERY`.
+- Comparația byte-cu-byte care confirmă că `media_player.py` (inclusiv radioul) și `media_group.py` sunt neschimbate față de `0.34.2`.
 
-La construirea acestui pachet de integrare nu a fost contactat niciun hub live și nu a fost scris firmware. Înainte de promovarea din TEST, confirmă pe hardware Coordinator că Zigbee2MQTT rămâne conectat, Ring Light ON/OFF și culorile funcționează, luxul urmărește schimbările reale de lumină la intervalul de 60 de secunde, sunetele și butonul fizic continuă să funcționeze, iar sistemul revine după restartarea Home Assistant și Zigbee2MQTT.
+Agentul temporar a fost testat hardware pe Coordinatorul `192.168.0.220`: RGB ON/OFF, lux, telemetrie retained și o singură conexiune Z2M stabilită pe portul `1886` au fost confirmate. Nu s-a scris firmware. Agentul persistent se activează numai după instalarea acestei integrări și restartarea Home Assistant, astfel încât vechiul poller Telnet sideband și agentul nou să nu ruleze simultan.
 
 ## Revenire
 
-Dacă entitățile sideband ale Coordinatorului nu funcționează corect, înlocuiește integrarea custom cu `0.34.0 RECOVERY` și repornește Home Assistant. Acea versiune păstrează Coordinatorul permanent protejat și lasă RGB/lux indisponibile. Înlocuirea integrării nu modifică firmware-ul, datele rețelei Zigbee sau fișierele audio.
+Dacă MQTT IO pentru Coordinator nu funcționează corect, dezactivează-l în `/data/m1s_coordinator/mqtt_io.conf`, oprește `mqtt_io_service.sh`, restaurează integrarea `0.34.2` și repornește Home Assistant. Înlocuirea integrării nu modifică firmware-ul, datele rețelei Zigbee sau fișierele audio.

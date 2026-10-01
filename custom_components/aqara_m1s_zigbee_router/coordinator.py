@@ -7,14 +7,13 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN
+from .const import DATA_COORDINATOR_MQTT, DOMAIN
 from .device import device_identifier
 
 
 _LOGGER = logging.getLogger(__name__)
 WATCHDOG_INTERVAL_SECONDS = 5.0
 LUX_INTERVAL_SECONDS = 15.0
-COORDINATOR_LUX_INTERVAL_SECONDS = 60.0
 OFFLINE_NAME_SUFFIX = " (🔴 Indisponibil)"
 LEGACY_OFFLINE_NAME_SUFFIX = " (Indisponibil)"
 
@@ -81,9 +80,23 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             raise
 
     async def _async_update_data(self) -> dict:
-        # client.check_online() uses its own fresh TCP socket.  It does not wait
-        # for the shared Telnet/UART lock and is therefore a true watchdog.
-        online = await self.hass.async_add_executor_job(self.client.check_online)
+        # Once the Coordinator agent is online, its retained MQTT availability
+        # replaces the five-second Telnet probe.  Telnet remains only as a
+        # fallback while the agent is starting or unavailable.  Routers keep
+        # their existing watchdog behavior unchanged.
+        mqtt_io = None
+        if self.client.zigbee_role == "coordinator" and self.config_entry is not None:
+            mqtt_io = (
+                self.hass.data.get(DOMAIN, {})
+                .get(DATA_COORDINATOR_MQTT, {})
+                .get(self.config_entry.entry_id)
+            )
+        if mqtt_io is not None and mqtt_io.available:
+            online = True
+        else:
+            # client.check_online() uses a fresh TCP socket and never touches
+            # the JN5189 sideband or Router UART data path.
+            online = await self.hass.async_add_executor_job(self.client.check_online)
         if not online:
             self.mqtt_sync_state = "offline"
             if self._was_online:
@@ -127,6 +140,8 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             # Keep the most recent good lux sample.  Lux is deliberately not
             # awaited here because UART startup/read can take several seconds.
             "illuminance": previous.get("illuminance"),
+            # Coordinator diagnostics are pushed by the on-hub MQTT agent.
+            "telemetry": previous.get("telemetry"),
             "online_generation": self._online_generation,
         }
 
@@ -144,16 +159,16 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
 
     @callback
     def _schedule_lux_refresh(self, *, force: bool) -> None:
+        # Coordinator lux is pushed by the persistent on-hub MQTT service.
+        # Never open a Telnet sideband request from the HA watchdog.
+        if self.client.zigbee_role == "coordinator":
+            return
         task = self._lux_task
         if task is not None and not task.done():
             return
 
         now = self.hass.loop.time()
-        interval = (
-            COORDINATOR_LUX_INTERVAL_SECONDS
-            if self.client.zigbee_role == "coordinator"
-            else LUX_INTERVAL_SECONDS
-        )
+        interval = LUX_INTERVAL_SECONDS
         if not force and now - self._last_lux_started < interval:
             return
         self._last_lux_started = now
