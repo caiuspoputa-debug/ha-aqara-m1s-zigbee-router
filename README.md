@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.1 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.36.2 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.36.1 TEST` is built on the `0.36.0 TEST` base. The persistent MQTT agent remains responsible for Ring Light, illuminance and diagnostic telemetry on both roles. On a Router, the agent serially owns the JN5189 UART and replaces per-command A5/A6 Telnet sessions only after the upgrade is explicitly activated. The physical button keeps its existing topic. Radio, play/stop/pause, volume, the shared media group, synchronization and the TCP/FFmpeg/aplay audio transport remain unchanged. `0.36.1` makes multi-WAV deletion reliable for large selections, moves confirmation into a separate popup and increases the clean WAV end cushion to 500 ms. This is an integration package, not a firmware kit: it does not write or flash the JN5189.
+Version `0.36.2 TEST` is built on the `0.36.1 TEST` base. The persistent MQTT agent remains responsible for Ring Light, illuminance and diagnostic telemetry on both roles. On a Router, the agent serially owns the JN5189 UART and replaces per-command A5/A6 Telnet sessions only after the upgrade is explicitly activated. The physical button keeps its existing topic. Radio, play/stop/pause, volume, the shared media group, synchronization and the TCP/FFmpeg/aplay audio transport remain unchanged. `0.36.2` reserves `/data/musics/music-us` for factory-reset system sounds and changes confirmed deletion of every other WAV to a direct operation without backup archives. This is an integration package, not a firmware kit: it does not write or flash the JN5189.
 
 ## Requirements
 
@@ -77,7 +77,7 @@ The Zigbee channel, PAN, network key and device database remain Zigbee2MQTT sett
 - **Media Player** for streams and local playback.
 - **M1S Media Group** and **Include in M1S Media Group** for synchronized playback across selected hubs.
 - **Sound Playback Volume**, **Fine Volume Trim** and **Sound** selection.
-- One button for every discovered Aqara WAV sound.
+- One button for every discovered non-system WAV sound.
 - **Physical Button** events: click, double through ten clicks, hold start, repeat and release.
 - **Hub Connectivity**, **Hub Temperature**, **WiFi IP**, HomeKit, MQTT and Telnet process state.
 - **JN5189 Router** diagnostic only for Router-role hubs.
@@ -96,15 +96,19 @@ The username and password must use printable ASCII and may contain at most 80 ch
 ## Sound and media management
 
 - WAV and ZIP uploads are available from **Configure** and are stored under `/data/musics/music-ch`.
-- Manual deletion lists every `.wav` below `/data/musics`, including original Aqara folders.
+- Before the first file is written, the complete WAV/ZIP batch is preflighted against `/data`. Existing destination files are counted as replacements, and the batch is rejected as one unit if it would leave less than 8 MiB free. The same reserve applies to the direct `upload_sound` service.
+- `/data/musics/music-us` is reserved for factory-reset system sounds. Its WAV files and any nested files are not exposed as Home Assistant sound buttons and never appear in the delete list.
+- Manual deletion lists non-system `.wav` files below `/data/musics`, including the remaining original Aqara folders.
 - Nothing is selected by default.
 - After selecting files and pressing **Delete**, a short separate popup shows the selected count and the explicit confirmation control; it stays fully visible instead of scrolling with the file list.
 - The selection is sent to the hub through a temporary manifest split into small chunks, preventing large selections from exceeding a Telnet command limit.
-- Before any deletion, exactly one mandatory archive is created under `/data/m1s_sound_backups`; if backup creation or validation fails, no file is deleted.
+- Confirmed deletion is permanent and creates no backup archive. The complete manifest is validated first, the on-hub command independently blocks `music-us`, and success is accepted only when the deleted count matches the selection.
 - Installation, startup and migration never delete sounds automatically.
 - A successful upload or deletion reloads the integration and rebuilds the sound entities.
 
 For a stored WAV, the confirmed priority sequence is preserved exactly: current individual/group playback is suspended, the WAV runs through the existing TCP/FFmpeg/aplay path, and the remembered playback is restored after completion. On the Coordinator, MQTT replaces only the command that prepares or stops this dedicated WAV pipeline. On a Router, the complete WAV path remains on the existing implementation. MQTT does not transport radio/group audio and does not alter synchronization.
+
+The existing no-data protection is retained unchanged. If an individual source stops delivering PCM, its remote receiver is stopped before rebuffering and rebuilt only after real PCM returns. During a temporary group-source gap, zero PCM continues on the same shared sequence. Version `0.36.2` does not change PLAY ordering, group synchronization, buffers, FFmpeg/aplay, volume or recovery timing.
 
 After FFmpeg completes a WAV normally, the integration keeps the path open for 500 ms before remote stop and playback restoration. This cushion was 400 ms in `0.36.0`; it does not apply to manual Stop, FFmpeg errors, radio or media-group playback.
 
@@ -118,21 +122,22 @@ The configuration flow supports DHCP, a static IPv4 address on the current subne
 
 The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_sound`, `refresh_sounds`, `reset_media_group`, `resync_media_group` and `update_media_metadata`. It also retains the advanced `run_command` service; use it only for commands you understand because it executes a shell command on the selected hub over Telnet.
 
-`delete_sound` requires `confirm: true` and always performs backup-before-delete validation. When more than one hub is configured, provide the target `host` for hub-specific sound services.
+`delete_sound` requires `confirm: true`, rejects every path below `/data/musics/music-us` and deletes other valid WAV paths without creating a backup. When more than one hub is configured, provide the target `host` for hub-specific sound services.
 
 ## Validation and TEST status
 
-The `0.36.1` source passed:
+The `0.36.2` source passed:
 
 - 14 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation and Router-rejoin tests.
 - 1 dedicated priority test confirming `suspend -> WAV -> 500 ms cushion -> stop WAV -> resume`.
-- 7 WAV deletion, chunked-manifest and mandatory-backup tests.
+- 9 direct WAV deletion, protected-system-folder and chunked-manifest tests.
+- 5 all-or-nothing upload-capacity, replacement-accounting and protected-path tests.
 - 7 shared-MQTT persistence and recovery tests.
 - Python compilation plus JSON/YAML parsing.
 - Shell syntax validation for every Router script and a static MIPS32 agent build with warnings treated as errors.
-- `media_player.py`, `media_group.py` and `shared_mqtt.py` are unchanged from `0.36.0`; `0.36.1` changes are limited to WAV deletion, popup text and the 500 ms end cushion.
+- All 36 isolated tests pass. `media_player.py`, `media_group.py`, `sound_player.py` and `shared_mqtt.py` are unchanged from `0.36.1`; `0.36.2` changes catalog visibility, deletion safety, upload-capacity protection, documentation and related tests.
 
-Multi-delete was also verified on Coordinator `192.168.0.220` with 12 temporary files: all 12 entered one backup and were then deleted, and the test artifacts were removed. The existing 64 WAV files remained intact.
+The earlier `0.36.1` multi-delete path was hardware-verified on Coordinator `192.168.0.220` with 12 temporary files. The new `0.36.2` direct-delete and `music-us` protections are covered by isolated tests and do not modify a hub during installation.
 
 The Coordinator agent was hardware-tested on `192.168.0.220`: RGB ON/OFF, lux, retained telemetry and one established Z2M connection on port `1886` were confirmed. Router `192.168.0.221` was inspected read-only and exactly matches the `0.10.0` base; the new Router agent has not yet been activated on hardware. No firmware was written and `.221` was not changed, so this version remains `TEST`.
 

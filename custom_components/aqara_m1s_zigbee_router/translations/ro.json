@@ -67,16 +67,16 @@
       },
       "delete_sound": {
         "title": "Ștergere multiplă WAV / Delete multiple WAV files",
-        "description": "Selectează unul sau mai multe fișiere WAV din /data/musics, inclusiv sunetele originale Aqara. Niciun fișier nu este bifat implicit. Confirmarea apare separat după ce apeși Șterge.",
+        "description": "Selectează unul sau mai multe fișiere WAV. Sunetele de sistem din /data/musics/music-us sunt ascunse și protejate. Niciun fișier nu este bifat implicit și nu se creează backup automat.",
         "data": {
           "path": "Fișiere audio / Sound files"
         }
       },
       "confirm_delete_sound": {
         "title": "Confirmare ștergere WAV",
-        "description": "Ai selectat {count} fișier(e). Înainte de orice ștergere se creează un singur backup pe hub.",
+        "description": "Ai selectat {count} fișier(e). Ștergerea este definitivă și nu creează backup. Folderul de sistem music-us rămâne protejat.",
         "data": {
-          "confirm": "Confirm backupul și ștergerea fișierelor selectate"
+          "confirm": "Confirm ștergerea definitivă a fișierelor selectate"
         }
       },
       "rejoin_zigbee": {
@@ -134,9 +134,10 @@
     },
     "error": {
       "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
-      "delete_failed": "Backupul sau ștergerea WAV a eșuat. Verifică legătura cu hubul și spațiul liber.",
+      "sound_storage_full": "Upload refuzat: lotul ar lăsa mai puțin de 8 MiB liberi pe /data. Șterge fișiere nefolosite înainte de o nouă încercare.",
+      "delete_failed": "Ștergerea WAV a eșuat. Verifică legătura cu hubul, spațiul liber și selecția.",
       "no_files_selected": "Selectează cel puțin un fișier pentru ștergere. / Select at least one file to delete.",
-      "sound_delete_confirmation_required": "Confirmă explicit backupul și ștergerea fișierelor selectate.",
+      "sound_delete_confirmation_required": "Confirmă explicit ștergerea definitivă a fișierelor selectate.",
       "rejoin_confirmation_required": "Confirmation is required before clearing the current Zigbee association.",
       "rejoin_failed": "The JN5189 did not acknowledge the rejoin command. Verify the hub connection and compatible firmware.",
       "wifi_confirmation_required": "Bifează confirmarea înainte de schimbarea rețelei Wi-Fi.",

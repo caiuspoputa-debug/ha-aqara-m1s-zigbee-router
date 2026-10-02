@@ -3,6 +3,7 @@ import importlib.util
 import base64
 import pathlib
 import re
+import subprocess
 import sys
 import types
 import unittest
@@ -32,35 +33,45 @@ client_module = load("client")
 class SoundDeleteTests(unittest.TestCase):
     def setUp(self):
         self.client = client_module.AqaraM1SClient("192.0.2.1")
+        self._encoded_chunks = []
         self.client.run_command = Mock(side_effect=self._remote_result)
 
-    @staticmethod
-    def _remote_result(command, **_kwargs):
+    def _remote_result(self, command, **_kwargs):
         if "stage_prefix='__M1S_DELETE_STAGE_'" in command:
+            self._encoded_chunks = []
             return "__M1S_DELETE_STAGE_READY__"
         if "chunk_prefix='__M1S_DELETE_CHUNK_'" in command:
+            match = re.search(r"printf '%s' '([^']+)' >>", command)
+            if match:
+                self._encoded_chunks.append(match.group(1))
             return "__M1S_DELETE_CHUNK_OK__"
-        if "tar -czf" in command:
-            return (
-                "__M1S_SOUND_DELETE_OK__:"
-                "/data/m1s_sound_backups/sounds_before_delete_20261002_1.tgz"
-            )
+        if "delete_prefix='__M1S_SOUND_DELETE_'" in command:
+            manifest = base64.b64decode("".join(self._encoded_chunks)).decode()
+            count = len([line for line in manifest.splitlines() if line])
+            return f"__M1S_SOUND_DELETE_OK__:{count}"
         return ""
 
-    def test_backup_precedes_delete_and_returns_archive(self):
+    def test_direct_delete_uses_validated_manifest_without_backup(self):
         paths = [
             "/data/musics/music-ch/custom.wav",
             "/data/musics/original/door bell.wav",
         ]
-        backup = self.client.delete_sounds(paths)
-        self.assertEqual(
-            backup,
-            "/data/m1s_sound_backups/sounds_before_delete_20261002_1.tgz",
-        )
+        deleted = self.client.delete_sounds(paths)
+        self.assertEqual(deleted, 2)
         commands = [call.args[0] for call in self.client.run_command.call_args_list]
-        command = next(value for value in commands if "tar -czf" in value)
-        self.assertLess(command.index("tar -czf"), command.index("while IFS= read"))
-        self.assertIn('-T "$LIST"', command)
+        command = next(value for value in commands if "delete_prefix=" in value)
+        self.assertNotIn("tar -czf", command)
+        self.assertNotIn("m1s_sound_backups", command)
+        self.assertIn("data/musics/music-us/*", command)
+        self.assertLess(command.index("validate_failed=0"), command.index("deleted=0"))
+        syntax = subprocess.run(
+            ["sh", "-n"],
+            input=command,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
         self.assertNotIn(paths[0], command)
         self.assertNotIn(paths[1], command)
         encoded_chunks = [
@@ -77,17 +88,17 @@ class SoundDeleteTests(unittest.TestCase):
         final_call = next(
             call
             for call in self.client.run_command.call_args_list
-            if "tar -czf" in call.args[0]
+            if "delete_prefix=" in call.args[0]
         )
         self.assertEqual(
             final_call.kwargs["timeout"],
-            client_module.UPLOAD_FINALIZE_TIMEOUT,
+            client_module.SOUND_DELETE_FINALIZE_TIMEOUT,
         )
 
     def test_missing_success_marker_is_failure(self):
         def failed_remote(command, **kwargs):
-            if "tar -czf" in command:
-                return "__M1S_SOUND_BACKUP_ERROR__"
+            if "delete_prefix='__M1S_SOUND_DELETE_'" in command:
+                return "__M1S_SOUND_DELETE_ERROR__:0"
             return self._remote_result(command, **kwargs)
 
         self.client.run_command.side_effect = failed_remote
@@ -100,7 +111,7 @@ class SoundDeleteTests(unittest.TestCase):
         commands = [call.args[0] for call in self.client.run_command.call_args_list]
         self.assertGreater(sum("printf '%s'" in command for command in commands), 1)
         self.assertLess(max(map(len, commands)), 2048)
-        final_command = next(command for command in commands if "tar -czf" in command)
+        final_command = next(command for command in commands if "delete_prefix=" in command)
         self.assertNotIn(paths[-1], final_command)
 
     def test_rejects_newline_in_path(self):
@@ -115,6 +126,8 @@ class SoundDeleteTests(unittest.TestCase):
             "/data/musics/../secret.wav",
             "/data/musics/file.mp3",
             "/data/musics",
+            "/data/musics/music-us/system.wav",
+            "/data/musics/music-us/nested/system.WAV",
         ]
         for path in unsafe:
             with self.subTest(path=path), self.assertRaises(ValueError):
@@ -132,13 +145,37 @@ class SoundDeleteTests(unittest.TestCase):
             "/data/musics/music-ch/a.wav\n"
             "/tmp/not-a-sound.wav\n"
             "/data/musics/music-ch/a.wav\n"
-            "/data/musics/music-us/b.mp3\n"
+            "/data/musics/music-us/system.wav\n"
+            "/data/musics/music-us/nested/system.wav\n"
             "/data/musics/original/b.wav\n"
         )
         self.assertEqual(
             self.client.list_sounds(),
             ["/data/musics/music-ch/a.wav", "/data/musics/original/b.wav"],
         )
+
+    def test_system_sound_directory_is_not_managed_upload_space(self):
+        self.assertFalse(
+            self.client.is_managed_sound_path("/data/musics/music-us/system.wav")
+        )
+        self.assertTrue(
+            self.client.is_managed_sound_path("/data/musics/music-ch/custom.wav")
+        )
+
+    def test_success_count_must_match_selection(self):
+        def wrong_count(command, **kwargs):
+            if "delete_prefix='__M1S_SOUND_DELETE_'" in command:
+                return "__M1S_SOUND_DELETE_OK__:1"
+            return self._remote_result(command, **kwargs)
+
+        self.client.run_command.side_effect = wrong_count
+        with self.assertRaises(IOError):
+            self.client.delete_sounds(
+                [
+                    "/data/musics/music-ch/one.wav",
+                    "/data/musics/music-ch/two.wav",
+                ]
+            )
 
 
 if __name__ == "__main__":

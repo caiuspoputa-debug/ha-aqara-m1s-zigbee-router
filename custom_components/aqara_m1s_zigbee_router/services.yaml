@@ -86,7 +86,7 @@ upload_sound:
 
 delete_sound:
   name: Delete WAV sound
-  description: Back up and delete a WAV file anywhere below /data/musics on the Aqara M1S.
+  description: Delete a WAV below /data/musics, except protected system sounds in /data/musics/music-us.
   fields:
     confirm:
       name: Confirm deletion

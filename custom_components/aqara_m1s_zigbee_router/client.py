@@ -9,8 +9,9 @@ import shlex
 import secrets
 from pathlib import Path, PurePosixPath
 from dataclasses import dataclass, field
+from typing import Callable
 
-from .const import MANAGED_SOUND_DIRECTORY_PREFIX, SOUND_ROOT
+from .const import MANAGED_SOUND_DIRECTORY_PREFIX, SOUND_ROOT, SYSTEM_SOUND_ROOT
 from .device import normalize_mac
 
 UART_PORT = 1886
@@ -32,6 +33,9 @@ UPLOAD_COMMAND_TIMEOUT = 30.0
 UPLOAD_FINALIZE_TIMEOUT = 45.0
 UPLOAD_BASE64_CHUNK_SIZE = 1024
 SOUND_DELETE_BASE64_CHUNK_SIZE = 512
+SOUND_DELETE_FINALIZE_TIMEOUT = 120.0
+SOUND_STORAGE_MIN_FREE_BYTES = 8 * 1024 * 1024
+SOUND_STORAGE_MANIFEST_CHUNK_SIZE = 512
 ONLINE_CHECK_ATTEMPTS = 3
 ONLINE_CHECK_TIMEOUT_SECONDS = 2.0
 ONLINE_CHECK_RETRY_DELAY_SECONDS = 0.2
@@ -85,6 +89,23 @@ class NetworkChangeError(RuntimeError):
 
 class RouterMQTTIOActiveError(RuntimeError):
     """Raised when the persistent Router MQTT agent owns the JN5189 UART."""
+
+
+class SoundStorageError(RuntimeError):
+    """Raised before upload when the hub cannot retain the free-space reserve."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        available_bytes: int | None = None,
+        projected_bytes: int | None = None,
+        reserve_bytes: int = SOUND_STORAGE_MIN_FREE_BYTES,
+    ) -> None:
+        super().__init__(message)
+        self.available_bytes = available_bytes
+        self.projected_bytes = projected_bytes
+        self.reserve_bytes = reserve_bytes
 
 
 @dataclass
@@ -588,7 +609,7 @@ class AqaraM1SClient:
         sounds = []
         for line in out.splitlines():
             line = line.strip()
-            if line.startswith("/data/musics/") and line.endswith(".wav"):
+            if self.is_deletable_sound_path(line):
                 sounds.append(line)
         return sorted(set(sounds))
 
@@ -621,6 +642,8 @@ class AqaraM1SClient:
 
     @staticmethod
     def _safe_sound_path(path: str) -> str:
+        if not isinstance(path, str) or any(char in path for char in "\r\n\t"):
+            raise ValueError("Invalid sound path")
         candidate = PurePosixPath(path)
         if candidate.suffix.lower() != ".wav":
             raise ValueError("Only .wav files are supported")
@@ -636,6 +659,9 @@ class AqaraM1SClient:
             )
         if ".." in candidate.parts:
             raise ValueError("Invalid sound path")
+        system_root = PurePosixPath(SYSTEM_SOUND_ROOT)
+        if candidate == system_root or system_root in candidate.parents:
+            raise ValueError(f"System sounds below {SYSTEM_SOUND_ROOT} are read-only")
         return str(candidate)
 
     @classmethod
@@ -648,7 +674,7 @@ class AqaraM1SClient:
 
     @staticmethod
     def _safe_deletable_sound_path(path: str) -> str:
-        """Allow deletion of WAV files anywhere below /data/musics only."""
+        """Allow non-system WAV deletion below /data/musics only."""
         if not isinstance(path, str) or "\n" in path or "\r" in path:
             raise ValueError("Invalid sound path")
         candidate = PurePosixPath(path)
@@ -663,6 +689,13 @@ class AqaraM1SClient:
             candidate.relative_to(root)
         except ValueError as err:
             raise ValueError(f"Sound file must be inside {SOUND_ROOT}") from err
+        system_root = PurePosixPath(SYSTEM_SOUND_ROOT)
+        try:
+            candidate.relative_to(system_root)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(f"System sounds below {SYSTEM_SOUND_ROOT} cannot be deleted")
         return str(candidate)
 
     @classmethod
@@ -870,8 +903,8 @@ class AqaraM1SClient:
             checksum ^= value
         return checksum
 
-    def upload_sound(self, destination: str, content: bytes) -> None:
-        destination = self._safe_sound_path(destination)
+    @staticmethod
+    def _validate_sound_content(content: bytes) -> None:
         try:
             with wave.open(io.BytesIO(content), "rb") as wav:
                 valid = (
@@ -886,12 +919,172 @@ class AqaraM1SClient:
             raise ValueError(
                 "WAV must be uncompressed PCM, mono, 32000 Hz, 32-bit little-endian"
             )
-        with self._lock:
+
+    def _sound_upload_capacity_locked(
+        self,
+        uploads: list[tuple[str, int]],
+    ) -> dict[str, int]:
+        """Reject a complete batch before writing if /data would become too full."""
+        if not uploads:
+            raise ValueError("No sound files selected for upload")
+
+        safe_uploads: list[tuple[str, int]] = []
+        seen: set[str] = set()
+        for destination, size in uploads:
+            safe_destination = self._safe_sound_path(destination)
+            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                raise ValueError("Invalid sound upload size")
+            if safe_destination in seen:
+                raise ValueError(f"Duplicate sound upload destination: {safe_destination}")
+            seen.add(safe_destination)
+            safe_uploads.append((safe_destination, size))
+
+        manifest = "".join(
+            f"{size}\t{destination}\n" for destination, size in safe_uploads
+        )
+        encoded = base64.b64encode(manifest.encode("utf-8")).decode("ascii")
+        token = secrets.token_hex(8)
+        manifest_path = f"/tmp/ha_m1s_sound_capacity_{token}.list"
+        encoded_path = f"{manifest_path}.b64"
+        quoted_manifest = shlex.quote(manifest_path)
+        quoted_encoded = shlex.quote(encoded_path)
+        cleanup = f"rm -f {quoted_manifest} {quoted_encoded}"
+
+        setup_output = self.run_command(
+            "capacity_stage_prefix='__M1S_SOUND_CAPACITY_STAGE_'; "
+            f"{cleanup}; : > {quoted_encoded} && "
+            "printf '%s\n' \"${capacity_stage_prefix}READY__\"",
+            timeout=UPLOAD_COMMAND_TIMEOUT,
+        )
+        if "__M1S_SOUND_CAPACITY_STAGE_READY__" not in setup_output:
+            raise SoundStorageError("Sound storage capacity staging failed")
+
+        output = ""
+        try:
+            for index in range(0, len(encoded), SOUND_STORAGE_MANIFEST_CHUNK_SIZE):
+                chunk = encoded[index:index + SOUND_STORAGE_MANIFEST_CHUNK_SIZE]
+                chunk_output = self.run_command(
+                    "capacity_chunk_prefix='__M1S_SOUND_CAPACITY_CHUNK_'; "
+                    f"printf '%s' '{chunk}' >> {quoted_encoded} && "
+                    "printf '%s\n' \"${capacity_chunk_prefix}OK__\"",
+                    timeout=UPLOAD_COMMAND_TIMEOUT,
+                )
+                if "__M1S_SOUND_CAPACITY_CHUNK_OK__" not in chunk_output:
+                    raise SoundStorageError(
+                        "Sound storage capacity manifest upload failed"
+                    )
+
+            command = (
+                "capacity_prefix='__M1S_SOUND_CAPACITY_'; "
+                f"LIST={quoted_manifest}; ENCODED={quoted_encoded}; "
+                "if ! base64 -d \"$ENCODED\" > \"$LIST\"; then "
+                "echo __M1S_SOUND_CAPACITY_MANIFEST_ERROR__; "
+                "elif [ ! -s \"$LIST\" ]; then "
+                "echo __M1S_SOUND_CAPACITY_MANIFEST_EMPTY__; "
+                "else rm -f \"$ENCODED\"; invalid=0; growth=0; "
+                "tab=$(printf '\\t'); "
+                "while IFS=\"$tab\" read -r size path; do "
+                "case \"$size\" in ''|*[!0-9]*) invalid=1; break ;; esac; "
+                "case \"$path\" in "
+                "/data/musics/music-ch/*.wav|/data/musics/music-ch/*.WAV) ;; "
+                "*) invalid=1; break ;; esac; "
+                "existing=0; if [ -f \"$path\" ]; then "
+                "existing=$(wc -c < \"$path\" 2>/dev/null); "
+                "case \"$existing\" in ''|*[!0-9]*) invalid=1; break ;; esac; fi; "
+                "growth=$((growth + size - existing)); "
+                "done < \"$LIST\"; "
+                "available_kb=$(df -k /data 2>/dev/null | tail -n 1 | awk '{print $4}'); "
+                "case \"$available_kb\" in ''|*[!0-9]*) invalid=1 ;; esac; "
+                "if [ \"$invalid\" != 0 ]; then "
+                "echo __M1S_SOUND_CAPACITY_VALIDATION_ERROR__; "
+                "else available=$((available_kb * 1024)); "
+                "projected=$((available - growth)); "
+                f"reserve={SOUND_STORAGE_MIN_FREE_BYTES}; "
+                "if [ \"$projected\" -lt \"$reserve\" ]; then "
+                "printf '%s|%s|%s|%s|%s\\n' \"${capacity_prefix}LOW__\" "
+                "\"$available\" \"$growth\" \"$projected\" \"$reserve\"; "
+                "else printf '%s|%s|%s|%s|%s\\n' \"${capacity_prefix}OK__\" "
+                "\"$available\" \"$growth\" \"$projected\" \"$reserve\"; fi; fi; fi; "
+                "rm -f \"$LIST\" \"$ENCODED\""
+            )
+            output = self.run_command(command, timeout=UPLOAD_COMMAND_TIMEOUT)
+        finally:
             try:
-                self._upload_sound_tcp_locked(destination, content)
-            except Exception:
-                # BusyBox base64 is slower but provides a proven fallback.
-                self._upload_sound_base64_locked(destination, content)
+                self.run_command(cleanup, timeout=UPLOAD_COMMAND_TIMEOUT)
+            except (OSError, ConnectionError, TimeoutError):
+                pass
+
+        for status in ("OK", "LOW"):
+            marker = f"__M1S_SOUND_CAPACITY_{status}__|"
+            for line in output.splitlines():
+                clean_line = line.strip()
+                if not clean_line.startswith(marker):
+                    continue
+                parts = clean_line.removeprefix(marker).split("|")
+                if len(parts) != 4:
+                    continue
+                try:
+                    available, growth, projected, reserve = map(int, parts)
+                except ValueError:
+                    continue
+                result = {
+                    "available_bytes": available,
+                    "growth_bytes": growth,
+                    "projected_bytes": projected,
+                    "reserve_bytes": reserve,
+                }
+                if status == "LOW":
+                    raise SoundStorageError(
+                        "Upload would leave less than 8 MiB free on /data",
+                        available_bytes=available,
+                        projected_bytes=projected,
+                        reserve_bytes=reserve,
+                    )
+                return result
+        raise SoundStorageError(f"Sound storage capacity check failed: {output}")
+
+    def validate_sound_upload_capacity(
+        self,
+        uploads: list[tuple[str, int]],
+    ) -> dict[str, int]:
+        """Public, serialized preflight for one complete WAV/ZIP batch."""
+        with self._lock:
+            return self._sound_upload_capacity_locked(uploads)
+
+    def upload_sounds(
+        self,
+        uploads: list[tuple[str, bytes]],
+        progress: Callable[[int, int], None] | None = None,
+    ) -> None:
+        """Preflight and upload a complete batch under one client lock."""
+        validated: list[tuple[str, bytes]] = []
+        seen: set[str] = set()
+        for destination, content in uploads:
+            safe_destination = self._safe_sound_path(destination)
+            if safe_destination in seen:
+                raise ValueError(f"Duplicate sound upload destination: {safe_destination}")
+            seen.add(safe_destination)
+            self._validate_sound_content(content)
+            validated.append((safe_destination, content))
+
+        total_size = sum(len(content) for _, content in validated)
+        uploaded_size = 0
+        with self._lock:
+            self._sound_upload_capacity_locked(
+                [(destination, len(content)) for destination, content in validated]
+            )
+            for destination, content in validated:
+                try:
+                    self._upload_sound_tcp_locked(destination, content)
+                except Exception:
+                    # BusyBox base64 is slower but provides a proven fallback.
+                    self._upload_sound_base64_locked(destination, content)
+                uploaded_size += len(content)
+                if progress is not None:
+                    progress(uploaded_size, total_size)
+
+    def upload_sound(self, destination: str, content: bytes) -> None:
+        self.upload_sounds([(destination, content)])
 
     def _upload_sound_tcp_locked(self, destination: str, content: bytes) -> None:
         """Upload a WAV through a one-shot BusyBox nc listener and verify it."""
@@ -1010,8 +1203,8 @@ class AqaraM1SClient:
         if "__M1S_UPLOAD_OK__" not in output:
             raise IOError(f"Base64 WAV upload verification failed: {output}")
 
-    def delete_sounds(self, paths: list[str]) -> str:
-        """Back up one confirmed selection, then delete it."""
+    def delete_sounds(self, paths: list[str]) -> int:
+        """Delete one confirmed non-system WAV selection without a backup."""
         safe_paths = list(
             dict.fromkeys(self._safe_deletable_sound_path(path) for path in paths)
         )
@@ -1057,28 +1250,27 @@ class AqaraM1SClient:
                 "elif [ ! -s \"$LIST\" ]; then "
                 "echo __M1S_SOUND_MANIFEST_EMPTY__; "
                 "else "
-                "rm -f \"$ENCODED\"; BACKUP_DIR=/data/m1s_sound_backups; "
-                "if ! mkdir -p \"$BACKUP_DIR\"; then "
-                "echo __M1S_SOUND_BACKUP_DIR_ERROR__; "
-                "else "
-                "BACKUP=\"$BACKUP_DIR/sounds_before_delete_$(date +%Y%m%d_%H%M%S)_$$.tgz\"; "
-                "if ! (cd / && tar -czf \"$BACKUP\" -T \"$LIST\"); then "
-                "rm -f \"$BACKUP\"; echo __M1S_SOUND_BACKUP_ERROR__; "
-                "else "
-                "delete_failed=0; "
+                "rm -f \"$ENCODED\"; validate_failed=0; "
                 "while IFS= read -r path; do "
-                "case \"$path\" in data/musics/*.wav|data/musics/*.WAV) ;; "
-                "*) delete_failed=1; break ;; esac; "
-                "if [ ! -f \"/$path\" ] || ! rm -f \"/$path\"; then "
-                "delete_failed=1; break; fi; "
+                "case \"$path\" in "
+                "data/musics/music-us/*) validate_failed=1; break ;; "
+                "data/musics/*.wav|data/musics/*.WAV) ;; "
+                "*) validate_failed=1; break ;; esac; "
+                "if [ ! -f \"/$path\" ]; then validate_failed=1; break; fi; "
+                "done < \"$LIST\"; sync; "
+                "if [ \"$validate_failed\" != 0 ]; then "
+                "echo __M1S_SOUND_DELETE_VALIDATION_ERROR__; "
+                "else delete_failed=0; deleted=0; "
+                "while IFS= read -r path; do "
+                "if rm -f \"/$path\"; then deleted=$((deleted + 1)); "
+                "else delete_failed=1; break; fi; "
                 "done < \"$LIST\"; sync; "
                 "if [ \"$delete_failed\" = 0 ]; then "
-                "printf '%s:%s\\n' \"${delete_prefix}OK__\" \"$BACKUP\"; "
-                "else echo __M1S_SOUND_DELETE_ERROR__:$BACKUP; fi; "
-                "fi; fi; fi; "
+                "printf '%s:%s\\n' \"${delete_prefix}OK__\" \"$deleted\"; "
+                "else echo __M1S_SOUND_DELETE_ERROR__:$deleted; fi; fi; fi; "
                 "rm -f \"$LIST\" \"$ENCODED\""
             )
-            output = self.run_command(command, timeout=UPLOAD_FINALIZE_TIMEOUT)
+            output = self.run_command(command, timeout=SOUND_DELETE_FINALIZE_TIMEOUT)
         finally:
             try:
                 self.run_command(cleanup, timeout=UPLOAD_COMMAND_TIMEOUT)
@@ -1089,15 +1281,12 @@ class AqaraM1SClient:
         for line in output.splitlines():
             clean_line = line.strip()
             if clean_line.startswith(marker):
-                backup = clean_line.removeprefix(marker).strip()
-                if (
-                    backup.startswith("/data/m1s_sound_backups/sounds_before_delete_")
-                    and backup.endswith(".tgz")
-                ):
-                    return backup
-        raise IOError(f"Sound backup or deletion failed: {output}")
+                deleted_text = clean_line.removeprefix(marker).strip()
+                if deleted_text.isdigit() and int(deleted_text) == len(safe_paths):
+                    return int(deleted_text)
+        raise IOError(f"Sound deletion failed: {output}")
 
-    def delete_sound(self, path: str) -> str:
+    def delete_sound(self, path: str) -> int:
         return self.delete_sounds([path])
 
     def ensure_fast_button_polling(self) -> bool:

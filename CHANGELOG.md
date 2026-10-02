@@ -1,3 +1,25 @@
+## 0.36.2 TEST - Protected system WAV catalog and direct deletion
+
+- Reserve `/data/musics/music-us` exclusively for factory-reset system sounds.
+- Hide every WAV in `music-us` and its subdirectories from Home Assistant sound
+  buttons and from the multi-delete selector; remove stale sound entities after
+  the next successful catalog refresh or integration reload.
+- Reject `music-us` paths in the upload-path and deletion validators, and repeat
+  the protection in the on-hub deletion command before touching any file.
+- Delete explicitly selected non-system WAV files directly, without creating or
+  retaining an archive under `/data/m1s_sound_backups`.
+- Keep the separate confirmation popup, clearly label deletion as permanent,
+  preflight the complete manifest and require the reported deleted count to
+  match the confirmed selection.
+- Preflight the complete WAV/ZIP upload batch before the first write, account
+  for replacement files, and reject the whole batch if it would leave less
+  than 8 MiB free on `/data`; apply the same reserve to `upload_sound`.
+- Keep the 500 ms stored-WAV end cushion and all MQTT, Zigbee, RGB, lux, media,
+  synchronization and firmware behavior unchanged from `0.36.1`.
+- Verify that the existing no-data guards remain present without editing audio:
+  individual playback stops its receiver before source rebuffering, while group
+  playback keeps zero PCM on the one shared timeline.
+
 ## 0.36.1 TEST - Reliable batch WAV deletion and fixed confirmation popup
 
 - Split WAV deletion into two Home Assistant steps: file selection first, then a

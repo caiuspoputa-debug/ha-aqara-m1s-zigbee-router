@@ -36,7 +36,7 @@ from .const import (
     DATA_CLIENTS,
     DOMAIN,
 )
-from .client import AqaraM1SClient, NetworkChangeError
+from .client import AqaraM1SClient, NetworkChangeError, SoundStorageError
 from .device import entry_title_with_host
 from .sound_upload import destination_for_filename, read_uploaded_sounds
 
@@ -218,7 +218,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         super().__init__(config_entry)
         self._upload_task: asyncio.Task[None] | None = None
-        self._upload_error = False
+        self._upload_error: str | None = None
         self._network_task: asyncio.Task | None = None
         self._network_error: str | None = None
         self._network_status_cache: dict[str, str] | None = None
@@ -543,20 +543,22 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         self,
         uploads: list[tuple[str, bytes]],
     ) -> None:
-        """Upload validated WAV files and report HA-side batch progress."""
-        total_size = sum(len(content) for _, content in uploads) or 1
-        uploaded_size = 0
+        """Preflight the whole batch, then report progress from one locked upload."""
         self.async_update_progress(0.0)
+        destinations = [
+            (destination_for_filename(filename), content)
+            for filename, content in uploads
+        ]
 
-        for filename, content in uploads:
-            destination = destination_for_filename(filename)
-            await self.hass.async_add_executor_job(
-                self._client.upload_sound,
-                destination,
-                content,
-            )
-            uploaded_size += len(content)
-            self.async_update_progress(min(uploaded_size / total_size, 1.0))
+        def report_progress(uploaded_size: int, total_size: int) -> None:
+            progress = min(uploaded_size / (total_size or 1), 1.0)
+            self.hass.loop.call_soon_threadsafe(self.async_update_progress, progress)
+
+        await self.hass.async_add_executor_job(
+            self._client.upload_sounds,
+            destinations,
+            report_progress,
+        )
 
     async def async_step_upload_sound(self, user_input=None):
         errors = {}
@@ -571,9 +573,13 @@ class AqaraM1SZigbeeRouterOptionsFlow(
 
             try:
                 await self._upload_task
+            except SoundStorageError as err:
+                _LOGGER.warning("WAV upload refused by storage reserve: %s", err)
+                self._upload_error = "sound_storage_full"
+                next_step_id = "upload_sound"
             except Exception as err:
                 _LOGGER.exception("WAV upload failed: %s", err)
-                self._upload_error = True
+                self._upload_error = "upload_failed"
                 next_step_id = "upload_sound"
             else:
                 next_step_id = "upload_finish"
@@ -583,8 +589,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             return self.async_show_progress_done(next_step_id=next_step_id)
 
         if self._upload_error:
-            errors["base"] = "upload_failed"
-            self._upload_error = False
+            errors["base"] = self._upload_error
+            self._upload_error = None
 
         if user_input is not None:
             try:
@@ -682,7 +688,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     )
                 except (OSError, ValueError, RuntimeError) as err:
                     _LOGGER.warning(
-                        "WAV backup or deletion failed for %s: %s",
+                        "WAV deletion failed for %s: %s",
                         self._client.host,
                         err,
                     )

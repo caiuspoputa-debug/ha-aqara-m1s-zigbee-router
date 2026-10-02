@@ -1,56 +1,62 @@
-Aqara M1S Zigbee Coordinator + Router v0.36.1 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.36.2 TEST validation
 
 Static validation performed for this package:
 - 14 role-aware MQTT IO, topic, telemetry, UART-isolation and Router rejoin
   tests pass.
 - 1 stored-WAV priority test confirms suspend, MQTT prepare, the 500 ms clean
   end cushion, MQTT stop and restoration of the remembered media state.
-- 7 WAV deletion/chunked-manifest/mandatory-backup tests pass.
+- 9 direct WAV deletion, chunked-manifest and protected-system-folder tests
+  pass.
+- 5 upload-capacity tests confirm whole-batch preflight, replacement-size
+  accounting, the 8 MiB reserve and zero writes after a failed preflight.
 - 7 shared-MQTT persistence and recovery tests pass.
-- All 29 tests pass; all Python files compile and manifest.json reports version
-  0.36.1.
-- All Router upgrade shell scripts pass `sh -n`.
-- The Router agent builds as a stripped, static MIPS32 little-endian executable
-  with `-Wall -Wextra -Werror`.
-- media_player.py, media_group.py and shared_mqtt.py are unchanged from v0.36.0.
-  The v0.36.1 changes are limited to robust WAV deletion, the separate
-  confirmation popup and the intentional 400 -> 500 ms clean end cushion.
+- All 36 tests pass; all Python files compile and manifest.json reports version
+  0.36.2.
+- JSON and YAML resources parse successfully.
 
-Live deletion validation on Coordinator 192.168.0.220:
-- Created 12 temporary WAV files in one unique test directory.
-- One mandatory backup contained all 12 selected files.
-- All 12 files were deleted only after the backup succeeded.
-- The temporary backup and directory were removed after validation.
-- The original WAV count remained exactly 64.
+WAV catalog and deletion guarantees:
+- /data/musics/music-us and every nested WAV are excluded from list_sounds().
+- Hidden music-us sounds therefore do not become Home Assistant sound buttons,
+  do not appear in the multi-delete selector and stale buttons are pruned after
+  a successful catalog refresh or integration reload.
+- Python path validation rejects deletion and managed upload paths below
+  /data/musics/music-us before any command is sent to the hub.
+- The on-hub deletion command independently rejects data/musics/music-us/*.
+- Other confirmed WAV selections are deleted directly. No tar command and no
+  /data/m1s_sound_backups archive is created.
+- The complete manifest is preflighted before deletion and the reported deleted
+  count must equal the confirmed selection.
 
-Hardware evidence retained for Coordinator 192.168.0.220:
-- MQTT command -> sideband -> JN5189 RGB ON/OFF was confirmed.
-- Lux and retained telemetry were confirmed.
-- Exactly one established Zigbee2MQTT connection remained on TCP port 1886.
-- No JN5189 firmware write or flash was performed.
+WAV upload storage guarantees:
+- Every WAV/ZIP batch is validated in full before its first file is written.
+- Existing destination sizes are subtracted when replacement growth is
+  calculated.
+- The projected result must retain at least 8 MiB free on /data; otherwise the
+  complete batch is rejected and no upload starts.
+- The direct upload_sound service uses the same preflight and reserve.
 
-Read-only Router reference evidence from 192.168.0.221:
-- The installed post_init.sh SHA-256 is
-  fa501b558644870ec27d7896e2d470df4f709edab128925bad77893078f0bda0,
-  exactly matching Router kit v0.10.0.
-- /dev/ttyS1 uses 115200 raw mode and existing RGB/lux uses A5/A6.
-- Existing MQTT publishes the physical button only; no permanent RGB/lux agent
-  was present during inspection.
-- No files, settings, firmware or runtime services were changed on .221.
+Audio regression boundary:
+- media_player.py SHA-256:
+  283A8F4F4943985487B9607AC0073D7C57301C0B99565AAEC9003E9D5533D579
+- media_group.py SHA-256:
+  33DA7A17F7B782E7ECA6BAAD5DC690C7E294D9DCA6C6EC140CACEC23726378A8
+- sound_player.py SHA-256:
+  41039C99567F074276391828E59FD4E9251F8D2B01BA7B6B6DC5B68B873682A7
+- These files are byte-identical to v0.36.1. Individual source starvation still
+  stops the remote receiver before rebuffering; group source starvation still
+  emits zero PCM on the same shared timeline. PLAY, synchronization, buffers,
+  FFmpeg/aplay, volume and recovery policy were not modified.
 
-Staged Router deployment rule:
-- Stage the upgrade with MQTT_IO_ENABLED=0.
-- Install v0.36.1 in Home Assistant and restart Home Assistant.
-- Only then run /data/m1s_router/mqtt_io_activate.sh.
-- Activation requires successful initial RGB state, validated A6 lux and
-  telemetry publication. Failure stops and disables the agent.
+Retained hardware evidence:
+- Coordinator 192.168.0.220 previously confirmed MQTT command -> sideband ->
+  JN5189 RGB ON/OFF, lux, retained telemetry and exactly one established
+  Zigbee2MQTT connection on TCP port 1886.
+- v0.36.2 itself performs no automatic hub write, sound deletion or firmware
+  operation during installation.
+- No JN5189 firmware write or flash was performed while building this package.
 
-Isolation guarantees:
-- Router MQTT owns /dev/ttyS1 only after explicit activation and disables the
-  old temporary TCP UART tunnel.
-- Router MQTT subscribes only to RGB set and lux refresh topics. It contains no
-  radio, WAV, play, pause, stop, volume or PCM transport command.
-- Router rejoin uses a temporary, 90-second self-recovering maintenance window.
-- Coordinator RGB/lux remains MQTT-only through its isolated sideband socket.
-- Hardware activation of the new Router agent is still pending; this package
-  therefore remains TEST.
+Operational note outside the integration package:
+- Router 192.168.0.221 temporarily mounted /data read-only after an UBI/UBIFS
+  ECC error -77 at PEB 348. A controlled reboot restored rw, then 10 verified
+  backup archives were removed: WAV count stayed 56 and free space increased
+  from 600 KiB to 27976 KiB. The hub should remain under observation.

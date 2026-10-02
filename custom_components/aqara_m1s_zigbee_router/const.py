@@ -35,6 +35,7 @@ SERVICE_UPDATE_MEDIA_METADATA = "update_media_metadata"
 SOUND_ROOT = "/data/musics"
 MANAGED_SOUND_DIRECTORY_PREFIX = "music-"
 UPLOAD_SOUND_ROOT = "/data/musics/music-ch"
+SYSTEM_SOUND_ROOT = "/data/musics/music-us"
 
 
 def sound_list_signal(entry_id: str) -> str:

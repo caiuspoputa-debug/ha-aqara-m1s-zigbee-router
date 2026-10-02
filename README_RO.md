@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.1 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.36.2 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.36.1 TEST` este construită peste baza `0.36.0 TEST`. Agentul MQTT persistent rămâne folosit pentru Ring Light, iluminanță și telemetria de diagnostic pe ambele roluri. Pe Router, agentul deține serializat UART-ul JN5189 și înlocuiește sesiunile Telnet A5/A6 numai după activarea explicită a upgrade-ului. Butonul fizic își păstrează topicul existent. Radioul, play/stop/pause, volumul, grupul media comun, sincronizarea și transportul audio TCP/FFmpeg/aplay sunt neschimbate. `0.36.1` face ștergerea multiplă WAV sigură pentru liste mari, mută confirmarea într-un popup separat și mărește rezerva de final WAV la 500 ms. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
+Versiunea `0.36.2 TEST` este construită peste baza `0.36.1 TEST`. Agentul MQTT persistent rămâne folosit pentru Ring Light, iluminanță și telemetria de diagnostic pe ambele roluri. Pe Router, agentul deține serializat UART-ul JN5189 și înlocuiește sesiunile Telnet A5/A6 numai după activarea explicită a upgrade-ului. Butonul fizic își păstrează topicul existent. Radioul, play/stop/pause, volumul, grupul media comun, sincronizarea și transportul audio TCP/FFmpeg/aplay sunt neschimbate. `0.36.2` rezervă `/data/musics/music-us` sunetelor de sistem pentru factory reset și schimbă ștergerea confirmată a celorlalte WAV-uri într-o operație directă, fără arhive backup. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
@@ -77,7 +77,7 @@ Canalul Zigbee, PAN-ul, cheia de rețea și baza de date cu dispozitive rămân 
 - **Media Player** pentru streamuri și redare locală.
 - **M1S Media Group** și **Include in M1S Media Group** pentru redare sincronizată pe huburile selectate.
 - **Sound Playback Volume**, **Fine Volume Trim** și selecția **Sound**.
-- Câte un buton pentru fiecare sunet WAV Aqara detectat.
+- Câte un buton pentru fiecare sunet WAV detectat care nu este sunet de sistem.
 - Evenimente **Physical Button**: click, de la dublu până la zece clickuri, început HOLD, repetare și eliberare.
 - **Hub Connectivity**, **Hub Temperature**, **WiFi IP**, starea proceselor HomeKit, MQTT și Telnet.
 - Diagnosticul **JN5189 Router** numai pentru huburile cu rol Router.
@@ -96,15 +96,19 @@ Starea `applied` înseamnă că configurația a fost scrisă cu succes pe hub; c
 ## Administrarea sunetelor și media
 
 - Uploadul WAV și ZIP este disponibil din **Configurează**, iar fișierele sunt salvate sub `/data/musics/music-ch`.
-- Ștergerea manuală listează toate fișierele `.wav` aflate sub `/data/musics`, inclusiv folderele originale Aqara.
+- Înainte de scrierea primului fișier, întregul lot WAV/ZIP este verificat în raport cu spațiul din `/data`. Fișierele destinație existente sunt calculate ca înlocuiri, iar lotul este refuzat integral dacă ar lăsa mai puțin de 8 MiB liberi. Aceeași rezervă se aplică serviciului direct `upload_sound`.
+- `/data/musics/music-us` este rezervat sunetelor de sistem pentru factory reset. WAV-urile sale și fișierele din subfoldere nu sunt expuse ca butoane în Home Assistant și nu apar niciodată în lista de ștergere.
+- Ștergerea manuală listează WAV-urile care nu sunt de sistem de sub `/data/musics`, inclusiv celelalte foldere originale Aqara.
 - Niciun fișier nu este selectat implicit.
 - După alegerea fișierelor și apăsarea butonului **Șterge**, apare un popup scurt separat, cu numărul fișierelor și controlul explicit de confirmare; acesta rămâne complet vizibil și nu se derulează împreună cu lista.
 - Selecția este transmisă hubului printr-un manifest temporar împărțit în bucăți mici, astfel încât listele mari să nu depășească limita unei comenzi Telnet.
-- Înainte de orice ștergere se creează obligatoriu o singură arhivă sub `/data/m1s_sound_backups`; dacă backupul sau verificarea lui eșuează, niciun fișier nu este șters.
+- Ștergerea confirmată este definitivă și nu creează arhivă backup. Întregul manifest este validat înainte, comanda de pe hub blochează independent `music-us`, iar succesul este acceptat numai când numărul șters corespunde selecției.
 - Instalarea, pornirea și migrarea nu șterg automat niciun sunet.
 - După un upload sau o ștergere reușită, integrarea se reîncarcă și reconstruiește entitățile sunetelor.
 
 Pentru un WAV local se păstrează exact prioritatea confirmată: redarea individuală sau de grup este suspendată, WAV-ul rulează prin traseul existent TCP/FFmpeg/aplay, apoi redarea memorată este reluată. Pe Coordinator, MQTT înlocuiește numai comanda care pregătește sau oprește traseul dedicat WAV. Pe Router, tot traseul WAV rămâne pe implementarea existentă. MQTT nu transportă audio radio/grup și nu modifică sincronizarea.
+
+Protecția existentă la lipsa datelor rămâne neschimbată. Dacă o sursă individuală nu mai livrează PCM, receiverul hubului este oprit înainte de rebuffer și este reconstruit numai după revenirea datelor PCM reale. La o întrerupere temporară a sursei de grup, PCM zero continuă pe aceeași secvență comună. Versiunea `0.36.2` nu modifică ordinea PLAY, sincronizarea grupului, bufferele, FFmpeg/aplay, volumul sau timpii de recovery.
 
 După ce FFmpeg termină normal un WAV, integrarea păstrează traseul încă 500 ms înainte de comanda de oprire și de reluarea redării anterioare. Această rezervă era 400 ms în `0.36.0`; nu se aplică la Stop manual, eroare FFmpeg, radio sau grupul media.
 
@@ -118,21 +122,22 @@ Fluxul de configurare acceptă DHCP, adresă IPv4 statică în subnetul curent �
 
 Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, `delete_sound`, `refresh_sounds`, `reset_media_group`, `resync_media_group` și `update_media_metadata`. Păstrează și serviciul avansat `run_command`; folosește-l numai pentru comenzi pe care le înțelegi, deoarece execută o comandă shell pe hubul selectat prin Telnet.
 
-`delete_sound` necesită `confirm: true` și verifică întotdeauna ordinea backup înainte de ștergere. Dacă sunt configurate mai multe huburi, indică parametrul `host` pentru serviciile de sunet adresate unui hub anume.
+`delete_sound` necesită `confirm: true`, refuză orice cale de sub `/data/musics/music-us` și șterge celelalte căi WAV valide fără să creeze backup. Dacă sunt configurate mai multe huburi, indică parametrul `host` pentru serviciile de sunet adresate unui hub anume.
 
 ## Validare și statut TEST
 
-Sursa `0.36.1` a trecut:
+Sursa `0.36.2` a trecut:
 
 - 14 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART și rejoin Router.
 - 1 test dedicat priorității, cu ordinea `suspendare -> WAV -> rezervă 500 ms -> oprire WAV -> reluare`.
-- 7 teste pentru ștergerea WAV, manifestul fragmentat și backupul obligatoriu.
+- 9 teste pentru ștergerea directă WAV, protecția folderului de sistem și manifestul fragmentat.
+- 5 teste pentru verificarea integrală a spațiului înainte de upload, calcularea înlocuirilor și protecția căilor de sistem.
 - 7 teste pentru persistența și revenirea configurării MQTT comune.
 - Compilarea Python și parsarea fișierelor JSON/YAML.
 - Verificarea de sintaxă a tuturor scripturilor Router și compilarea agentului static MIPS32 cu avertismente tratate ca erori.
-- `media_player.py`, `media_group.py` și `shared_mqtt.py` sunt neschimbate față de `0.36.0`; modificările `0.36.1` sunt limitate la ștergerea WAV, textele popupului și rezerva de final de 500 ms.
+- Toate cele 36 de teste izolate trec. `media_player.py`, `media_group.py`, `sound_player.py` și `shared_mqtt.py` sunt neschimbate față de `0.36.1`; `0.36.2` modifică vizibilitatea catalogului, siguranța ștergerii, protecția spațiului la upload, documentația și testele aferente.
 
-Ștergerea multiplă a fost verificată și pe Coordinatorul `192.168.0.220` cu 12 fișiere temporare: toate cele 12 au fost incluse într-un singur backup, apoi șterse, iar artefactele de test au fost eliminate. Cele 64 de WAV-uri existente au rămas intacte.
+Traseul de ștergere multiplă din `0.36.1` a fost verificat hardware pe Coordinatorul `192.168.0.220` cu 12 fișiere temporare. Ștergerea directă și protecția `music-us` din `0.36.2` sunt acoperite de teste izolate și instalarea nu modifică automat niciun hub.
 
 Agentul Coordinatorului a fost testat hardware pe `192.168.0.220`: RGB ON/OFF, lux, telemetrie retained și o singură conexiune Z2M stabilită pe portul `1886` au fost confirmate. Routerul `192.168.0.221` a fost inspectat read-only și corespunde exact bazei `0.10.0`; agentul Router nou nu a fost încă activat pe hardware. Nu s-a scris firmware și nu s-a modificat `.221`, de aceea versiunea rămâne `TEST`.
 
