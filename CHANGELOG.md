@@ -1,3 +1,16 @@
+## 0.36.6 TEST - Fast stored-WAV commands on upgraded Routers
+
+- Let Routers with MQTT IO agent `1.1.1` prepare and stop the existing stored-WAV
+  TCP receiver through persistent MQTT instead of opening a Telnet command for
+  every button press.
+- Require an explicit retained `sound_mqtt: true` capability from each Router;
+  Routers without it automatically keep the established Telnet WAV path.
+- Preserve the complete audio path after preparation: Home Assistant FFmpeg,
+  TCP ports `12347`/`12348`, hub `aplay`, the 500 ms end cushion, WAV priority
+  and restoration of the previous individual or group playback.
+- Leave radio, play/stop/pause, both volume systems, mute, PCM transport, media
+  group synchronization, Zigbee, RGB and illuminance behavior unchanged.
+
 ## 0.36.5 TEST - Single WAV upload with visible byte progress
 
 - Remove ZIP upload from the Configure flow and accept one WAV per operation,

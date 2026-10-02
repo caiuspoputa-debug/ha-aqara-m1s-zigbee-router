@@ -49,7 +49,7 @@
         "title": "Administrare Aqara M1S / Aqara M1S management",
         "description": "Configurează Wi-Fi, sunetele și reconectarea Zigbee. Uploadul și ștergerea reîncarcă integrarea automat după succes. / Configure Wi-Fi, sounds and Zigbee rejoin. Upload and delete reload the integration automatically after success.",
         "menu_options": {
-          "upload_sound": "Încarcă un WAV / Upload one WAV",
+          "upload_sound": "Încarcă un singur fișier WAV / Upload one WAV file",
           "delete_sound": "Șterge WAV-uri / Delete WAV files",
           "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
           "finish": "Finalizare și închidere / Finish and close",
@@ -59,10 +59,10 @@
         }
       },
       "upload_sound": {
-        "title": "Încărcare WAV / WAV upload",
-        "description": "Selectează un singur fișier WAV. După pornire, Home Assistant afișează permanent numele fișierului și procentul transferat. După verificarea dimensiunii și MD5, integrarea se reîncarcă automat. / Select one WAV file. Home Assistant continuously displays its name and transferred percentage, then verifies size and MD5 and reloads the integration automatically.",
+        "title": "Upload WAV - un singur fișier odată / WAV upload - one file at a time",
+        "description": "Uploadul se poate face pentru un singur fișier WAV odată. Home Assistant afișează numele fișierului și procentul transferat, verifică dimensiunea și MD5, apoi reîncarcă automat integrarea. / Upload supports one WAV file at a time. Home Assistant displays its name and transferred percentage, verifies size and MD5, then reloads the integration automatically.",
         "data": {
-          "source": "Fișier WAV / WAV file"
+          "source": "Fișier WAV (unul odată) / WAV file (one at a time)"
         }
       },
       "delete_sound": {

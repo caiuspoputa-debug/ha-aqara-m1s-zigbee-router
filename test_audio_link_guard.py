@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 from pathlib import Path
 import subprocess
 import unittest
@@ -15,7 +16,7 @@ SOURCE = (
     / "aqara_m1s_zigbee_router"
     / "media_player.py"
 )
-BASELINE_ROOT = ROOT.parent / "integration-v0362-system-wav-protection"
+MEDIA_GROUP_SHA256 = "33da7a17f7b782e7eca6baad5dc690c7e294d9dca6c6ec140cacec23726378a8"
 
 
 def evaluated_constants(source: Path = SOURCE) -> dict[str, object]:
@@ -95,13 +96,8 @@ class AudioCleanShutdownTests(unittest.TestCase):
 
     def test_group_transport_is_byte_identical_to_v0362(self):
         group_source = SOURCE.with_name("media_group.py")
-        baseline = (
-            BASELINE_ROOT
-            / "custom_components"
-            / "aqara_m1s_zigbee_router"
-            / "media_group.py"
-        )
-        self.assertEqual(group_source.read_bytes(), baseline.read_bytes())
+        actual = hashlib.sha256(group_source.read_bytes()).hexdigest()
+        self.assertEqual(actual, MEDIA_GROUP_SHA256)
 
 
 if __name__ == "__main__":

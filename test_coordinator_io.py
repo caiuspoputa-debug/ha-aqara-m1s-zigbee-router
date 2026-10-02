@@ -183,6 +183,7 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
             dict(raw=4096),
             dict(millivolts=-1),
             dict(lux="17"),
+            dict(sound_mqtt="yes"),
         ]
         for change in changes:
             with self.subTest(change=change), self.assertRaises(ValueError):
@@ -220,7 +221,7 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sleep.call_count, 2)
         connected.close.assert_called_once_with()
 
-    async def test_router_uses_current_ip_topics_without_sound_transport(self):
+    async def test_router_subscribes_sound_status_and_requires_capability(self):
         entry = types.SimpleNamespace(data={})
         client = types.SimpleNamespace(
             host="192.168.0.221",
@@ -230,7 +231,7 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         )
         coordinator = FakeCoordinator(entry)
         bridge = coordinator_mqtt.M1SHubMQTTIO(self.hass, client, coordinator)
-        unsubscribers = [Mock(), Mock(), Mock()]
+        unsubscribers = [Mock(), Mock(), Mock(), Mock()]
         mqtt.async_wait_for_mqtt_client = AsyncMock()
         mqtt.async_subscribe = AsyncMock(side_effect=unsubscribers)
         mqtt.async_publish = AsyncMock()
@@ -243,12 +244,13 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
                 "m1s/221/io/state",
                 "m1s/221/telemetry",
                 "m1s/221/io/availability",
+                "m1s/221/sound/status",
             ],
         )
-        self.assertFalse(any("/sound/" in topic for topic in topics))
-        with self.assertRaisesRegex(RuntimeError, "remains on Telnet"):
+        self.assertFalse(bridge.sound_supported)
+        with self.assertRaisesRegex(RuntimeError, "does not advertise"):
             await bridge.async_prepare_sound("/data/musics/test.wav")
-        with self.assertRaisesRegex(RuntimeError, "remains on Telnet"):
+        with self.assertRaisesRegex(RuntimeError, "does not advertise"):
             await bridge.async_stop_sound()
         await bridge.async_stop()
 
@@ -266,9 +268,15 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(bridge.available)
         self.assertFalse(client.mqtt_io_confirmed)
 
-        router_state = dict(GOOD, role="router", rgb_valid=False)
+        router_state = dict(
+            GOOD,
+            role="router",
+            rgb_valid=False,
+            sound_mqtt=True,
+        )
         bridge._state_message(types.SimpleNamespace(payload=json.dumps(router_state)))
         self.assertTrue(bridge.available)
+        self.assertTrue(bridge.sound_supported)
         self.assertTrue(client.mqtt_io_confirmed)
         self.assertEqual(client.coordinator_io_state, router_state)
 

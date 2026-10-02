@@ -5,7 +5,7 @@ import pathlib
 import sys
 import types
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 
 ROOT = pathlib.Path(__file__).parent / "custom_components/aqara_m1s_zigbee_router"
@@ -127,6 +127,135 @@ class SoundPriorityTests(unittest.IsolatedAsyncioTestCase):
         bridge.async_stop_sound.assert_awaited_once_with()
         self.assertEqual(sound_player.SOUND_END_CUSHION_SECONDS, 0.5)
         self.assertIn(0.5, sleep_delays)
+
+    async def test_router_with_advertised_support_uses_mqtt_for_wav(self):
+        events = []
+        bridge = types.SimpleNamespace(
+            available=True,
+            sound_supported=True,
+            async_prepare_sound=AsyncMock(
+                side_effect=lambda path: events.append("prepare")
+            ),
+            async_stop_sound=AsyncMock(side_effect=lambda: events.append("stop")),
+        )
+        executor = AsyncMock(
+            side_effect=AssertionError("Telnet fallback must not run")
+        )
+        hass = types.SimpleNamespace(
+            data={const.DOMAIN: {const.DATA_COORDINATOR_MQTT: {"entry": bridge}}},
+            loop=asyncio.get_running_loop(),
+            async_create_task=asyncio.create_task,
+            async_add_executor_job=executor,
+        )
+        client = types.SimpleNamespace(
+            host="192.168.0.222",
+            zigbee_role="router",
+        )
+        radio = types.SimpleNamespace(
+            async_suspend_for_priority_sound=AsyncMock(return_value=False),
+            async_resume_after_priority_sound=AsyncMock(),
+        )
+        group = types.SimpleNamespace(
+            async_claim_sound=AsyncMock(),
+            async_release_sound=AsyncMock(),
+        )
+        player = sound_player.AqaraM1SSoundPlayer(
+            hass, client, "entry", radio, group
+        )
+        process = FakeProcess()
+
+        real_sleep = asyncio.sleep
+
+        async def fast_sleep(delay):
+            await real_sleep(0)
+
+        with (
+            patch.object(sound_player.asyncio, "sleep", side_effect=fast_sleep),
+            patch.object(
+                sound_player.asyncio,
+                "create_subprocess_exec",
+                AsyncMock(return_value=process),
+            ),
+            patch.object(player, "_try_set_ffmpeg_priority", return_value=False),
+        ):
+            await player.async_play("/data/musics/music-ch/test.wav", 50)
+            watch = player._watch_task
+            self.assertIsNotNone(watch)
+            await watch
+
+        self.assertEqual(events, ["prepare", "stop"])
+        bridge.async_prepare_sound.assert_awaited_once()
+        bridge.async_stop_sound.assert_awaited_once()
+        executor.assert_not_awaited()
+
+    async def test_router_without_advertised_support_keeps_telnet_wav(self):
+        bridge = types.SimpleNamespace(
+            available=True,
+            sound_supported=False,
+            async_prepare_sound=AsyncMock(),
+            async_stop_sound=AsyncMock(),
+        )
+        run_command = Mock()
+        executor = AsyncMock()
+        hass = types.SimpleNamespace(
+            data={const.DOMAIN: {const.DATA_COORDINATOR_MQTT: {"entry": bridge}}},
+            loop=asyncio.get_running_loop(),
+            async_create_task=asyncio.create_task,
+            async_add_executor_job=executor,
+        )
+        client = types.SimpleNamespace(
+            host="192.168.0.221",
+            zigbee_role="router",
+            run_command=run_command,
+        )
+        radio = types.SimpleNamespace(
+            async_suspend_for_priority_sound=AsyncMock(return_value=False),
+            async_resume_after_priority_sound=AsyncMock(),
+        )
+        group = types.SimpleNamespace(
+            async_claim_sound=AsyncMock(),
+            async_release_sound=AsyncMock(),
+        )
+        player = sound_player.AqaraM1SSoundPlayer(
+            hass, client, "entry", radio, group
+        )
+        process = FakeProcess()
+
+        real_sleep = asyncio.sleep
+
+        async def fast_sleep(delay):
+            await real_sleep(0)
+
+        with (
+            patch.object(sound_player.asyncio, "sleep", side_effect=fast_sleep),
+            patch.object(
+                sound_player.asyncio,
+                "create_subprocess_exec",
+                AsyncMock(return_value=process),
+            ),
+            patch.object(player, "_try_set_ffmpeg_priority", return_value=False),
+        ):
+            await player.async_play("/data/musics/music-ch/test.wav", 50)
+            watch = player._watch_task
+            self.assertIsNotNone(watch)
+            await watch
+
+        bridge.async_prepare_sound.assert_not_awaited()
+        bridge.async_stop_sound.assert_not_awaited()
+        self.assertEqual(executor.await_count, 2)
+        self.assertEqual(
+            executor.await_args_list[0].args,
+            (
+                run_command,
+                sound_player.remote_start_command(
+                    "/data/musics/music-ch/test.wav"
+                ),
+            ),
+        )
+        self.assertEqual(
+            executor.await_args_list[1].args,
+            (run_command, sound_player.REMOTE_STOP_COMMAND),
+        )
 
 
 if __name__ == "__main__":

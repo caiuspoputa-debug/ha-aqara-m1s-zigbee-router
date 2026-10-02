@@ -1,50 +1,43 @@
-Aqara M1S Zigbee Coordinator + Router v0.36.5 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.36.6 TEST validation
 
-Validation performed for this package on 2026-10-02:
+Validation performed for this package on 2026-10-03:
 - All Python files compile.
-- manifest.json reports version 0.36.5.
-- manifest.json, strings.json and the Romanian and English translations parse.
-- All 43 isolated regression tests pass.
-- The suite includes 14 MQTT IO/coordinator tests, 7 shared-MQTT tests,
-  9 WAV deletion tests, 8 WAV upload/storage tests, 4 clean audio shutdown
-  tests and 1 WAV playback-priority test.
+- manifest.json reports version 0.36.6.
+- manifest.json, strings.json and both translations parse as JSON.
+- The upload labels state that one WAV file can be uploaded at a time and do
+  not advertise ZIP upload.
+- All 45 isolated regression tests pass: 14 MQTT IO/coordinator, 7 shared
+  MQTT, 9 WAV deletion, 8 WAV upload/storage, 4 clean audio shutdown and 3
+  WAV priority/transport tests.
 
-WAV upload guarantees:
-- Configure accepts exactly one WAV file per operation. ZIP archives are not
-  offered or accepted.
-- The file is validated as uncompressed PCM, mono, 32000 Hz, 32-bit
-  little-endian and is limited to 20 MiB.
-- A short single-file capacity command accounts for an existing destination
-  as a replacement and keeps at least 8 MiB free on /data.
-- The TCP path sends measured 64 KiB chunks. The Telnet/Base64 fallback also
-  reports bounded progress, and progress cannot move backwards if fallback is
-  entered after a partial TCP attempt.
-- The Home Assistant progress flow reserves 100% for a transfer that returned
-  after the existing remote size and MD5 verification.
-- The progress text includes the actual filename and "File 1 of 1".
+Router MQTT WAV behavior:
+- A Router must publish retained state with role=router and sound_mqtt=true
+  before Home Assistant uses the MQTT WAV command path.
+- Routers without that marker automatically keep the existing Telnet WAV path.
+- MQTT carries only prepare and stop commands plus their status. Audio remains
+  on the existing Home Assistant FFmpeg -> TCP 12347/12348 -> hub aplay path.
+- Radio, media play/pause/stop, WAV and media-player volume, mute, PCM data and
+  M1S Media Group synchronization are unchanged.
+- The 500 ms clean WAV end cushion and suspend/restore priority sequence remain.
 
-Live hub transfer evidence:
-- Target: Router 192.168.0.221.
-- A generated 128044-byte WAV was uploaded through the exact v0.36.5 client.
-- Elapsed time: 5.46 seconds.
-- Hub MD5: e72118a91b6dce6f52161b4bff9f2352, identical to the source.
-- Transfer callbacks reported 65536/128044, 128044/128044 and final success.
-- The temporary /data/musics/music-ch/__codex_upload_probe.wav was removed and
-  the hub explicitly returned PROBE_REMOVED.
+Live Router evidence:
+- Router agent 1.1.1 was installed and left running on 192.168.0.200-209 and
+  192.168.0.222-225.
+- Each of those 14 hubs advertised sound_mqtt=true through its own configured
+  MQTT broker and topic derived from its current IP.
+- Each passed prepare, both TCP listeners 12347/12348, stop and listener cleanup.
+- Router 192.168.0.221 remains part of the deployment scope but was unreachable,
+  so it was skipped without modification and must be updated when it returns.
+- Every changed hub received an on-hub backup before service replacement; no
+  rollback was needed.
 
-Root cause fixed:
-- The earlier upload stopped before data transfer in the multi-file capacity
-  manifest command and timed out after 30 seconds. That is why no progress was
-  visible and no WAV arrived.
-- v0.36.5 removes that obsolete batch manifest from upload and uses the tested
-  single-file capacity check. Multi-file deletion keeps its separate bounded
-  manifest and is unchanged.
-
-WAV catalog and deletion guarantees retained:
-- /data/musics/music-us and all nested WAV files stay hidden and protected.
-- Other confirmed WAV selections are deleted directly without backup archives.
-- The complete deletion manifest is validated and the reported deleted count
-  must equal the confirmed selection.
+WAV upload guarantees retained from 0.36.5:
+- Configure accepts exactly one WAV per operation; ZIP is not accepted.
+- WAV validation requires uncompressed PCM, mono, 32000 Hz, 32-bit little-endian
+  and limits a file to 20 MiB.
+- Capacity checks account for replacement and preserve at least 8 MiB on /data.
+- TCP and Telnet/Base64 transfer paths report monotonic measured progress and
+  success requires remote size and MD5 verification.
 
 Audio regression boundary:
 - media_player.py SHA-256:
@@ -52,8 +45,9 @@ Audio regression boundary:
 - media_group.py SHA-256:
   33DA7A17F7B782E7ECA6BAAD5DC690C7E294D9DCA6C6EC140CACEC23726378A8
 - sound_player.py SHA-256:
-  41039C99567F074276391828E59FD4E9251F8D2B01BA7B6B6DC5B68B873682A7
-- These files are unchanged from v0.36.3. PLAY, synchronization, buffers,
-  FFmpeg/aplay, volume, WAV priority, MQTT IO and Zigbee were not modified.
+  449211E7AA677A864DBEBCB5E7558A310D65C7758FC6A4C1BF2DF7D11F7035AA
+- media_player.py and media_group.py are byte-identical to v0.36.3.
+- sound_player.py changes only Router remote receiver prepare/stop selection and
+  retains the existing FFmpeg arguments, PCM format, timing, priority and restore.
 
 No JN5189 firmware write or flash is performed by this integration package.

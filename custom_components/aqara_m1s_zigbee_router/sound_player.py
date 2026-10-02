@@ -81,6 +81,7 @@ class AqaraM1SSoundPlayer:
         self._resume_radio = False
         self._active_timing_start: float | None = None
         self._active_timing: dict[str, int] | None = None
+        self._remote_sound_mqtt = False
 
     async def _begin_priority_locked(self) -> None:
         """Release group/individual ownership before starting the proven sound path."""
@@ -131,12 +132,33 @@ class AqaraM1SSoundPlayer:
             try:
                 # Keep this sequence identical to v0.6.0 after focus arbitration.
                 stage_started = time.perf_counter()
-                coordinator_mqtt = self._coordinator_mqtt()
+                hub_mqtt = self._hub_mqtt()
                 if self.client.zigbee_role == "coordinator":
-                    if coordinator_mqtt is None:
+                    if hub_mqtt is None:
                         raise RuntimeError("Coordinator MQTT IO is not configured")
-                    await coordinator_mqtt.async_prepare_sound(path)
+                    await hub_mqtt.async_prepare_sound(path)
+                    self._remote_sound_mqtt = True
+                elif (
+                    hub_mqtt is not None
+                    and hub_mqtt.available
+                    and hub_mqtt.sound_supported
+                ):
+                    try:
+                        await hub_mqtt.async_prepare_sound(path)
+                        self._remote_sound_mqtt = True
+                    except Exception as err:
+                        self._remote_sound_mqtt = False
+                        _LOGGER.warning(
+                            "Router MQTT WAV prepare failed on %s; using Telnet fallback: %s",
+                            self.client.host,
+                            err,
+                        )
+                        await self.hass.async_add_executor_job(
+                            self.client.run_command,
+                            remote_start_command(path),
+                        )
                 else:
+                    self._remote_sound_mqtt = False
                     await self.hass.async_add_executor_job(
                         self.client.run_command,
                         remote_start_command(path),
@@ -365,21 +387,33 @@ class AqaraM1SSoundPlayer:
             await self._finish_priority()
 
     async def _remote_stop(self) -> None:
+        hub_mqtt = self._hub_mqtt()
+        used_mqtt = self._remote_sound_mqtt
+        self._remote_sound_mqtt = False
         try:
-            coordinator_mqtt = self._coordinator_mqtt()
             if self.client.zigbee_role == "coordinator":
-                if coordinator_mqtt is None:
+                if hub_mqtt is None:
                     raise RuntimeError("Coordinator MQTT IO is not configured")
-                await coordinator_mqtt.async_stop_sound()
-            else:
-                await self.hass.async_add_executor_job(
-                    self.client.run_command,
-                    REMOTE_STOP_COMMAND,
-                )
+                await hub_mqtt.async_stop_sound()
+                return
+            if used_mqtt and hub_mqtt is not None:
+                try:
+                    await hub_mqtt.async_stop_sound()
+                    return
+                except Exception as err:
+                    _LOGGER.warning(
+                        "Router MQTT WAV stop failed on %s; using Telnet fallback: %s",
+                        self.client.host,
+                        err,
+                    )
+            await self.hass.async_add_executor_job(
+                self.client.run_command,
+                REMOTE_STOP_COMMAND,
+            )
         except Exception as err:
             _LOGGER.debug("Could not stop Aqara sound pipeline: %s", err)
 
-    def _coordinator_mqtt(self):
+    def _hub_mqtt(self):
         return self.hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR_MQTT, {}).get(
             self.entry_id
         )

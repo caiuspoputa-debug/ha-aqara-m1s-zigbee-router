@@ -1,15 +1,15 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.5 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.36.6 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.36.5 TEST` is built on the confirmed `0.36.3 TEST` base. The **Configure** upload flow deliberately accepts one WAV file, without ZIP support, and displays the filename plus determinate progress while data is transferred to the hub. The TCP path sends measured chunks and the Telnet/Base64 fallback reports the same progress; success is declared only after size and MD5 verification. Playback, radio/WAV priority, volume, the shared media group, synchronization, MQTT IO and Zigbee remain unchanged. `/data/musics/music-us` remains protected for factory-reset sounds. This is an integration package, not a firmware kit: it does not write or flash the JN5189.
+Version `0.36.6 TEST` adds persistent-MQTT preparation and stop commands only for stored WAV playback on Routers advertising the `sound_mqtt` capability. The audio path stays identical: Home Assistant FFmpeg, TCP ports `12347`/`12348`, hub `aplay`, WAV priority and restoration of previous playback. Routers without the new agent automatically retain the established Telnet WAV path. Single-WAV upload still reports measured progress, and `/data/musics/music-us` remains protected. This package does not write or flash the JN5189.
 
 ## Requirements
 
 - Home Assistant `2024.1.0` or newer.
 - Local network access from Home Assistant to the hub.
 - Telnet enabled on the hub; default connection is port `23`, user `admin`, blank password.
-- A compatible Router setup; the fast path requires Router MQTT IO upgrade `1.0.0`. Routers without it automatically retain the previous A5/A6 path.
+- A compatible Router setup; fast stored-WAV commands require Router MQTT IO `1.1.1`. Routers without that capability automatically retain the established Telnet WAV path.
 - Coordinator complete MQTT kit `1.2.3`, or a compatible runtime with `M1S_IO_V2` sideband support.
 - An MQTT broker reachable through its LAN address for physical-button events, shared MQTT configuration and IO for both roles.
 - Zigbee2MQTT with the `zoh` adapter when the hub is used as Coordinator.
@@ -31,6 +31,7 @@ The internal domain remains `aqara_m1s_zigbee_router`, so an existing installati
 | Zigbee transport | Existing JN5189 Router runtime | Zigbee-on-Host through `tcp://HUB_IP:1886` |
 | Ring Light | Persistent MQTT to A5; legacy fallback only before upgrade activation | MQTT command to persistent agent, then isolated `M1S_IO_V2` sideband |
 | Illuminance | Retained MQTT state; serialized A6 sample every 30 seconds | Retained MQTT state; on-hub sample every 60 seconds |
+| Stored WAV | MQTT prepare/stop with agent `1.1.1`; automatic Telnet fallback | MQTT prepare/stop |
 | Join another coordinator | Available with explicit confirmation | Hidden and blocked |
 | Coordinator ON/OFF | Not applicable | Deliberately absent |
 
@@ -39,13 +40,13 @@ The explicit Router rejoin action remains available. The integration pauses the 
 ## Router safety and MQTT path
 
 - Topics are built from the hub's current IP address: for example Router `192.168.0.221` uses `m1s/221/io/...`, regardless of historical entity names or IDs.
-- The Router agent subscribes only to `io/rgb/set` and `io/lux/refresh`; it publishes IO state, availability and telemetry.
+- Router agent `1.1.1` subscribes to `io/rgb/set`, `io/lux/refresh`, `sound/prepare` and `sound/stop`; it publishes IO state, availability, telemetry and WAV command status.
 - Lux is sampled every 30 seconds. An A6 response without a valid checksum never becomes a false `0 lx` value.
 - After activation, `/dev/ttyS1` has one owner. The former temporary TCP `1886` tunnel for A5/A6 is stopped and cannot start over the agent.
 - A retained message declaring role `coordinator` is ignored by a Router, and vice versa.
 - If the configured agent is unavailable, only Ring Light, illuminance and MQTT diagnostics become unavailable; the integration does not fall back to legacy UART over the agent.
 - Overall Router availability keeps the existing lightweight LAN probe. An MQTT broker problem therefore does not automatically remove a player from the media group or change audio synchronization.
-- Radio, WAV, play, stop, pause, volume and PCM commands do not exist in the Router agent.
+- The Router agent handles only local WAV receiver preparation and stop. Radio, media play/pause, volume, mute, FFmpeg, PCM transport and group synchronization are not moved into the agent.
 
 ## Coordinator safety and RGB/lux
 
@@ -127,10 +128,10 @@ The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_soun
 
 ## Validation and TEST status
 
-The `0.36.5` source passed:
+The `0.36.6` source passed:
 
 - 14 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation and Router-rejoin tests.
-- 1 dedicated priority test confirming `suspend -> WAV -> 500 ms cushion -> stop WAV -> resume`.
+- 3 WAV priority and transport tests covering Coordinator MQTT, Router MQTT and Telnet fallback for a Router without the new capability.
 - 9 direct WAV deletion, protected-system-folder and chunked-manifest tests.
 - 8 storage, real-socket TCP transfer, monotonic progress, fallback and protected-path tests.
 - 7 shared-MQTT persistence and recovery tests.
@@ -138,14 +139,13 @@ The `0.36.5` source passed:
   the absence of active hub polling and byte-identical group transport.
 - Python compilation plus JSON/YAML parsing.
 - Shell syntax validation for every Router script and a static MIPS32 agent build with warnings treated as errors.
-- All 43 isolated tests pass. Playback paths remain byte-identical to `0.36.3`;
-  changes are limited to WAV selection, preflight and upload transport.
+- All 45 isolated tests pass. `media_player.py` and `media_group.py` remain byte-identical to `0.36.3`; `sound_player.py` changes only how the stored-WAV receiver is prepared and stopped.
 
 Upload was also verified on Router `192.168.0.221`: 128044 bytes in 5.46 seconds, identical MD5, intermediate progress and confirmed removal of the temporary probe file.
 
 The earlier `0.36.1` multi-delete path was hardware-verified on Coordinator `192.168.0.220` with 12 temporary files. The new `0.36.2` direct-delete and `music-us` protections are covered by isolated tests and do not modify a hub during installation.
 
-The Coordinator agent was hardware-tested on `192.168.0.220`: RGB ON/OFF, lux, retained telemetry and one established Z2M connection on port `1886` were confirmed. A stale individual receiver was observed on Router `192.168.0.221` with TCP `FIN_WAIT2`, `nc` and `aplay` still active, matching the reported symptom. The final no-watchdog change is statically verified but still requires one intentional Home Assistant restart while an individual player is active; therefore this version remains `TEST`. No firmware is written by this package.
+Router agent `1.1.1` was installed on `.200-.209` and `.222-.225`. Retained capability and the complete MQTT `prepare -> ports 12347/12348 -> stop -> cleanup` cycle were confirmed on all 14 available hubs. `.221` remains in scope but is pending because it is unreachable. The Coordinator agent remains validated on `.220`. No firmware is written by this package.
 
 ## Rollback
 

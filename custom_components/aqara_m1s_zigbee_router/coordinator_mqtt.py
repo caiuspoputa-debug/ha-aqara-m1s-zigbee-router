@@ -53,6 +53,9 @@ def validate_state(payload: str) -> dict[str, Any]:
     role = state.get("role")
     if role is not None and role not in {"router", "coordinator"}:
         raise ValueError("M1S IO role is invalid")
+    sound_mqtt = state.get("sound_mqtt")
+    if sound_mqtt is not None and type(sound_mqtt) is not bool:
+        raise ValueError("M1S MQTT sound capability is invalid")
     return state
 
 
@@ -102,6 +105,7 @@ class M1SHubMQTTIO:
         self.base_topic = hub_io_base_topic(client.host)
         self.available = False
         self.seen = bool(client.mqtt_io_confirmed)
+        self.sound_supported = client.zigbee_role == "coordinator"
         self.telemetry: dict[str, Any] | None = None
         self._unsubscribers: list = []
         self._sound_lock = asyncio.Lock()
@@ -130,15 +134,14 @@ class M1SHubMQTTIO:
                 qos=0,
             ),
         ]
-        if self.client.zigbee_role == "coordinator":
-            subscriptions.append(
-                await mqtt.async_subscribe(
-                    self.hass,
-                    f"m1s/{self.client.host.rsplit('.', 1)[-1]}/sound/status",
-                    self._sound_status_message,
-                    qos=0,
-                )
+        subscriptions.append(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"m1s/{self.client.host.rsplit('.', 1)[-1]}/sound/status",
+                self._sound_status_message,
+                qos=0,
             )
+        )
         self._unsubscribers.extend(subscriptions)
 
     async def async_stop(self) -> None:
@@ -175,16 +178,16 @@ class M1SHubMQTTIO:
 
     async def async_prepare_sound(self, path: str) -> None:
         """Prepare the unchanged TCP/FFmpeg/aplay WAV pipeline through MQTT."""
-        if self.client.zigbee_role != "coordinator":
-            raise RuntimeError("Router sound transport remains on Telnet")
+        if not self.sound_supported:
+            raise RuntimeError("Hub does not advertise MQTT WAV support")
         if not self.client.is_deletable_sound_path(path):
             raise ValueError("Sound path must be a WAV below /data/musics")
         await self._async_sound_command("prepare", path, "ready")
 
     async def async_stop_sound(self) -> None:
         """Stop only the dedicated local-sound pipeline through MQTT."""
-        if self.client.zigbee_role != "coordinator":
-            raise RuntimeError("Router sound transport remains on Telnet")
+        if not self.sound_supported:
+            raise RuntimeError("Hub does not advertise MQTT WAV support")
         await self._async_sound_command("stop", "stop", "stopped")
 
     async def _async_sound_command(
@@ -204,7 +207,7 @@ class M1SHubMQTTIO:
                 )
                 status = await asyncio.wait_for(result, timeout=5.0)
                 if status != expected:
-                    raise RuntimeError(f"Coordinator sound command failed: {status}")
+                    raise RuntimeError(f"Hub sound command failed: {status}")
             finally:
                 if self._sound_result is result:
                     self._sound_result = None
@@ -224,6 +227,9 @@ class M1SHubMQTTIO:
                 self.client.zigbee_role,
             )
             return
+        self.sound_supported = (
+            published_role == "coordinator" or state.get("sound_mqtt") is True
+        )
         self._mark_seen()
         self.client.coordinator_io_state = state
         self.available = True
