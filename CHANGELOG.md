@@ -1,12 +1,15 @@
-## 0.36.4 TEST - Responsive WAV upload fallback
+## 0.36.5 TEST - Single WAV upload with visible byte progress
 
-- Keep the existing direct TCP upload and verified 1 KiB Telnet/Base64 fallback.
-- Remove the 350 ms quiet-period penalty from each fallback chunk by using a
-  short read interval only for those marker-delimited upload commands.
-- Report incremental progress during fallback instead of leaving a one-file
-  upload at zero until the complete file has finished.
-- Keep WAV validation, MD5 verification, storage reserve, coordinator/router
-  handling, playback, radio, synchronization, MQTT and Zigbee unchanged.
+- Remove ZIP upload from the Configure flow and accept one WAV per operation,
+  matching Home Assistant's native single-file selector.
+- Show the selected filename and determinate progress throughout the hub
+  transfer instead of leaving an apparently frozen dialog.
+- Send the TCP payload in measured 64 KiB chunks and report fallback
+  Telnet/Base64 progress in bounded intervals.
+- Keep 100% reserved for a transfer that passed the existing hub-side size and
+  MD5 checks.
+- Keep playback, WAV priority, radio, media-group synchronization, MQTT IO,
+  Zigbee and deletion behavior unchanged from `0.36.3`.
 
 ## 0.36.3 TEST - Clean individual-audio shutdown without a hub watchdog
 

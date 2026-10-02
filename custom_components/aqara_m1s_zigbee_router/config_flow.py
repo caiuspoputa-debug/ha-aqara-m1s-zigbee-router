@@ -219,6 +219,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         super().__init__(config_entry)
         self._upload_task: asyncio.Task[None] | None = None
         self._upload_error: str | None = None
+        self._upload_filename: str | None = None
         self._network_task: asyncio.Task | None = None
         self._network_error: str | None = None
         self._network_status_cache: dict[str, str] | None = None
@@ -543,15 +544,16 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         self,
         uploads: list[tuple[str, bytes]],
     ) -> None:
-        """Preflight the whole batch, then report progress from one locked upload."""
-        self.async_update_progress(0.0)
+        """Upload one WAV and expose determinate progress throughout the transfer."""
+        self.async_update_progress(0.01)
         destinations = [
             (destination_for_filename(filename), content)
             for filename, content in uploads
         ]
 
         def report_progress(uploaded_size: int, total_size: int) -> None:
-            progress = min(uploaded_size / (total_size or 1), 1.0)
+            ratio = min(uploaded_size / (total_size or 1), 1.0)
+            progress = min(0.98, 0.02 + ratio * 0.96)
             self.hass.loop.call_soon_threadsafe(self.async_update_progress, progress)
 
         await self.hass.async_add_executor_job(
@@ -559,6 +561,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             destinations,
             report_progress,
         )
+        self.async_update_progress(1.0)
 
     async def async_step_upload_sound(self, user_input=None):
         errors = {}
@@ -569,6 +572,9 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     step_id="upload_sound",
                     progress_action="uploading_sounds",
                     progress_task=self._upload_task,
+                    description_placeholders={
+                        "filename": self._upload_filename or "WAV",
+                    },
                 )
 
             try:
@@ -603,6 +609,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                 _LOGGER.exception("WAV upload failed: %s", err)
                 errors["base"] = "upload_failed"
             else:
+                self._upload_filename = uploads[0][0]
                 self._upload_task = self.hass.async_create_task(
                     self._async_upload_sounds(uploads),
                     f"{DOMAIN} WAV upload",
@@ -611,6 +618,9 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     step_id="upload_sound",
                     progress_action="uploading_sounds",
                     progress_task=self._upload_task,
+                    description_placeholders={
+                        "filename": self._upload_filename,
+                    },
                 )
 
         return self.async_show_form(
@@ -619,10 +629,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                 {
                     vol.Required("source"): FileSelector(
                         FileSelectorConfig(
-                            accept=(
-                                ".wav,.zip,audio/wav,audio/x-wav,"
-                                "application/zip,application/x-zip-compressed"
-                            )
+                            accept=".wav,audio/wav,audio/x-wav,audio/vnd.wave"
                         )
                     )
                 }

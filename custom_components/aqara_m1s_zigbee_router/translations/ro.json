@@ -49,7 +49,7 @@
         "title": "Administrare Aqara M1S / Aqara M1S management",
         "description": "Configurează Wi-Fi, sunetele și reconectarea Zigbee. Uploadul și ștergerea reîncarcă integrarea automat după succes. / Configure Wi-Fi, sounds and Zigbee rejoin. Upload and delete reload the integration automatically after success.",
         "menu_options": {
-          "upload_sound": "Încarcă WAV sau ZIP / Upload WAV or ZIP",
+          "upload_sound": "Încarcă un WAV / Upload one WAV",
           "delete_sound": "Șterge WAV-uri / Delete WAV files",
           "rejoin_zigbee": "Conectare la alt coordonator Zigbee / Join another Zigbee coordinator",
           "finish": "Finalizare și închidere / Finish and close",
@@ -59,10 +59,10 @@
         }
       },
       "upload_sound": {
-        "title": "Încărcare WAV / ZIP / Upload WAV / ZIP",
-        "description": "Selectează un WAV sau un ZIP cu până la 64 de fișiere WAV. Progresul apare în Home Assistant, iar după finalizare fereastra se închide și integrarea se reîncarcă automat. / Select one WAV or a ZIP containing up to 64 WAV files. Home Assistant shows progress, then closes the dialog and reloads the integration automatically.",
+        "title": "Încărcare WAV / WAV upload",
+        "description": "Selectează un singur fișier WAV. După pornire, Home Assistant afișează permanent numele fișierului și procentul transferat. După verificarea dimensiunii și MD5, integrarea se reîncarcă automat. / Select one WAV file. Home Assistant continuously displays its name and transferred percentage, then verifies size and MD5 and reloads the integration automatically.",
         "data": {
-          "source": "Fișier WAV sau ZIP / WAV or ZIP file"
+          "source": "Fișier WAV / WAV file"
         }
       },
       "delete_sound": {
@@ -129,12 +129,12 @@
       }
     },
     "progress": {
-      "uploading_sounds": "Se încarcă fișierele WAV pe hub. Bara avansează după fiecare fișier finalizat. Nu închide fereastra. / Uploading WAV files to the hub. The bar advances after each completed file. Do not close this dialog.",
+      "uploading_sounds": "Fișier 1 din 1: {filename}. Procentul avansează în timpul transferului; la final sunt verificate dimensiunea și MD5. Nu închide fereastra. / File 1 of 1: {filename}. The percentage advances during transfer; size and MD5 are verified at the end. Do not close this dialog.",
       "changing_network": "Hubul testează adresa, verifică identitatea MAC și salvează numai după confirmare. / The hub is testing the address, verifying its MAC identity and saving only after confirmation."
     },
     "error": {
       "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
-      "sound_storage_full": "Upload refuzat: lotul ar lăsa mai puțin de 8 MiB liberi pe /data. Șterge fișiere nefolosite înainte de o nouă încercare.",
+      "sound_storage_full": "Upload refuzat: fișierul ar lăsa mai puțin de 8 MiB liberi pe /data. Șterge fișiere nefolosite înainte de o nouă încercare.",
       "delete_failed": "Ștergerea WAV a eșuat. Verifică legătura cu hubul, spațiul liber și selecția.",
       "no_files_selected": "Selectează cel puțin un fișier pentru ștergere. / Select at least one file to delete.",
       "sound_delete_confirmation_required": "Confirmă explicit ștergerea definitivă a fișierelor selectate.",

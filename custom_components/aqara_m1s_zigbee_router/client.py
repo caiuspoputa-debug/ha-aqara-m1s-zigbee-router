@@ -31,13 +31,13 @@ UPLOAD_TEMP = "/tmp/ha_m1s_sound_upload.wav"
 UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
 UPLOAD_COMMAND_TIMEOUT = 30.0
 UPLOAD_FINALIZE_TIMEOUT = 45.0
+UPLOAD_SOCKET_CHUNK_SIZE = 64 * 1024
 UPLOAD_BASE64_CHUNK_SIZE = 1024
 UPLOAD_FAST_TELNET_READ_TIMEOUT = 0.02
 UPLOAD_PROGRESS_CHUNKS = 16
 SOUND_DELETE_BASE64_CHUNK_SIZE = 512
 SOUND_DELETE_FINALIZE_TIMEOUT = 120.0
 SOUND_STORAGE_MIN_FREE_BYTES = 8 * 1024 * 1024
-SOUND_STORAGE_MANIFEST_CHUNK_SIZE = 512
 ONLINE_CHECK_ATTEMPTS = 3
 ONLINE_CHECK_TIMEOUT_SECONDS = 2.0
 ONLINE_CHECK_RETRY_DELAY_SECONDS = 0.2
@@ -926,95 +926,38 @@ class AqaraM1SClient:
         self,
         uploads: list[tuple[str, int]],
     ) -> dict[str, int]:
-        """Reject a complete batch before writing if /data would become too full."""
+        """Reject one WAV before writing if /data would become too full."""
         if not uploads:
             raise ValueError("No sound files selected for upload")
+        if len(uploads) != 1:
+            raise ValueError("Upload accepts one WAV file at a time")
 
-        safe_uploads: list[tuple[str, int]] = []
-        seen: set[str] = set()
-        for destination, size in uploads:
-            safe_destination = self._safe_sound_path(destination)
-            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
-                raise ValueError("Invalid sound upload size")
-            if safe_destination in seen:
-                raise ValueError(f"Duplicate sound upload destination: {safe_destination}")
-            seen.add(safe_destination)
-            safe_uploads.append((safe_destination, size))
+        destination, size = uploads[0]
+        safe_destination = self._safe_sound_path(destination)
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise ValueError("Invalid sound upload size")
 
-        manifest = "".join(
-            f"{size}\t{destination}\n" for destination, size in safe_uploads
+        quoted_destination = shlex.quote(safe_destination)
+        command = (
+            "capacity_prefix='__M1S_SOUND_CAPACITY_'; invalid=0; "
+            f"path={quoted_destination}; requested={size}; existing=0; "
+            "if [ -f \"$path\" ]; then "
+            "existing=$(wc -c < \"$path\" 2>/dev/null); "
+            "case \"$existing\" in ''|*[!0-9]*) invalid=1 ;; esac; fi; "
+            "available_kb=$(df -k /data 2>/dev/null | awk 'END {print $4}'); "
+            "case \"$available_kb\" in ''|*[!0-9]*) invalid=1 ;; esac; "
+            "if [ \"$invalid\" != 0 ]; then "
+            "echo __M1S_SOUND_CAPACITY_VALIDATION_ERROR__; "
+            "else growth=$((requested - existing)); "
+            "available=$((available_kb * 1024)); projected=$((available - growth)); "
+            f"reserve={SOUND_STORAGE_MIN_FREE_BYTES}; "
+            "if [ \"$projected\" -lt \"$reserve\" ]; then "
+            "printf '%s|%s|%s|%s|%s\\n' \"${capacity_prefix}LOW__\" "
+            "\"$available\" \"$growth\" \"$projected\" \"$reserve\"; "
+            "else printf '%s|%s|%s|%s|%s\\n' \"${capacity_prefix}OK__\" "
+            "\"$available\" \"$growth\" \"$projected\" \"$reserve\"; fi; fi"
         )
-        encoded = base64.b64encode(manifest.encode("utf-8")).decode("ascii")
-        token = secrets.token_hex(8)
-        manifest_path = f"/tmp/ha_m1s_sound_capacity_{token}.list"
-        encoded_path = f"{manifest_path}.b64"
-        quoted_manifest = shlex.quote(manifest_path)
-        quoted_encoded = shlex.quote(encoded_path)
-        cleanup = f"rm -f {quoted_manifest} {quoted_encoded}"
-
-        setup_output = self.run_command(
-            "capacity_stage_prefix='__M1S_SOUND_CAPACITY_STAGE_'; "
-            f"{cleanup}; : > {quoted_encoded} && "
-            "printf '%s\n' \"${capacity_stage_prefix}READY__\"",
-            timeout=UPLOAD_COMMAND_TIMEOUT,
-        )
-        if "__M1S_SOUND_CAPACITY_STAGE_READY__" not in setup_output:
-            raise SoundStorageError("Sound storage capacity staging failed")
-
-        output = ""
-        try:
-            for index in range(0, len(encoded), SOUND_STORAGE_MANIFEST_CHUNK_SIZE):
-                chunk = encoded[index:index + SOUND_STORAGE_MANIFEST_CHUNK_SIZE]
-                chunk_output = self.run_command(
-                    "capacity_chunk_prefix='__M1S_SOUND_CAPACITY_CHUNK_'; "
-                    f"printf '%s' '{chunk}' >> {quoted_encoded} && "
-                    "printf '%s\n' \"${capacity_chunk_prefix}OK__\"",
-                    timeout=UPLOAD_COMMAND_TIMEOUT,
-                )
-                if "__M1S_SOUND_CAPACITY_CHUNK_OK__" not in chunk_output:
-                    raise SoundStorageError(
-                        "Sound storage capacity manifest upload failed"
-                    )
-
-            command = (
-                "capacity_prefix='__M1S_SOUND_CAPACITY_'; "
-                f"LIST={quoted_manifest}; ENCODED={quoted_encoded}; "
-                "if ! base64 -d \"$ENCODED\" > \"$LIST\"; then "
-                "echo __M1S_SOUND_CAPACITY_MANIFEST_ERROR__; "
-                "elif [ ! -s \"$LIST\" ]; then "
-                "echo __M1S_SOUND_CAPACITY_MANIFEST_EMPTY__; "
-                "else rm -f \"$ENCODED\"; invalid=0; growth=0; "
-                "tab=$(printf '\\t'); "
-                "while IFS=\"$tab\" read -r size path; do "
-                "case \"$size\" in ''|*[!0-9]*) invalid=1; break ;; esac; "
-                "case \"$path\" in "
-                "/data/musics/music-ch/*.wav|/data/musics/music-ch/*.WAV) ;; "
-                "*) invalid=1; break ;; esac; "
-                "existing=0; if [ -f \"$path\" ]; then "
-                "existing=$(wc -c < \"$path\" 2>/dev/null); "
-                "case \"$existing\" in ''|*[!0-9]*) invalid=1; break ;; esac; fi; "
-                "growth=$((growth + size - existing)); "
-                "done < \"$LIST\"; "
-                "available_kb=$(df -k /data 2>/dev/null | tail -n 1 | awk '{print $4}'); "
-                "case \"$available_kb\" in ''|*[!0-9]*) invalid=1 ;; esac; "
-                "if [ \"$invalid\" != 0 ]; then "
-                "echo __M1S_SOUND_CAPACITY_VALIDATION_ERROR__; "
-                "else available=$((available_kb * 1024)); "
-                "projected=$((available - growth)); "
-                f"reserve={SOUND_STORAGE_MIN_FREE_BYTES}; "
-                "if [ \"$projected\" -lt \"$reserve\" ]; then "
-                "printf '%s|%s|%s|%s|%s\\n' \"${capacity_prefix}LOW__\" "
-                "\"$available\" \"$growth\" \"$projected\" \"$reserve\"; "
-                "else printf '%s|%s|%s|%s|%s\\n' \"${capacity_prefix}OK__\" "
-                "\"$available\" \"$growth\" \"$projected\" \"$reserve\"; fi; fi; fi; "
-                "rm -f \"$LIST\" \"$ENCODED\""
-            )
-            output = self.run_command(command, timeout=UPLOAD_COMMAND_TIMEOUT)
-        finally:
-            try:
-                self.run_command(cleanup, timeout=UPLOAD_COMMAND_TIMEOUT)
-            except (OSError, ConnectionError, TimeoutError):
-                pass
+        output = self.run_command(command, timeout=UPLOAD_COMMAND_TIMEOUT)
 
         for status in ("OK", "LOW"):
             marker = f"__M1S_SOUND_CAPACITY_{status}__|"
@@ -1049,7 +992,7 @@ class AqaraM1SClient:
         self,
         uploads: list[tuple[str, int]],
     ) -> dict[str, int]:
-        """Public, serialized preflight for one complete WAV/ZIP batch."""
+        """Public, serialized preflight for the selected WAV upload."""
         with self._lock:
             return self._sound_upload_capacity_locked(uploads)
 
@@ -1076,20 +1019,29 @@ class AqaraM1SClient:
                 [(destination, len(content)) for destination, content in validated]
             )
             for destination, content in validated:
+                file_progress_high_water = 0
+
+                def report_file_progress(current: int) -> None:
+                    nonlocal file_progress_high_water
+                    current = min(max(int(current), 0), len(content))
+                    if current <= file_progress_high_water:
+                        return
+                    file_progress_high_water = current
+                    if progress is not None:
+                        progress(uploaded_size + current, total_size)
+
                 try:
-                    self._upload_sound_tcp_locked(destination, content)
+                    self._upload_sound_tcp_locked(
+                        destination,
+                        content,
+                        report_file_progress,
+                    )
                 except Exception:
                     # BusyBox base64 is slower but provides a proven fallback.
                     self._upload_sound_base64_locked(
                         destination,
                         content,
-                        (
-                            None
-                            if progress is None
-                            else lambda current, size=len(content), offset=uploaded_size: progress(
-                                offset + min(current, size), total_size
-                            )
-                        ),
+                        report_file_progress,
                     )
                 uploaded_size += len(content)
                 if progress is not None:
@@ -1098,7 +1050,12 @@ class AqaraM1SClient:
     def upload_sound(self, destination: str, content: bytes) -> None:
         self.upload_sounds([(destination, content)])
 
-    def _upload_sound_tcp_locked(self, destination: str, content: bytes) -> None:
+    def _upload_sound_tcp_locked(
+        self,
+        destination: str,
+        content: bytes,
+        progress: Callable[[int], None] | None = None,
+    ) -> None:
         """Upload a WAV through a one-shot BusyBox nc listener and verify it."""
         parent = str(PurePosixPath(destination).parent)
         expected_size = len(content)
@@ -1142,7 +1099,17 @@ class AqaraM1SClient:
             raise ConnectionError("Could not connect to WAV upload port") from last_error
 
         try:
-            upload_sock.sendall(content)
+            view = memoryview(content)
+            sent_total = 0
+            while sent_total < expected_size:
+                sent = upload_sock.send(
+                    view[sent_total : sent_total + UPLOAD_SOCKET_CHUNK_SIZE]
+                )
+                if sent <= 0:
+                    raise ConnectionError("WAV upload socket closed during transfer")
+                sent_total += sent
+                if progress is not None:
+                    progress(sent_total)
             upload_sock.shutdown(socket.SHUT_WR)
         finally:
             upload_sock.close()
@@ -1181,9 +1148,11 @@ class AqaraM1SClient:
                 timeout=UPLOAD_COMMAND_TIMEOUT,
             )
             raise IOError(f"WAV upload verification failed: {output}")
+        if progress is not None:
+            progress(expected_size)
 
     def _run_upload_chunk_locked(self, command: str) -> str:
-        """Run one fallback chunk without a 350 ms quiet-period penalty."""
+        """Run one fallback chunk without waiting for the normal quiet period."""
         last_error: Exception | None = None
         for attempt in range(2):
             try:

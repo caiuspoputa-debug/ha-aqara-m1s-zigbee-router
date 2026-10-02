@@ -1,41 +1,50 @@
-Aqara M1S Zigbee Coordinator + Router v0.36.3 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.36.5 TEST validation
 
-Static validation performed for this package:
-- 14 role-aware MQTT IO, topic, telemetry, UART-isolation and Router rejoin
-  tests pass.
-- 1 stored-WAV priority test confirms suspend, MQTT prepare, the 500 ms clean
-  end cushion, MQTT stop and restoration of the remembered media state.
-- 9 direct WAV deletion, chunked-manifest and protected-system-folder tests
-  pass.
-- 5 upload-capacity tests confirm whole-batch preflight, replacement-size
-  accounting, the 8 MiB reserve and zero writes after a failed preflight.
-- 7 shared-MQTT persistence and recovery tests pass.
-- 4 clean-shutdown tests confirm remote-before-local teardown, scoped Telnet
-  commands, no active hub polling and byte-identical group transport.
-- All 40 tests pass; all Python files compile and manifest.json reports version
-  0.36.3.
-- JSON and YAML resources parse successfully.
+Validation performed for this package on 2026-10-02:
+- All Python files compile.
+- manifest.json reports version 0.36.5.
+- manifest.json, strings.json and the Romanian and English translations parse.
+- All 43 isolated regression tests pass.
+- The suite includes 14 MQTT IO/coordinator tests, 7 shared-MQTT tests,
+  9 WAV deletion tests, 8 WAV upload/storage tests, 4 clean audio shutdown
+  tests and 1 WAV playback-priority test.
 
-WAV catalog and deletion guarantees:
-- /data/musics/music-us and every nested WAV are excluded from list_sounds().
-- Hidden music-us sounds therefore do not become Home Assistant sound buttons,
-  do not appear in the multi-delete selector and stale buttons are pruned after
-  a successful catalog refresh or integration reload.
-- Python path validation rejects deletion and managed upload paths below
-  /data/musics/music-us before any command is sent to the hub.
-- The on-hub deletion command independently rejects data/musics/music-us/*.
-- Other confirmed WAV selections are deleted directly. No tar command and no
-  /data/m1s_sound_backups archive is created.
-- The complete manifest is preflighted before deletion and the reported deleted
-  count must equal the confirmed selection.
+WAV upload guarantees:
+- Configure accepts exactly one WAV file per operation. ZIP archives are not
+  offered or accepted.
+- The file is validated as uncompressed PCM, mono, 32000 Hz, 32-bit
+  little-endian and is limited to 20 MiB.
+- A short single-file capacity command accounts for an existing destination
+  as a replacement and keeps at least 8 MiB free on /data.
+- The TCP path sends measured 64 KiB chunks. The Telnet/Base64 fallback also
+  reports bounded progress, and progress cannot move backwards if fallback is
+  entered after a partial TCP attempt.
+- The Home Assistant progress flow reserves 100% for a transfer that returned
+  after the existing remote size and MD5 verification.
+- The progress text includes the actual filename and "File 1 of 1".
 
-WAV upload storage guarantees:
-- Every WAV/ZIP batch is validated in full before its first file is written.
-- Existing destination sizes are subtracted when replacement growth is
-  calculated.
-- The projected result must retain at least 8 MiB free on /data; otherwise the
-  complete batch is rejected and no upload starts.
-- The direct upload_sound service uses the same preflight and reserve.
+Live hub transfer evidence:
+- Target: Router 192.168.0.221.
+- A generated 128044-byte WAV was uploaded through the exact v0.36.5 client.
+- Elapsed time: 5.46 seconds.
+- Hub MD5: e72118a91b6dce6f52161b4bff9f2352, identical to the source.
+- Transfer callbacks reported 65536/128044, 128044/128044 and final success.
+- The temporary /data/musics/music-ch/__codex_upload_probe.wav was removed and
+  the hub explicitly returned PROBE_REMOVED.
+
+Root cause fixed:
+- The earlier upload stopped before data transfer in the multi-file capacity
+  manifest command and timed out after 30 seconds. That is why no progress was
+  visible and no WAV arrived.
+- v0.36.5 removes that obsolete batch manifest from upload and uses the tested
+  single-file capacity check. Multi-file deletion keeps its separate bounded
+  manifest and is unchanged.
+
+WAV catalog and deletion guarantees retained:
+- /data/musics/music-us and all nested WAV files stay hidden and protected.
+- Other confirmed WAV selections are deleted directly without backup archives.
+- The complete deletion manifest is validated and the reported deleted count
+  must equal the confirmed selection.
 
 Audio regression boundary:
 - media_player.py SHA-256:
@@ -44,33 +53,7 @@ Audio regression boundary:
   33DA7A17F7B782E7ECA6BAAD5DC690C7E294D9DCA6C6EC140CACEC23726378A8
 - sound_player.py SHA-256:
   41039C99567F074276391828E59FD4E9251F8D2B01BA7B6B6DC5B68B873682A7
-- media_group.py and sound_player.py are byte-identical to v0.36.2. The only
-  media_player change pre-stops the remote individual receiver during orderly
-  Home Assistant unload, before its local writer is closed. No polling loop,
-  heartbeat or resident watchdog was added to the hub. PLAY, synchronization,
-  buffers, FFmpeg/aplay, volume and recovery policy were not modified.
+- These files are unchanged from v0.36.3. PLAY, synchronization, buffers,
+  FFmpeg/aplay, volume, WAV priority, MQTT IO and Zigbee were not modified.
 
-Retained hardware evidence:
-- Coordinator 192.168.0.220 previously confirmed MQTT command -> sideband ->
-  JN5189 RGB ON/OFF, lux, retained telemetry and exactly one established
-  Zigbee2MQTT connection on TCP port 1886.
-- Router 192.168.0.221 exposed the reported stale state: TCP FIN_WAIT2 with the
-  individual nc and aplay processes still active after Home Assistant stopped
-  sending data.
-- The final no-watchdog shutdown ordering is statically verified. Its one
-  remaining TEST step is an intentional Home Assistant restart while an
-  individual player is active after installing v0.36.3.
-- v0.36.3 itself performs no automatic hub write, sound deletion or firmware
-  operation during installation.
-- No JN5189 firmware write or flash was performed while building this package.
-
-Operational note outside the integration package:
-- Router 192.168.0.221 temporarily mounted /data read-only after an UBI/UBIFS
-  ECC error -77 at PEB 348. A controlled reboot restored rw, then 10 verified
-  backup archives were removed: WAV count stayed 56 and free space increased
-  from 600 KiB to 27976 KiB. The hub should remain under observation.
-0.36.4 TEST: WAV upload keeps direct TCP first and accelerates only the existing
-1 KiB Telnet/Base64 fallback by removing the fixed 350 ms quiet-period wait
-from each marker-delimited chunk command. Fallback progress is now published
-during a file. MD5 verification, storage reserve and all playback paths remain
-unchanged.
+No JN5189 firmware write or flash is performed by this integration package.

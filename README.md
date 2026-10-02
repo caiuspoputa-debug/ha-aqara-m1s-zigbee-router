@@ -1,10 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.4 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.36.5 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.36.4 TEST` keeps direct TCP as the primary upload path and the verified 1 KiB Base64/Telnet fallback. Fallback upload commands no longer pay the 350 ms Telnet quiet-period cost for every chunk, and Home Assistant reports progress while the file is transferred. WAV validation, MD5 verification, storage reserve, coordinator/router handling, playback, radio, synchronization, MQTT and Zigbee are unchanged.
-
-Version `0.36.3 TEST` is built on the `0.36.2 TEST` base. During an orderly Home Assistant integration unload or restart, it stops the exact individual `nc`/`aplay` receiver on the hub before closing the local TCP writer, preventing a stale ALSA fragment from repeating. It adds no polling loop, heartbeat or resident watchdog on the hub; a complete host or power loss that prevents orderly unload is deliberately left without active monitoring. The individual PCM format and buffering, radio/WAV priority, volume, the shared media group and synchronization remain unchanged. The persistent MQTT agent remains responsible for Ring Light, illuminance and diagnostics, while `/data/musics/music-us` remains protected for factory-reset sounds. This is an integration package, not a firmware kit: it does not write or flash the JN5189.
+Version `0.36.5 TEST` is built on the confirmed `0.36.3 TEST` base. The **Configure** upload flow deliberately accepts one WAV file, without ZIP support, and displays the filename plus determinate progress while data is transferred to the hub. The TCP path sends measured chunks and the Telnet/Base64 fallback reports the same progress; success is declared only after size and MD5 verification. Playback, radio/WAV priority, volume, the shared media group, synchronization, MQTT IO and Zigbee remain unchanged. `/data/musics/music-us` remains protected for factory-reset sounds. This is an integration package, not a firmware kit: it does not write or flash the JN5189.
 
 ## Requirements
 
@@ -97,8 +95,9 @@ The username and password must use printable ASCII and may contain at most 80 ch
 
 ## Sound and media management
 
-- WAV and ZIP uploads are available from **Configure** and are stored under `/data/musics/music-ch`.
-- Before the first file is written, the complete WAV/ZIP batch is preflighted against `/data`. Existing destination files are counted as replacements, and the batch is rejected as one unit if it would leave less than 8 MiB free. The same reserve applies to the direct `upload_sound` service.
+- One WAV at a time can be uploaded from **Configure** and is stored under `/data/musics/music-ch`. ZIP archives are no longer accepted.
+- Once transfer starts, the dialog displays `File 1 of 1`, the WAV filename and a percentage that advances as measured chunks are sent. It reaches 100% only after the hub-side size and MD5 checks succeed.
+- Before writing, the WAV is preflighted against `/data`. An existing destination is counted as a replacement, and the upload is rejected if it would leave less than 8 MiB free. The same reserve applies to the direct `upload_sound` service.
 - `/data/musics/music-us` is reserved for factory-reset system sounds. Its WAV files and any nested files are not exposed as Home Assistant sound buttons and never appear in the delete list.
 - Manual deletion lists non-system `.wav` files below `/data/musics`, including the remaining original Aqara folders.
 - Nothing is selected by default.
@@ -110,7 +109,7 @@ The username and password must use printable ASCII and may contain at most 80 ch
 
 For a stored WAV, the confirmed priority sequence is preserved exactly: current individual/group playback is suspended, the WAV runs through the existing TCP/FFmpeg/aplay path, and the remembered playback is restored after completion. On the Coordinator, MQTT replaces only the command that prepares or stops this dedicated WAV pipeline. On a Router, the complete WAV path remains on the existing implementation. MQTT does not transport radio/group audio and does not alter synchronization.
 
-The existing no-data protection is retained unchanged. If an individual source stops delivering PCM, its remote receiver is stopped before rebuffering and rebuilt only after real PCM returns. During a temporary group-source gap, zero PCM continues on the same shared sequence. Version `0.36.3` additionally pre-stops the individual hub receiver during an orderly Home Assistant unload, before the local writer is closed. It adds no active hub watchdog and does not change PLAY ordering, group synchronization, buffers, FFmpeg/aplay, volume or recovery timing.
+The existing no-data protection is retained unchanged. If an individual source stops delivering PCM, its remote receiver is stopped before rebuffering and rebuilt only after real PCM returns. During a temporary group-source gap, zero PCM continues on the same shared sequence. The protection introduced in `0.36.3` additionally pre-stops the individual hub receiver during an orderly Home Assistant unload, before the local writer is closed. It adds no active hub watchdog and does not change PLAY ordering, group synchronization, buffers, FFmpeg/aplay, volume or recovery timing.
 
 After FFmpeg completes a WAV normally, the integration keeps the path open for 500 ms before remote stop and playback restoration. This cushion was 400 ms in `0.36.0`; it does not apply to manual Stop, FFmpeg errors, radio or media-group playback.
 
@@ -128,19 +127,21 @@ The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_soun
 
 ## Validation and TEST status
 
-The `0.36.3` source passed:
+The `0.36.5` source passed:
 
 - 14 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation and Router-rejoin tests.
 - 1 dedicated priority test confirming `suspend -> WAV -> 500 ms cushion -> stop WAV -> resume`.
 - 9 direct WAV deletion, protected-system-folder and chunked-manifest tests.
-- 5 all-or-nothing upload-capacity, replacement-accounting and protected-path tests.
+- 8 storage, real-socket TCP transfer, monotonic progress, fallback and protected-path tests.
 - 7 shared-MQTT persistence and recovery tests.
 - 4 clean-shutdown tests covering remote-before-local ordering, scoped commands,
   the absence of active hub polling and byte-identical group transport.
 - Python compilation plus JSON/YAML parsing.
 - Shell syntax validation for every Router script and a static MIPS32 agent build with warnings treated as errors.
-- All 40 isolated tests pass. Only the individual-player orderly shutdown path
-  changed from `0.36.2`; `media_group.py` remains byte-identical.
+- All 43 isolated tests pass. Playback paths remain byte-identical to `0.36.3`;
+  changes are limited to WAV selection, preflight and upload transport.
+
+Upload was also verified on Router `192.168.0.221`: 128044 bytes in 5.46 seconds, identical MD5, intermediate progress and confirmed removal of the temporary probe file.
 
 The earlier `0.36.1` multi-delete path was hardware-verified on Coordinator `192.168.0.220` with 12 temporary files. The new `0.36.2` direct-delete and `music-us` protections are covered by isolated tests and do not modify a hub during installation.
 
