@@ -67,9 +67,15 @@
       },
       "delete_sound": {
         "title": "Ștergere multiplă WAV / Delete multiple WAV files",
-        "description": "Selectează unul sau mai multe fișiere WAV din /data/musics, inclusiv sunetele originale Aqara. Niciun fișier nu este bifat implicit. Înainte de ștergere se creează automat un backup pe hub.",
+        "description": "Selectează unul sau mai multe fișiere WAV din /data/musics, inclusiv sunetele originale Aqara. Niciun fișier nu este bifat implicit. Confirmarea apare separat după ce apeși Șterge.",
         "data": {
-          "path": "Fișiere audio / Sound files",
+          "path": "Fișiere audio / Sound files"
+        }
+      },
+      "confirm_delete_sound": {
+        "title": "Confirmare ștergere WAV",
+        "description": "Ai selectat {count} fișier(e). Înainte de orice ștergere se creează un singur backup pe hub.",
+        "data": {
           "confirm": "Confirm backupul și ștergerea fișierelor selectate"
         }
       },
@@ -128,7 +134,7 @@
     },
     "error": {
       "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
-      "delete_failed": "Delete failed. Verify the hub connection.",
+      "delete_failed": "Backupul sau ștergerea WAV a eșuat. Verifică legătura cu hubul și spațiul liber.",
       "no_files_selected": "Selectează cel puțin un fișier pentru ștergere. / Select at least one file to delete.",
       "sound_delete_confirmation_required": "Confirmă explicit backupul și ștergerea fișierelor selectate.",
       "rejoin_confirmation_required": "Confirmation is required before clearing the current Zigbee association.",

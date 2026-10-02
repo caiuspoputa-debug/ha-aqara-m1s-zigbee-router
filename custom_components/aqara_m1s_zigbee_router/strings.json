@@ -67,9 +67,15 @@
       },
       "delete_sound": {
         "title": "Ștergere multiplă WAV / Delete multiple WAV files",
-        "description": "Selectează unul sau mai multe fișiere WAV din /data/musics, inclusiv sunetele originale Aqara. Niciun fișier nu este bifat implicit. Înainte de ștergere se creează automat un backup pe hub. / Select one or more WAV files from /data/musics, including original Aqara sound folders. No file is selected by default. A hub backup is created before deletion.",
+        "description": "Selectează unul sau mai multe fișiere WAV din /data/musics, inclusiv sunetele originale Aqara. Niciun fișier nu este bifat implicit. Confirmarea apare separat după ce apeși Șterge. / Select one or more WAV files from /data/musics, including original Aqara sound folders. No file is selected by default. Confirmation appears separately after you press Delete.",
         "data": {
-          "path": "Fișiere audio / Sound files",
+          "path": "Fișiere audio / Sound files"
+        }
+      },
+      "confirm_delete_sound": {
+        "title": "Confirmare ștergere WAV / Confirm WAV deletion",
+        "description": "Ai selectat {count} fișier(e). Înainte de orice ștergere se creează un singur backup pe hub. / You selected {count} file(s). One hub backup is created before any deletion.",
+        "data": {
           "confirm": "Confirm backupul și ștergerea fișierelor selectate / Confirm backup and deletion of selected files"
         }
       },
@@ -128,7 +134,7 @@
     },
     "error": {
       "upload_failed": "Upload failed. Verify the WAV format and hub connection.",
-      "delete_failed": "Delete failed. Verify the hub connection.",
+      "delete_failed": "Backupul sau ștergerea WAV a eșuat. Verifică legătura cu hubul și spațiul liber. / WAV backup or deletion failed. Check the hub connection and free space.",
       "no_files_selected": "Selectează cel puțin un fișier pentru ștergere. / Select at least one file to delete.",
       "sound_delete_confirmation_required": "Confirmă explicit backupul și ștergerea fișierelor selectate. / Explicitly confirm backup and deletion of selected files.",
       "rejoin_confirmation_required": "Confirmation is required before clearing the current Zigbee association.",

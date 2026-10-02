@@ -222,6 +222,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         self._network_task: asyncio.Task | None = None
         self._network_error: str | None = None
         self._network_status_cache: dict[str, str] | None = None
+        self._pending_sound_delete_paths: list[str] = []
 
     @property
     def _client(self):
@@ -629,20 +630,11 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             selected_paths = user_input.get("path", [])
             if not selected_paths:
                 errors["base"] = "no_files_selected"
-            elif not user_input.get("confirm", False):
-                errors["base"] = "sound_delete_confirmation_required"
             else:
                 if isinstance(selected_paths, str):
                     selected_paths = [selected_paths]
-                try:
-                    await self.hass.async_add_executor_job(
-                        self._client.delete_sounds,
-                        selected_paths,
-                    )
-                except (OSError, ValueError, RuntimeError):
-                    errors["base"] = "delete_failed"
-                else:
-                    return await self.async_step_finish()
+                self._pending_sound_delete_paths = list(selected_paths)
+                return await self.async_step_confirm_delete_sound()
 
         try:
             sounds = await self.hass.async_add_executor_job(
@@ -662,7 +654,6 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             step_id="delete_sound",
             data_schema=vol.Schema(
                 {
-                    vol.Required("confirm", default=False): BooleanSelector(),
                     vol.Optional("path", default=[]): SelectSelector(
                         SelectSelectorConfig(
                             options=managed_sounds,
@@ -672,6 +663,44 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                     ),
                 }
             ),
+            errors=errors,
+        )
+
+    async def async_step_confirm_delete_sound(self, user_input=None):
+        if not self._pending_sound_delete_paths:
+            return await self.async_step_delete_sound()
+
+        errors = {}
+        if user_input is not None:
+            if not user_input.get("confirm", False):
+                errors["base"] = "sound_delete_confirmation_required"
+            else:
+                try:
+                    await self.hass.async_add_executor_job(
+                        self._client.delete_sounds,
+                        self._pending_sound_delete_paths,
+                    )
+                except (OSError, ValueError, RuntimeError) as err:
+                    _LOGGER.warning(
+                        "WAV backup or deletion failed for %s: %s",
+                        self._client.host,
+                        err,
+                    )
+                    errors["base"] = "delete_failed"
+                else:
+                    self._pending_sound_delete_paths = []
+                    return await self.async_step_finish()
+
+        return self.async_show_form(
+            step_id="confirm_delete_sound",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("confirm", default=False): BooleanSelector(),
+                }
+            ),
+            description_placeholders={
+                "count": str(len(self._pending_sound_delete_paths)),
+            },
             errors=errors,
         )
 

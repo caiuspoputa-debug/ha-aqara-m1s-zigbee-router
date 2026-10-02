@@ -31,6 +31,7 @@ UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
 UPLOAD_COMMAND_TIMEOUT = 30.0
 UPLOAD_FINALIZE_TIMEOUT = 45.0
 UPLOAD_BASE64_CHUNK_SIZE = 1024
+SOUND_DELETE_BASE64_CHUNK_SIZE = 512
 ONLINE_CHECK_ATTEMPTS = 3
 ONLINE_CHECK_TIMEOUT_SECONDS = 2.0
 ONLINE_CHECK_RETRY_DELAY_SECONDS = 0.2
@@ -648,6 +649,8 @@ class AqaraM1SClient:
     @staticmethod
     def _safe_deletable_sound_path(path: str) -> str:
         """Allow deletion of WAV files anywhere below /data/musics only."""
+        if not isinstance(path, str) or "\n" in path or "\r" in path:
+            raise ValueError("Invalid sound path")
         candidate = PurePosixPath(path)
         root = PurePosixPath(SOUND_ROOT)
         if candidate.suffix.lower() != ".wav":
@@ -1009,25 +1012,89 @@ class AqaraM1SClient:
 
     def delete_sounds(self, paths: list[str]) -> str:
         """Back up one confirmed selection, then delete it."""
-        safe_paths = [self._safe_deletable_sound_path(path) for path in paths]
+        safe_paths = list(
+            dict.fromkeys(self._safe_deletable_sound_path(path) for path in paths)
+        )
         if not safe_paths:
             raise ValueError("No sound files selected")
         relative_paths = [path.removeprefix("/") for path in safe_paths]
-        tar_args = " ".join(shlex.quote(path) for path in relative_paths)
-        rm_args = " ".join(shlex.quote(path) for path in safe_paths)
-        command = (
-            "BACKUP_DIR=/data/m1s_sound_backups; "
-            "mkdir -p \"$BACKUP_DIR\" && "
-            "BACKUP=\"$BACKUP_DIR/sounds_before_delete_$(date +%Y%m%d_%H%M%S)_$$.tgz\"; "
-            f"(cd / && tar -czf \"$BACKUP\" {tar_args}) && "
-            f"rm -f {rm_args} && sync && "
-            "echo __M1S_SOUND_DELETE_OK__:$BACKUP"
+        manifest = "".join(f"{path}\n" for path in relative_paths)
+        encoded = base64.b64encode(manifest.encode("utf-8")).decode("ascii")
+        token = secrets.token_hex(8)
+        manifest_path = f"/tmp/ha_m1s_sound_delete_{token}.list"
+        encoded_path = f"{manifest_path}.b64"
+        quoted_manifest = shlex.quote(manifest_path)
+        quoted_encoded = shlex.quote(encoded_path)
+        cleanup = f"rm -f {quoted_manifest} {quoted_encoded}"
+
+        setup_output = self.run_command(
+            "stage_prefix='__M1S_DELETE_STAGE_'; "
+            f"{cleanup}; : > {quoted_encoded} && "
+            "printf '%s\\n' \"${stage_prefix}READY__\"",
+            timeout=UPLOAD_COMMAND_TIMEOUT,
         )
-        output = self.run_command(command, timeout=UPLOAD_FINALIZE_TIMEOUT)
+        if "__M1S_DELETE_STAGE_READY__" not in setup_output:
+            raise IOError(f"Sound deletion staging failed: {setup_output}")
+
+        output = ""
+        try:
+            for index in range(0, len(encoded), SOUND_DELETE_BASE64_CHUNK_SIZE):
+                chunk = encoded[index:index + SOUND_DELETE_BASE64_CHUNK_SIZE]
+                chunk_output = self.run_command(
+                    "chunk_prefix='__M1S_DELETE_CHUNK_'; "
+                    f"printf '%s' '{chunk}' >> {quoted_encoded} && "
+                    "printf '%s\\n' \"${chunk_prefix}OK__\"",
+                    timeout=UPLOAD_COMMAND_TIMEOUT,
+                )
+                if "__M1S_DELETE_CHUNK_OK__" not in chunk_output:
+                    raise IOError(f"Sound deletion manifest upload failed: {chunk_output}")
+
+            command = (
+                "delete_prefix='__M1S_SOUND_DELETE_'; "
+                f"LIST={quoted_manifest}; ENCODED={quoted_encoded}; "
+                "if ! base64 -d \"$ENCODED\" > \"$LIST\"; then "
+                "echo __M1S_SOUND_MANIFEST_ERROR__; "
+                "elif [ ! -s \"$LIST\" ]; then "
+                "echo __M1S_SOUND_MANIFEST_EMPTY__; "
+                "else "
+                "rm -f \"$ENCODED\"; BACKUP_DIR=/data/m1s_sound_backups; "
+                "if ! mkdir -p \"$BACKUP_DIR\"; then "
+                "echo __M1S_SOUND_BACKUP_DIR_ERROR__; "
+                "else "
+                "BACKUP=\"$BACKUP_DIR/sounds_before_delete_$(date +%Y%m%d_%H%M%S)_$$.tgz\"; "
+                "if ! (cd / && tar -czf \"$BACKUP\" -T \"$LIST\"); then "
+                "rm -f \"$BACKUP\"; echo __M1S_SOUND_BACKUP_ERROR__; "
+                "else "
+                "delete_failed=0; "
+                "while IFS= read -r path; do "
+                "case \"$path\" in data/musics/*.wav|data/musics/*.WAV) ;; "
+                "*) delete_failed=1; break ;; esac; "
+                "if [ ! -f \"/$path\" ] || ! rm -f \"/$path\"; then "
+                "delete_failed=1; break; fi; "
+                "done < \"$LIST\"; sync; "
+                "if [ \"$delete_failed\" = 0 ]; then "
+                "printf '%s:%s\\n' \"${delete_prefix}OK__\" \"$BACKUP\"; "
+                "else echo __M1S_SOUND_DELETE_ERROR__:$BACKUP; fi; "
+                "fi; fi; fi; "
+                "rm -f \"$LIST\" \"$ENCODED\""
+            )
+            output = self.run_command(command, timeout=UPLOAD_FINALIZE_TIMEOUT)
+        finally:
+            try:
+                self.run_command(cleanup, timeout=UPLOAD_COMMAND_TIMEOUT)
+            except (OSError, ConnectionError, TimeoutError):
+                pass
+
         marker = "__M1S_SOUND_DELETE_OK__:"
         for line in output.splitlines():
-            if marker in line:
-                return line.split(marker, 1)[1].strip()
+            clean_line = line.strip()
+            if clean_line.startswith(marker):
+                backup = clean_line.removeprefix(marker).strip()
+                if (
+                    backup.startswith("/data/m1s_sound_backups/sounds_before_delete_")
+                    and backup.endswith(".tgz")
+                ):
+                    return backup
         raise IOError(f"Sound backup or deletion failed: {output}")
 
     def delete_sound(self, path: str) -> str:

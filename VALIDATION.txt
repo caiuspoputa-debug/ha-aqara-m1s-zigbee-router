@@ -1,19 +1,27 @@
-Aqara M1S Zigbee Coordinator + Router v0.36.0 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.36.1 TEST validation
 
 Static validation performed for this package:
 - 14 role-aware MQTT IO, topic, telemetry, UART-isolation and Router rejoin
   tests pass.
-- 1 stored-WAV priority test confirms suspend, MQTT prepare, the 400 ms clean
+- 1 stored-WAV priority test confirms suspend, MQTT prepare, the 500 ms clean
   end cushion, MQTT stop and restoration of the remembered media state.
-- 5 WAV deletion/mandatory-backup tests pass.
+- 7 WAV deletion/chunked-manifest/mandatory-backup tests pass.
 - 7 shared-MQTT persistence and recovery tests pass.
-- All Python files compile and manifest.json reports version 0.36.0.
+- All 29 tests pass; all Python files compile and manifest.json reports version
+  0.36.1.
 - All Router upgrade shell scripts pass `sh -n`.
 - The Router agent builds as a stripped, static MIPS32 little-endian executable
   with `-Wall -Wextra -Werror`.
-- media_player.py, media_group.py and shared_mqtt.py are byte-identical to
-  v0.35.0. sound_player.py differs only by the intentional 200 -> 400 ms clean
-  WAV end cushion and its named constant.
+- media_player.py, media_group.py and shared_mqtt.py are unchanged from v0.36.0.
+  The v0.36.1 changes are limited to robust WAV deletion, the separate
+  confirmation popup and the intentional 400 -> 500 ms clean end cushion.
+
+Live deletion validation on Coordinator 192.168.0.220:
+- Created 12 temporary WAV files in one unique test directory.
+- One mandatory backup contained all 12 selected files.
+- All 12 files were deleted only after the backup succeeded.
+- The temporary backup and directory were removed after validation.
+- The original WAV count remained exactly 64.
 
 Hardware evidence retained for Coordinator 192.168.0.220:
 - MQTT command -> sideband -> JN5189 RGB ON/OFF was confirmed.
@@ -32,7 +40,7 @@ Read-only Router reference evidence from 192.168.0.221:
 
 Staged Router deployment rule:
 - Stage the upgrade with MQTT_IO_ENABLED=0.
-- Install v0.36.0 in Home Assistant and restart Home Assistant.
+- Install v0.36.1 in Home Assistant and restart Home Assistant.
 - Only then run /data/m1s_router/mqtt_io_activate.sh.
 - Activation requires successful initial RGB state, validated A6 lux and
   telemetry publication. Failure stops and disables the agent.

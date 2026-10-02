@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.0 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.36.1 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.36.0 TEST` este construită peste baza confirmată `0.35.0 TEST`. Agentul MQTT persistent este folosit acum pentru Ring Light, iluminanță și telemetria de diagnostic pe ambele roluri. Pe Router, agentul deține serializat UART-ul JN5189 și înlocuiește sesiunile Telnet A5/A6 numai după activarea explicită a upgrade-ului. Butonul fizic își păstrează topicul existent. Radioul, play/stop/pause, volumul, grupul media comun, sincronizarea și transportul audio TCP/FFmpeg/aplay sunt neschimbate față de `0.35.0`. Singura ajustare WAV este o rezervă de 400 ms după terminarea normală a fișierului, înainte de oprirea traseului WAV și reluarea redării memorate. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
+Versiunea `0.36.1 TEST` este construită peste baza `0.36.0 TEST`. Agentul MQTT persistent rămâne folosit pentru Ring Light, iluminanță și telemetria de diagnostic pe ambele roluri. Pe Router, agentul deține serializat UART-ul JN5189 și înlocuiește sesiunile Telnet A5/A6 numai după activarea explicită a upgrade-ului. Butonul fizic își păstrează topicul existent. Radioul, play/stop/pause, volumul, grupul media comun, sincronizarea și transportul audio TCP/FFmpeg/aplay sunt neschimbate. `0.36.1` face ștergerea multiplă WAV sigură pentru liste mari, mută confirmarea într-un popup separat și mărește rezerva de final WAV la 500 ms. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
@@ -98,14 +98,15 @@ Starea `applied` înseamnă că configurația a fost scrisă cu succes pe hub; c
 - Uploadul WAV și ZIP este disponibil din **Configurează**, iar fișierele sunt salvate sub `/data/musics/music-ch`.
 - Ștergerea manuală listează toate fișierele `.wav` aflate sub `/data/musics`, inclusiv folderele originale Aqara.
 - Niciun fișier nu este selectat implicit.
-- Controlul de confirmare este afișat deasupra listei și trebuie activat explicit.
-- Înainte de ștergere se creează obligatoriu o arhivă sub `/data/m1s_sound_backups`; dacă backupul eșuează, ștergerea este anulată.
+- După alegerea fișierelor și apăsarea butonului **Șterge**, apare un popup scurt separat, cu numărul fișierelor și controlul explicit de confirmare; acesta rămâne complet vizibil și nu se derulează împreună cu lista.
+- Selecția este transmisă hubului printr-un manifest temporar împărțit în bucăți mici, astfel încât listele mari să nu depășească limita unei comenzi Telnet.
+- Înainte de orice ștergere se creează obligatoriu o singură arhivă sub `/data/m1s_sound_backups`; dacă backupul sau verificarea lui eșuează, niciun fișier nu este șters.
 - Instalarea, pornirea și migrarea nu șterg automat niciun sunet.
 - După un upload sau o ștergere reușită, integrarea se reîncarcă și reconstruiește entitățile sunetelor.
 
 Pentru un WAV local se păstrează exact prioritatea confirmată: redarea individuală sau de grup este suspendată, WAV-ul rulează prin traseul existent TCP/FFmpeg/aplay, apoi redarea memorată este reluată. Pe Coordinator, MQTT înlocuiește numai comanda care pregătește sau oprește traseul dedicat WAV. Pe Router, tot traseul WAV rămâne pe implementarea existentă. MQTT nu transportă audio radio/grup și nu modifică sincronizarea.
 
-După ce FFmpeg termină normal un WAV, integrarea păstrează traseul încă 400 ms înainte de comanda de oprire și de reluarea redării anterioare. Această rezervă era 200 ms în `0.35.0`; nu se aplică la Stop manual, eroare FFmpeg, radio sau grupul media.
+După ce FFmpeg termină normal un WAV, integrarea păstrează traseul încă 500 ms înainte de comanda de oprire și de reluarea redării anterioare. Această rezervă era 400 ms în `0.36.0`; nu se aplică la Stop manual, eroare FFmpeg, radio sau grupul media.
 
 Media Player individual și grupul comun M1S Media Group, controalele de volum, radioul, actualizarea metadatelor și butoanele existente pentru sunetele Aqara sunt păstrate din baza confirmată.
 
@@ -121,15 +122,17 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.36.0` a trecut:
+Sursa `0.36.1` a trecut:
 
 - 14 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART și rejoin Router.
-- 1 test dedicat priorității, cu ordinea `suspendare -> WAV -> rezervă 400 ms -> oprire WAV -> reluare`.
-- 5 teste pentru ștergerea WAV și backupul obligatoriu.
+- 1 test dedicat priorității, cu ordinea `suspendare -> WAV -> rezervă 500 ms -> oprire WAV -> reluare`.
+- 7 teste pentru ștergerea WAV, manifestul fragmentat și backupul obligatoriu.
 - 7 teste pentru persistența și revenirea configurării MQTT comune.
 - Compilarea Python și parsarea fișierelor JSON/YAML.
 - Verificarea de sintaxă a tuturor scripturilor Router și compilarea agentului static MIPS32 cu avertismente tratate ca erori.
-- Comparația byte-cu-byte confirmă că `media_player.py`, `media_group.py` și `shared_mqtt.py` sunt neschimbate față de `0.35.0`; `sound_player.py` diferă numai prin rezerva WAV intenționată de 400 ms.
+- `media_player.py`, `media_group.py` și `shared_mqtt.py` sunt neschimbate față de `0.36.0`; modificările `0.36.1` sunt limitate la ștergerea WAV, textele popupului și rezerva de final de 500 ms.
+
+Ștergerea multiplă a fost verificată și pe Coordinatorul `192.168.0.220` cu 12 fișiere temporare: toate cele 12 au fost incluse într-un singur backup, apoi șterse, iar artefactele de test au fost eliminate. Cele 64 de WAV-uri existente au rămas intacte.
 
 Agentul Coordinatorului a fost testat hardware pe `192.168.0.220`: RGB ON/OFF, lux, telemetrie retained și o singură conexiune Z2M stabilită pe portul `1886` au fost confirmate. Routerul `192.168.0.221` a fost inspectat read-only și corespunde exact bazei `0.10.0`; agentul Router nou nu a fost încă activat pe hardware. Nu s-a scris firmware și nu s-a modificat `.221`, de aceea versiunea rămâne `TEST`.
 

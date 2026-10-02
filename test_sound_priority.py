@@ -125,8 +125,8 @@ class SoundPriorityTests(unittest.IsolatedAsyncioTestCase):
             "/data/musics/music-ch/test.wav"
         )
         bridge.async_stop_sound.assert_awaited_once_with()
-        self.assertEqual(sound_player.SOUND_END_CUSHION_SECONDS, 0.4)
-        self.assertIn(0.4, sleep_delays)
+        self.assertEqual(sound_player.SOUND_END_CUSHION_SECONDS, 0.5)
+        self.assertIn(0.5, sleep_delays)
 
 
 if __name__ == "__main__":

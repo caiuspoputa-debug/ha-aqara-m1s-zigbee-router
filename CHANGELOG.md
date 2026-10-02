@@ -1,3 +1,20 @@
+## 0.36.1 TEST - Reliable batch WAV deletion and fixed confirmation popup
+
+- Split WAV deletion into two Home Assistant steps: file selection first, then a
+  short confirmation popup that stays fully visible regardless of list length.
+- Transfer the selected paths as a temporary Base64 manifest in bounded chunks,
+  create one mandatory archive with BusyBox `tar -T`, and delete only after the
+  archive succeeds.
+- Parse only a runtime-generated success marker, preventing Telnet command echo
+  from being accepted as a successful backup or deletion.
+- Reject unsafe paths and preserve the `/data/musics/*.wav` boundary for every
+  entry in the deletion manifest.
+- Increase the clean stored-WAV end cushion from 400 ms to 500 ms before remote
+  stop and restoration of remembered playback.
+- Verify the complete deletion path on Coordinator `192.168.0.220` with 12
+  temporary WAV files: one archive contained all 12, all 12 were deleted, test
+  artifacts were removed, and the 64 existing WAV files remained intact.
+
 ## 0.36.0 TEST - Persistent Router MQTT IO
 
 - Add one persistent on-hub MQTT agent for Router Ring Light, 30-second
