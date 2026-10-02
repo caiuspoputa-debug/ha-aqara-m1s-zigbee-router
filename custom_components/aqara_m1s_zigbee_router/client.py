@@ -32,6 +32,8 @@ UPLOAD_PID = "/tmp/ha_m1s_sound_upload_nc.pid"
 UPLOAD_COMMAND_TIMEOUT = 30.0
 UPLOAD_FINALIZE_TIMEOUT = 45.0
 UPLOAD_BASE64_CHUNK_SIZE = 1024
+UPLOAD_FAST_TELNET_READ_TIMEOUT = 0.02
+UPLOAD_PROGRESS_CHUNKS = 16
 SOUND_DELETE_BASE64_CHUNK_SIZE = 512
 SOUND_DELETE_FINALIZE_TIMEOUT = 120.0
 SOUND_STORAGE_MIN_FREE_BYTES = 8 * 1024 * 1024
@@ -1078,7 +1080,17 @@ class AqaraM1SClient:
                     self._upload_sound_tcp_locked(destination, content)
                 except Exception:
                     # BusyBox base64 is slower but provides a proven fallback.
-                    self._upload_sound_base64_locked(destination, content)
+                    self._upload_sound_base64_locked(
+                        destination,
+                        content,
+                        (
+                            None
+                            if progress is None
+                            else lambda current, size=len(content), offset=uploaded_size: progress(
+                                offset + min(current, size), total_size
+                            )
+                        ),
+                    )
                 uploaded_size += len(content)
                 if progress is not None:
                     progress(uploaded_size, total_size)
@@ -1170,7 +1182,36 @@ class AqaraM1SClient:
             )
             raise IOError(f"WAV upload verification failed: {output}")
 
-    def _upload_sound_base64_locked(self, destination: str, content: bytes) -> None:
+    def _run_upload_chunk_locked(self, command: str) -> str:
+        """Run one fallback chunk without a 350 ms quiet-period penalty."""
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                sock = self._connect_locked()
+                previous_timeout = sock.gettimeout()
+                sock.settimeout(UPLOAD_FAST_TELNET_READ_TIMEOUT)
+                try:
+                    return self._run_command_locked(
+                        command,
+                        timeout=UPLOAD_COMMAND_TIMEOUT,
+                    )
+                finally:
+                    if self._sock is sock:
+                        sock.settimeout(previous_timeout)
+            except (OSError, ConnectionError, TimeoutError) as err:
+                last_error = err
+                self._close_locked()
+                if attempt == 0:
+                    continue
+        assert last_error is not None
+        raise last_error
+
+    def _upload_sound_base64_locked(
+        self,
+        destination: str,
+        content: bytes,
+        progress: Callable[[int], None] | None = None,
+    ) -> None:
         """Fallback upload over Telnet using small base64 chunks, with MD5 check."""
         parent = str(PurePosixPath(destination).parent)
         encoded = base64.b64encode(content).decode("ascii")
@@ -1182,12 +1223,19 @@ class AqaraM1SClient:
             f"mkdir -p '{parent}'; rm -f {temp} {decoded}; : > {temp}",
             timeout=UPLOAD_COMMAND_TIMEOUT,
         )
-        for start in range(0, len(encoded), UPLOAD_BASE64_CHUNK_SIZE):
+        for chunk_index, start in enumerate(
+            range(0, len(encoded), UPLOAD_BASE64_CHUNK_SIZE),
+            start=1,
+        ):
             chunk = encoded[start : start + UPLOAD_BASE64_CHUNK_SIZE]
-            self.run_command(
+            self._run_upload_chunk_locked(
                 f"printf '%s' '{chunk}' >> {temp}",
-                timeout=UPLOAD_COMMAND_TIMEOUT,
             )
+            end = min(start + len(chunk), len(encoded))
+            if progress is not None and (
+                chunk_index % UPLOAD_PROGRESS_CHUNKS == 0 or end == len(encoded)
+            ):
+                progress(min(expected_size, (end * expected_size) // len(encoded)))
         output = self.run_command(
             f"base64 -d {temp} > {decoded} && "
             f"actual=$(wc -c < {decoded}); "
@@ -1202,6 +1250,8 @@ class AqaraM1SClient:
         )
         if "__M1S_UPLOAD_OK__" not in output:
             raise IOError(f"Base64 WAV upload verification failed: {output}")
+        if progress is not None:
+            progress(expected_size)
 
     def delete_sounds(self, paths: list[str]) -> int:
         """Delete one confirmed non-system WAV selection without a backup."""

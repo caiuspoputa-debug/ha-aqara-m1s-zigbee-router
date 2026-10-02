@@ -155,6 +155,29 @@ class SoundStorageTests(unittest.TestCase):
         self.client._upload_sound_tcp_locked.assert_not_called()
         self.client._upload_sound_base64_locked.assert_not_called()
 
+    def test_base64_fallback_uses_fast_chunks_and_reports_progress(self):
+        content = valid_wav(4096)
+        self.client.run_command = Mock(side_effect=["", "__M1S_UPLOAD_OK__"])
+        self.client._run_upload_chunk_locked = Mock(return_value="")
+        progress = Mock()
+
+        self.client._upload_sound_base64_locked(
+            "/data/musics/music-ch/fallback.wav",
+            content,
+            progress,
+        )
+
+        encoded_size = len(base64.b64encode(content))
+        expected_chunks = (
+            encoded_size + client_module.UPLOAD_BASE64_CHUNK_SIZE - 1
+        ) // client_module.UPLOAD_BASE64_CHUNK_SIZE
+        self.assertEqual(
+            self.client._run_upload_chunk_locked.call_count,
+            expected_chunks,
+        )
+        self.assertEqual(progress.call_args_list[-1].args, (len(content),))
+        self.assertGreater(progress.call_count, 1)
+
     def test_capacity_rejects_system_folder_and_empty_batch(self):
         with self.assertRaises(ValueError):
             self.client.validate_sound_upload_capacity([])

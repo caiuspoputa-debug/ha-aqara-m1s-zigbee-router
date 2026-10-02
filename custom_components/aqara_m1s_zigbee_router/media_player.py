@@ -51,7 +51,7 @@ REMOTE_FIFO = "/tmp/aqara_m1s_radio_fifo"
 REMOTE_NC_PID = "/tmp/aqara_m1s_radio_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_radio_aplay.pid"
 REMOTE_BUILD_MARKER = "/tmp/aqara_m1s_radio_build"
-SINGLE_BUILD_ID = "0.10.14-catchup4s-prefill1400"
+SINGLE_BUILD_ID = "0.10.15-clean-shutdown"
 
 WATCHDOG_RESTART_DELAY = 5.0
 WATCHDOG_FAST_RESTART_DELAY = 0.25
@@ -1114,8 +1114,26 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             await self._cancel_task(task)
 
         async with self._lock:
+            # During a normal HA restart, silence the remote ALSA receiver before
+            # closing the local TCP writer. This prevents a stale ALSA buffer
+            # from repeating its final fragment while the integration unloads.
+            try:
+                await self.hass.async_add_executor_job(
+                    self.client.run_command,
+                    REMOTE_STOP_COMMAND,
+                )
+            except Exception as err:
+                _LOGGER.debug(
+                    "Could not pre-stop Aqara receiver during HA shutdown "
+                    "entity=%s host=%s: %s",
+                    self.entity_id,
+                    self.client.host,
+                    err,
+                )
             await self._stop_locked(
-                update_state=False, reason="integration_shutdown"
+                update_state=False,
+                reason="integration_shutdown",
+                remote_cleanup=False,
             )
 
     async def async_browse_media(

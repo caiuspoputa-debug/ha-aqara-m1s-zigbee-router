@@ -1,8 +1,10 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.2 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.36.4 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.36.2 TEST` este construită peste baza `0.36.1 TEST`. Agentul MQTT persistent rămâne folosit pentru Ring Light, iluminanță și telemetria de diagnostic pe ambele roluri. Pe Router, agentul deține serializat UART-ul JN5189 și înlocuiește sesiunile Telnet A5/A6 numai după activarea explicită a upgrade-ului. Butonul fizic își păstrează topicul existent. Radioul, play/stop/pause, volumul, grupul media comun, sincronizarea și transportul audio TCP/FFmpeg/aplay sunt neschimbate. `0.36.2` rezervă `/data/musics/music-us` sunetelor de sistem pentru factory reset și schimbă ștergerea confirmată a celorlalte WAV-uri într-o operație directă, fără arhive backup. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
+Versiunea `0.36.4 TEST` păstrează transferul TCP direct drept traseu principal și fallback-ul verificat Base64/Telnet cu bucăți de 1 KiB. În fallback, comenzile de upload nu mai plătesc pauza Telnet de 350 ms pentru fiecare bucată, iar bara Home Assistant avansează în timpul fișierului. Validarea WAV, verificarea MD5, limita de spațiu, coordinatorul, routerele, redarea, radioul, sincronizarea, MQTT și Zigbee nu sunt modificate.
+
+Versiunea `0.36.3 TEST` este construită peste baza `0.36.2 TEST`. La oprirea ordonată a integrării sau la restartul Home Assistant, oprește receptorul individual `nc`/`aplay` de pe hub înainte să închidă conexiunea TCP locală, astfel încât ultimul fragment ALSA să nu se repete. Nu adaugă pe hub buclă de verificare, heartbeat sau watchdog rezident; o cădere completă a hostului ori a curentului, care nu permite oprirea ordonată, rămâne intenționat fără monitorizare activă. Formatul și buffer-ele PCM individuale, prioritatea radio/WAV, volumul, grupul media comun și sincronizarea rămân neschimbate. Agentul MQTT persistent continuă să deservească Ring Light, iluminanța și diagnosticele, iar `/data/musics/music-us` rămâne protejat pentru sunetele de factory reset. Acesta este un pachet de integrare, nu un kit firmware: nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
@@ -10,7 +12,7 @@ Versiunea `0.36.2 TEST` este construită peste baza `0.36.1 TEST`. Agentul MQTT 
 - Acces prin rețeaua locală de la Home Assistant la hub.
 - Telnet activ pe hub; conexiunea implicită folosește portul `23`, utilizatorul `admin` și parolă goală.
 - Un setup Router compatibil; pentru traseul rapid MQTT este necesar upgrade-ul Router MQTT IO `1.0.0`. Routerele fără upgrade păstrează automat A5/A6 prin traseul vechi.
-- Kitul Coordinator MQTT complet `1.2.0` sau un runtime compatibil cu sideband `M1S_IO_V2`.
+- Kitul Coordinator MQTT complet `1.2.3` sau un runtime compatibil cu sideband `M1S_IO_V2`.
 - Un broker MQTT accesibil prin adresa sa LAN pentru butonul fizic, configurarea MQTT comună și IO-ul ambelor roluri.
 - Zigbee2MQTT cu adaptorul `zoh` atunci când hubul este folosit drept Coordinator.
 
@@ -108,7 +110,7 @@ Starea `applied` înseamnă că configurația a fost scrisă cu succes pe hub; c
 
 Pentru un WAV local se păstrează exact prioritatea confirmată: redarea individuală sau de grup este suspendată, WAV-ul rulează prin traseul existent TCP/FFmpeg/aplay, apoi redarea memorată este reluată. Pe Coordinator, MQTT înlocuiește numai comanda care pregătește sau oprește traseul dedicat WAV. Pe Router, tot traseul WAV rămâne pe implementarea existentă. MQTT nu transportă audio radio/grup și nu modifică sincronizarea.
 
-Protecția existentă la lipsa datelor rămâne neschimbată. Dacă o sursă individuală nu mai livrează PCM, receiverul hubului este oprit înainte de rebuffer și este reconstruit numai după revenirea datelor PCM reale. La o întrerupere temporară a sursei de grup, PCM zero continuă pe aceeași secvență comună. Versiunea `0.36.2` nu modifică ordinea PLAY, sincronizarea grupului, bufferele, FFmpeg/aplay, volumul sau timpii de recovery.
+Protecția existentă la lipsa datelor rămâne neschimbată. Dacă o sursă individuală nu mai livrează PCM, receiverul hubului este oprit înainte de rebuffer și este reconstruit numai după revenirea datelor PCM reale. La o întrerupere temporară a sursei de grup, PCM zero continuă pe aceeași secvență comună. Versiunea `0.36.3` oprește suplimentar receiverul individual de pe hub la oprirea ordonată a integrării, înainte de închiderea writerului local. Nu adaugă watchdog activ pe hub și nu modifică ordinea PLAY, sincronizarea grupului, bufferele, FFmpeg/aplay, volumul sau timpii de recovery.
 
 După ce FFmpeg termină normal un WAV, integrarea păstrează traseul încă 500 ms înainte de comanda de oprire și de reluarea redării anterioare. Această rezervă era 400 ms în `0.36.0`; nu se aplică la Stop manual, eroare FFmpeg, radio sau grupul media.
 
@@ -126,20 +128,23 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.36.2` a trecut:
+Sursa `0.36.3` a trecut:
 
 - 14 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART și rejoin Router.
 - 1 test dedicat priorității, cu ordinea `suspendare -> WAV -> rezervă 500 ms -> oprire WAV -> reluare`.
 - 9 teste pentru ștergerea directă WAV, protecția folderului de sistem și manifestul fragmentat.
 - 5 teste pentru verificarea integrală a spațiului înainte de upload, calcularea înlocuirilor și protecția căilor de sistem.
 - 7 teste pentru persistența și revenirea configurării MQTT comune.
+- 4 teste pentru oprirea curată: ordinea remote înainte de local, comenzi limitate
+  la procesele proprii, absența pollingului activ și grupul media byte-identic.
 - Compilarea Python și parsarea fișierelor JSON/YAML.
 - Verificarea de sintaxă a tuturor scripturilor Router și compilarea agentului static MIPS32 cu avertismente tratate ca erori.
-- Toate cele 36 de teste izolate trec. `media_player.py`, `media_group.py`, `sound_player.py` și `shared_mqtt.py` sunt neschimbate față de `0.36.1`; `0.36.2` modifică vizibilitatea catalogului, siguranța ștergerii, protecția spațiului la upload, documentația și testele aferente.
+- Toate cele 40 de teste izolate trec. Față de `0.36.2` s-a schimbat numai
+  oprirea ordonată a playerului individual; `media_group.py` este byte-identic.
 
 Traseul de ștergere multiplă din `0.36.1` a fost verificat hardware pe Coordinatorul `192.168.0.220` cu 12 fișiere temporare. Ștergerea directă și protecția `music-us` din `0.36.2` sunt acoperite de teste izolate și instalarea nu modifică automat niciun hub.
 
-Agentul Coordinatorului a fost testat hardware pe `192.168.0.220`: RGB ON/OFF, lux, telemetrie retained și o singură conexiune Z2M stabilită pe portul `1886` au fost confirmate. Routerul `192.168.0.221` a fost inspectat read-only și corespunde exact bazei `0.10.0`; agentul Router nou nu a fost încă activat pe hardware. Nu s-a scris firmware și nu s-a modificat `.221`, de aceea versiunea rămâne `TEST`.
+Agentul Coordinatorului a fost testat hardware pe `192.168.0.220`: RGB ON/OFF, lux, telemetrie retained și o singură conexiune Z2M stabilită pe portul `1886` au fost confirmate. Pe Routerul `192.168.0.221` a fost observat un receiver individual rămas cu TCP `FIN_WAIT2`, iar `nc` și `aplay` erau încă active, exact starea compatibilă cu simptomul raportat. Modificarea finală fără watchdog este verificată static, dar mai necesită un restart intenționat Home Assistant în timp ce un player individual este activ; de aceea versiunea rămâne `TEST`. Pachetul nu scrie firmware.
 
 ## Revenire
 

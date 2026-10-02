@@ -1,4 +1,4 @@
-Aqara M1S Zigbee Coordinator + Router v0.36.2 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.36.3 TEST validation
 
 Static validation performed for this package:
 - 14 role-aware MQTT IO, topic, telemetry, UART-isolation and Router rejoin
@@ -10,8 +10,10 @@ Static validation performed for this package:
 - 5 upload-capacity tests confirm whole-batch preflight, replacement-size
   accounting, the 8 MiB reserve and zero writes after a failed preflight.
 - 7 shared-MQTT persistence and recovery tests pass.
-- All 36 tests pass; all Python files compile and manifest.json reports version
-  0.36.2.
+- 4 clean-shutdown tests confirm remote-before-local teardown, scoped Telnet
+  commands, no active hub polling and byte-identical group transport.
+- All 40 tests pass; all Python files compile and manifest.json reports version
+  0.36.3.
 - JSON and YAML resources parse successfully.
 
 WAV catalog and deletion guarantees:
@@ -37,21 +39,28 @@ WAV upload storage guarantees:
 
 Audio regression boundary:
 - media_player.py SHA-256:
-  283A8F4F4943985487B9607AC0073D7C57301C0B99565AAEC9003E9D5533D579
+  2D0A7A029801142BF48B32505258F572855730259F141B48E527C36DA8D2C352
 - media_group.py SHA-256:
   33DA7A17F7B782E7ECA6BAAD5DC690C7E294D9DCA6C6EC140CACEC23726378A8
 - sound_player.py SHA-256:
   41039C99567F074276391828E59FD4E9251F8D2B01BA7B6B6DC5B68B873682A7
-- These files are byte-identical to v0.36.1. Individual source starvation still
-  stops the remote receiver before rebuffering; group source starvation still
-  emits zero PCM on the same shared timeline. PLAY, synchronization, buffers,
-  FFmpeg/aplay, volume and recovery policy were not modified.
+- media_group.py and sound_player.py are byte-identical to v0.36.2. The only
+  media_player change pre-stops the remote individual receiver during orderly
+  Home Assistant unload, before its local writer is closed. No polling loop,
+  heartbeat or resident watchdog was added to the hub. PLAY, synchronization,
+  buffers, FFmpeg/aplay, volume and recovery policy were not modified.
 
 Retained hardware evidence:
 - Coordinator 192.168.0.220 previously confirmed MQTT command -> sideband ->
   JN5189 RGB ON/OFF, lux, retained telemetry and exactly one established
   Zigbee2MQTT connection on TCP port 1886.
-- v0.36.2 itself performs no automatic hub write, sound deletion or firmware
+- Router 192.168.0.221 exposed the reported stale state: TCP FIN_WAIT2 with the
+  individual nc and aplay processes still active after Home Assistant stopped
+  sending data.
+- The final no-watchdog shutdown ordering is statically verified. Its one
+  remaining TEST step is an intentional Home Assistant restart while an
+  individual player is active after installing v0.36.3.
+- v0.36.3 itself performs no automatic hub write, sound deletion or firmware
   operation during installation.
 - No JN5189 firmware write or flash was performed while building this package.
 
@@ -60,3 +69,8 @@ Operational note outside the integration package:
   ECC error -77 at PEB 348. A controlled reboot restored rw, then 10 verified
   backup archives were removed: WAV count stayed 56 and free space increased
   from 600 KiB to 27976 KiB. The hub should remain under observation.
+0.36.4 TEST: WAV upload keeps direct TCP first and accelerates only the existing
+1 KiB Telnet/Base64 fallback by removing the fixed 350 ms quiet-period wait
+from each marker-delimited chunk command. Fallback progress is now published
+during a file. MD5 verification, storage reserve and all playback paths remain
+unchanged.

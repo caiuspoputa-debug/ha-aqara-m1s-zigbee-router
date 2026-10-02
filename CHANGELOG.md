@@ -1,3 +1,29 @@
+## 0.36.4 TEST - Responsive WAV upload fallback
+
+- Keep the existing direct TCP upload and verified 1 KiB Telnet/Base64 fallback.
+- Remove the 350 ms quiet-period penalty from each fallback chunk by using a
+  short read interval only for those marker-delimited upload commands.
+- Report incremental progress during fallback instead of leaving a one-file
+  upload at zero until the complete file has finished.
+- Keep WAV validation, MD5 verification, storage reserve, coordinator/router
+  handling, playback, radio, synchronization, MQTT and Zigbee unchanged.
+
+## 0.36.3 TEST - Clean individual-audio shutdown without a hub watchdog
+
+- Stop the exact hub-side individual `nc`/`aplay` receiver before Home
+  Assistant closes its local TCP writer during an orderly integration unload or
+  restart. This prevents the final ALSA fragment from repeating while Home
+  Assistant restarts.
+- Add no polling loop, heartbeat, resident watchdog or other recurring work on
+  the hub. A complete host or power loss that prevents orderly unload is
+  deliberately not monitored, avoiding extra load on the M1S.
+- Keep the individual PCM format, buffering, FFmpeg pacing, radio/WAV priority,
+  volume behavior and recovery policy unchanged from `0.36.2`.
+- Keep `media_group.py` byte-identical to `0.36.2`; synchronized group playback
+  and its shared timeline are not modified.
+- Keep MQTT IO, Zigbee, Ring Light, illuminance, WAV catalog/deletion and
+  storage limits unchanged.
+
 ## 0.36.2 TEST - Protected system WAV catalog and direct deletion
 
 - Reserve `/data/musics/music-us` exclusively for factory-reset system sounds.
