@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.6 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.36.7 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.36.6 TEST` adaugă traseul rapid MQTT numai pentru pregătirea și oprirea WAV-urilor stocate pe Routerele care anunță capabilitatea `sound_mqtt`. Fluxul audio rămâne identic: FFmpeg în Home Assistant, porturile TCP `12347`/`12348`, `aplay` pe hub, prioritatea WAV și restaurarea redării anterioare. Routerele fără agentul nou păstrează automat traseul Telnet existent. Uploadul acceptă un singur WAV și afișează progresul real. `/data/musics/music-us` rămâne protejat pentru sunetele de factory reset. Pachetul nu scrie și nu face flash pe JN5189.
+Versiunea `0.36.7 TEST` verifică rezerva de 8 MiB înainte să deschidă progresul uploadului și execută preflightul și transferul printr-un client Telnet temporar, separat. Un hub fără spațiu răspunde acum imediat cu mesajul de ștergere a fișierelor, fără spinner blocat. Sunt păstrate comenzile WAV rapide MQTT din `0.36.6`, traseul audio și toate funcțiile Zigbee, radio și grup media. Pachetul nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
@@ -128,7 +128,7 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.36.6` a trecut:
+Sursa `0.36.7` a trecut:
 
 - 14 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART și rejoin Router.
 - 3 teste dedicate priorității și transportului WAV: Coordinator MQTT, Router MQTT și fallback Telnet pentru un Router fără capabilitatea nouă.

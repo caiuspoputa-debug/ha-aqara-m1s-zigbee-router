@@ -1,3 +1,16 @@
+## 0.36.7 TEST - Reliable single-WAV upload preflight
+
+- Check the 8 MiB `/data` reserve before opening the progress dialog, so a
+  full hub immediately asks the user to delete unused sounds instead of showing
+  an indefinite spinner.
+- Use a short-lived Telnet client for Configure-flow and service uploads,
+  preventing runtime polling or audio commands from holding the shared client
+  lock.
+- Pace 64 KiB TCP chunks for the slower BusyBox `nc` receiver while preserving
+  final size and MD5 verification.
+- Keep deletion, playback, MQTT, Zigbee, RGB, lux, radio and media-group
+  synchronization unchanged from `0.36.6`.
+
 ## 0.36.6 TEST - Fast stored-WAV commands on upgraded Routers
 
 - Let Routers with MQTT IO agent `1.1.1` prepare and stop the existing stored-WAV

@@ -1110,6 +1110,9 @@ class AqaraM1SClient:
                 sent_total += sent
                 if progress is not None:
                     progress(sent_total)
+                # BusyBox nc on the M1S can close early when large payloads are
+                # pushed at full host speed. A tiny pause keeps the receiver stable.
+                time.sleep(0.002)
             upload_sock.shutdown(socket.SHUT_WR)
         finally:
             upload_sock.close()

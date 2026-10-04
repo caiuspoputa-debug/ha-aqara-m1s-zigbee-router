@@ -451,8 +451,22 @@ async def async_setup_entry(
             read_uploaded_sound, hass, source
         )
         destination = destination_for_filename(filename)
+
+        def upload_with_isolated_client() -> None:
+            upload_client = AqaraM1SClient(
+                host=selected_client.host,
+                port=selected_client.port,
+                username=selected_client.username,
+                password=selected_client.password,
+                timeout=selected_client.timeout,
+            )
+            try:
+                upload_client.upload_sound(destination, content)
+            finally:
+                upload_client.disconnect()
+
         await hass.async_add_executor_job(
-            selected_client.upload_sound, destination, content
+            upload_with_isolated_client
         )
         async_dispatcher_send(hass, sound_list_signal(selected_entry_id))
 

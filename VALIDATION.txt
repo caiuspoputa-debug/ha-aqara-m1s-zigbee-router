@@ -1,8 +1,8 @@
-Aqara M1S Zigbee Coordinator + Router v0.36.6 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.36.7 TEST validation
 
-Validation performed for this package on 2026-10-03:
+Validation performed for this package on 2026-10-04:
 - All Python files compile.
-- manifest.json reports version 0.36.6.
+- manifest.json reports version 0.36.7.
 - manifest.json, strings.json and both translations parse as JSON.
 - The upload labels state that one WAV file can be uploaded at a time and do
   not advertise ZIP upload.
@@ -33,6 +33,10 @@ Live Router evidence:
 
 WAV upload guarantees retained from 0.36.5:
 - Configure accepts exactly one WAV per operation; ZIP is not accepted.
+- Capacity preflight runs before the progress dialog through a dedicated client;
+  insufficient space returns the 8 MiB reserve error immediately.
+- The transfer uses a separate short-lived client, so runtime polling cannot hold
+  the upload behind the shared client lock.
 - WAV validation requires uncompressed PCM, mono, 32000 Hz, 32-bit little-endian
   and limits a file to 20 MiB.
 - Capacity checks account for replacement and preserve at least 8 MiB on /data.

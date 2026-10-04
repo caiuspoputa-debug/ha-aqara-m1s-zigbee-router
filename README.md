@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.6 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.36.7 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.36.6 TEST` adds persistent-MQTT preparation and stop commands only for stored WAV playback on Routers advertising the `sound_mqtt` capability. The audio path stays identical: Home Assistant FFmpeg, TCP ports `12347`/`12348`, hub `aplay`, WAV priority and restoration of previous playback. Routers without the new agent automatically retain the established Telnet WAV path. Single-WAV upload still reports measured progress, and `/data/musics/music-us` remains protected. This package does not write or flash the JN5189.
+Version `0.36.7 TEST` checks the 8 MiB sound-storage reserve before opening the upload progress dialog and runs preflight and transfer through a dedicated short-lived Telnet client. A full hub now returns a clear delete-files message immediately instead of an indefinite spinner. It retains the `0.36.6` persistent-MQTT stored-WAV commands, audio path and all Zigbee, radio and media-group behavior. This package does not write or flash the JN5189.
 
 ## Requirements
 
@@ -128,7 +128,7 @@ The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_soun
 
 ## Validation and TEST status
 
-The `0.36.6` source passed:
+The `0.36.7` source passed:
 
 - 14 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation and Router-rejoin tests.
 - 3 WAV priority and transport tests covering Coordinator MQTT, Router MQTT and Telnet fallback for a Router without the new capability.

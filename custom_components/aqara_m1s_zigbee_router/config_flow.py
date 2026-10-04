@@ -229,6 +229,39 @@ class AqaraM1SZigbeeRouterOptionsFlow(
     def _client(self):
         return self.hass.data[DOMAIN][DATA_CLIENTS][self.config_entry.entry_id]
 
+    def _new_operation_client(self) -> AqaraM1SClient:
+        """Return a short-lived client for long Configure-flow operations."""
+        data = self.config_entry.data
+        return AqaraM1SClient(
+            host=data[CONF_HOST],
+            port=data.get(CONF_PORT, DEFAULT_PORT),
+            username=data.get(CONF_USERNAME, DEFAULT_USERNAME),
+            password=data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+        )
+
+    def _validate_upload_capacity_isolated(
+        self,
+        uploads: list[tuple[str, int]],
+    ) -> dict[str, int]:
+        """Preflight an upload without waiting for the runtime client's lock."""
+        client = self._new_operation_client()
+        try:
+            return client.validate_sound_upload_capacity(uploads)
+        finally:
+            client.disconnect()
+
+    def _upload_sounds_isolated(
+        self,
+        uploads: list[tuple[str, bytes]],
+        progress,
+    ) -> None:
+        """Upload through a dedicated client and always close its Telnet socket."""
+        client = self._new_operation_client()
+        try:
+            client.upload_sounds(uploads, progress)
+        finally:
+            client.disconnect()
+
     async def async_step_init(self, user_input=None):
         menu_options = ["shared_mqtt", "network_address", "change_wifi", "upload_sound"]
         try:
@@ -557,7 +590,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             self.hass.loop.call_soon_threadsafe(self.async_update_progress, progress)
 
         await self.hass.async_add_executor_job(
-            self._client.upload_sounds,
+            self._upload_sounds_isolated,
             destinations,
             report_progress,
         )
@@ -609,19 +642,38 @@ class AqaraM1SZigbeeRouterOptionsFlow(
                 _LOGGER.exception("WAV upload failed: %s", err)
                 errors["base"] = "upload_failed"
             else:
-                self._upload_filename = uploads[0][0]
-                self._upload_task = self.hass.async_create_task(
-                    self._async_upload_sounds(uploads),
-                    f"{DOMAIN} WAV upload",
-                )
-                return self.async_show_progress(
-                    step_id="upload_sound",
-                    progress_action="uploading_sounds",
-                    progress_task=self._upload_task,
-                    description_placeholders={
-                        "filename": self._upload_filename,
-                    },
-                )
+                destinations = [
+                    (destination_for_filename(filename), len(content))
+                    for filename, content in uploads
+                ]
+                try:
+                    await self.hass.async_add_executor_job(
+                        self._validate_upload_capacity_isolated,
+                        destinations,
+                    )
+                except SoundStorageError as err:
+                    _LOGGER.warning(
+                        "WAV upload refused by storage reserve before progress: %s",
+                        err,
+                    )
+                    errors["base"] = "sound_storage_full"
+                except Exception as err:
+                    _LOGGER.exception("WAV upload preflight failed: %s", err)
+                    errors["base"] = "upload_failed"
+                else:
+                    self._upload_filename = uploads[0][0]
+                    self._upload_task = self.hass.async_create_task(
+                        self._async_upload_sounds(uploads),
+                        f"{DOMAIN} WAV upload",
+                    )
+                    return self.async_show_progress(
+                        step_id="upload_sound",
+                        progress_action="uploading_sounds",
+                        progress_task=self._upload_task,
+                        description_placeholders={
+                            "filename": self._upload_filename,
+                        },
+                    )
 
         return self.async_show_form(
             step_id="upload_sound",
