@@ -27,6 +27,15 @@ def hub_io_base_topic(host: str) -> str:
 coordinator_io_base_topic = hub_io_base_topic
 
 
+def mqtt_availability_is_authoritative(client, mqtt_io) -> bool:
+    """Return whether MQTT LWT owns this hub's availability state."""
+    return mqtt_io is not None and (
+        client.zigbee_role == "coordinator"
+        or client.mqtt_io_confirmed
+        or mqtt_io.seen
+    )
+
+
 def validate_state(payload: str) -> dict[str, Any]:
     """Validate the complete IO state published by either role's hub daemon."""
     state = json.loads(payload)
@@ -110,6 +119,8 @@ class M1SHubMQTTIO:
         self._unsubscribers: list = []
         self._sound_lock = asyncio.Lock()
         self._sound_result: asyncio.Future | None = None
+        self._refresh_task: asyncio.Task | None = None
+        self._refresh_pending = False
 
     async def async_start(self) -> None:
         """Wait for HA MQTT and subscribe to retained hub state."""
@@ -149,6 +160,15 @@ class M1SHubMQTTIO:
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
+        self._refresh_pending = False
+        refresh_task = self._refresh_task
+        self._refresh_task = None
+        if refresh_task is not None and not refresh_task.done():
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
         self.available = False
         self.telemetry = None
         if self._sound_result is not None and not self._sound_result.done():
@@ -232,27 +252,29 @@ class M1SHubMQTTIO:
         )
         self._mark_seen()
         self.client.coordinator_io_state = state
-        self.available = True
         data = dict(self.coordinator.data or {})
         data["illuminance"] = (
             {key: state[key] for key in ("raw", "millivolts", "lux")}
             if state["valid"]
             else None
         )
-        self.coordinator.async_set_updated_data(data)
+        self.coordinator.data = data
+        self._schedule_coordinator_refresh()
 
     @callback
     def _availability_message(self, message) -> None:
         online = str(message.payload).strip().lower() == "online"
         self.available = online
         if online:
+            self._schedule_coordinator_refresh()
             return
         self.client.coordinator_io_state = None
         self.telemetry = None
         data = dict(self.coordinator.data or {})
         data["illuminance"] = None
         data["telemetry"] = None
-        self.coordinator.async_set_updated_data(data)
+        self.coordinator.data = data
+        self._schedule_coordinator_refresh()
 
     @callback
     def _telemetry_message(self, message) -> None:
@@ -273,7 +295,38 @@ class M1SHubMQTTIO:
         self.telemetry = telemetry
         data = dict(self.coordinator.data or {})
         data["telemetry"] = telemetry
-        self.coordinator.async_set_updated_data(data)
+        self.coordinator.data = data
+        self._schedule_coordinator_refresh()
+
+    @callback
+    def _schedule_coordinator_refresh(self) -> None:
+        """Let the coordinator own availability after every MQTT change."""
+        self._refresh_pending = True
+        task = self._refresh_task
+        if task is not None and not task.done():
+            return
+        self._refresh_task = self.hass.async_create_task(
+            self._async_refresh_coordinator()
+        )
+
+    async def _async_refresh_coordinator(self) -> None:
+        """Coalesce retained MQTT messages without losing the final state."""
+        try:
+            while self._refresh_pending:
+                self._refresh_pending = False
+                await self.coordinator.async_request_refresh()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            _LOGGER.debug(
+                "M1S MQTT availability refresh failed for %s: %s",
+                self.client.host,
+                err,
+            )
+        finally:
+            self._refresh_task = None
+            if self._refresh_pending:
+                self._schedule_coordinator_refresh()
 
     @callback
     def _sound_status_message(self, message) -> None:

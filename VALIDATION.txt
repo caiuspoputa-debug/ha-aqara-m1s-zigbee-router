@@ -1,14 +1,26 @@
-Aqara M1S Zigbee Coordinator + Router v0.36.7 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.36.8 TEST validation
 
-Validation performed for this package on 2026-10-04:
+Validation performed for this package on 2026-10-05:
 - All Python files compile.
-- manifest.json reports version 0.36.7.
+- manifest.json reports version 0.36.8.
 - manifest.json, strings.json and both translations parse as JSON.
 - The upload labels state that one WAV file can be uploaded at a time and do
   not advertise ZIP upload.
-- All 45 isolated regression tests pass: 14 MQTT IO/coordinator, 7 shared
+- All 48 isolated regression tests pass: 17 MQTT IO/coordinator, 7 shared
   MQTT, 9 WAV deletion, 8 WAV upload/storage, 4 clean audio shutdown and 3
   WAV priority/transport tests.
+
+Availability regression coverage:
+- MQTT callbacks never call `async_set_updated_data`, which previously changed
+  `last_update_success` to true even for an `offline` LWT message.
+- Every valid state, telemetry, `online` or `offline` message requests a main
+  coordinator refresh, with bursts coalesced without losing the final state.
+- A retained state payload cannot override a retained `offline` availability
+  message during Home Assistant or MQTT reconnection.
+- MQTT LWT is authoritative for all Coordinators and confirmed MQTT Routers;
+  legacy Routers without the persistent agent retain the Telnet probe fallback.
+- Consequently, Hub Connectivity and all CoordinatorEntity controls transition
+  unavailable and available together.
 
 Router MQTT WAV behavior:
 - A Router must publish retained state with role=router and sound_mqtt=true

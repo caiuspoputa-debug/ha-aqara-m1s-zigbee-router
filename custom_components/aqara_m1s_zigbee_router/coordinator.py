@@ -8,6 +8,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DATA_COORDINATOR_MQTT, DOMAIN
+from .coordinator_mqtt import mqtt_availability_is_authoritative
 from .device import device_identifier
 
 
@@ -80,19 +81,22 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             raise
 
     async def _async_update_data(self) -> dict:
-        # Once the Coordinator agent is online, its retained MQTT availability
-        # replaces the five-second Telnet probe.  Telnet remains only as a
-        # fallback while the agent is starting or unavailable.  Routers keep
-        # their existing watchdog behavior unchanged.
+        # MQTT availability is authoritative for Coordinators and for Routers
+        # that have confirmed the persistent on-hub agent.  Falling back to a
+        # successful Telnet socket after their MQTT LWT says offline would keep
+        # media controls enabled while the agent-backed entities are dead.
         mqtt_io = None
-        if self.client.zigbee_role == "coordinator" and self.config_entry is not None:
+        if self.config_entry is not None:
             mqtt_io = (
                 self.hass.data.get(DOMAIN, {})
                 .get(DATA_COORDINATOR_MQTT, {})
                 .get(self.config_entry.entry_id)
             )
-        if mqtt_io is not None and mqtt_io.available:
-            online = True
+        mqtt_is_authoritative = mqtt_availability_is_authoritative(
+            self.client, mqtt_io
+        )
+        if mqtt_is_authoritative:
+            online = mqtt_io.available
         else:
             # client.check_online() uses a fresh TCP socket and never touches
             # the JN5189 sideband or Router UART data path.

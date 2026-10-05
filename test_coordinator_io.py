@@ -59,9 +59,13 @@ class FakeCoordinator:
     def __init__(self, entry=None):
         self.data = {"online": True, "online_generation": 1}
         self.config_entry = entry
+        self.refresh_count = 0
 
     def async_set_updated_data(self, data):
-        self.data = data
+        raise AssertionError("MQTT callbacks must not mark an update successful")
+
+    async def async_request_refresh(self):
+        self.refresh_count += 1
 
 
 class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
@@ -78,7 +82,9 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
             async_update_entry=lambda entry, data: setattr(entry, "data", data)
         )
         self.hass = types.SimpleNamespace(
-            loop=asyncio.get_running_loop(), config_entries=config_entries
+            loop=asyncio.get_running_loop(),
+            config_entries=config_entries,
+            async_create_task=asyncio.create_task,
         )
         self.bridge = coordinator_mqtt.CoordinatorMQTTIO(
             self.hass, self.client, self.coordinator
@@ -139,7 +145,9 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_state_updates_rgb_and_lux(self):
+        self.bridge._availability_message(types.SimpleNamespace(payload="online"))
         self.bridge._state_message(types.SimpleNamespace(payload=json.dumps(GOOD)))
+        await self.bridge._refresh_task
         self.assertTrue(self.bridge.available)
         self.assertTrue(self.client.mqtt_io_confirmed)
         self.assertTrue(self.entry.data["mqtt_io_confirmed"])
@@ -148,6 +156,14 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
             self.coordinator.data["illuminance"],
             {"raw": 500, "millivolts": 439, "lux": 17},
         )
+        self.assertEqual(self.coordinator.refresh_count, 1)
+
+    async def test_retained_state_cannot_override_offline_availability(self):
+        self.bridge._state_message(types.SimpleNamespace(payload=json.dumps(GOOD)))
+        await self.bridge._refresh_task
+        self.assertFalse(self.bridge.available)
+        self.assertEqual(self.client.coordinator_io_state, GOOD)
+        self.assertEqual(self.coordinator.refresh_count, 1)
 
     async def test_telemetry_updates_all_coordinator_diagnostics(self):
         telemetry = {
@@ -163,16 +179,53 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         self.bridge._telemetry_message(
             types.SimpleNamespace(payload=json.dumps(telemetry))
         )
+        await self.bridge._refresh_task
         self.assertEqual(self.bridge.telemetry, telemetry)
         self.assertEqual(self.coordinator.data["telemetry"], telemetry)
+        self.assertEqual(self.coordinator.refresh_count, 1)
 
     async def test_offline_clears_only_optional_io(self):
         self.bridge._state_message(types.SimpleNamespace(payload=json.dumps(GOOD)))
         self.bridge._availability_message(types.SimpleNamespace(payload="offline"))
+        await self.bridge._refresh_task
         self.assertFalse(self.bridge.available)
         self.assertIsNone(self.client.coordinator_io_state)
         self.assertIsNone(self.coordinator.data["illuminance"])
         self.assertTrue(self.coordinator.data["online"])
+        self.assertEqual(self.coordinator.refresh_count, 1)
+
+    async def test_online_availability_requests_coordinator_refresh(self):
+        self.bridge._availability_message(types.SimpleNamespace(payload="online"))
+        await self.bridge._refresh_task
+        self.assertTrue(self.bridge.available)
+        self.assertEqual(self.coordinator.refresh_count, 1)
+
+    async def test_mqtt_lwt_is_authoritative_after_router_confirmation(self):
+        mqtt_io = types.SimpleNamespace(seen=False)
+        router = types.SimpleNamespace(
+            zigbee_role="router", mqtt_io_confirmed=False
+        )
+        self.assertFalse(
+            coordinator_mqtt.mqtt_availability_is_authoritative(router, mqtt_io)
+        )
+        router.mqtt_io_confirmed = True
+        self.assertTrue(
+            coordinator_mqtt.mqtt_availability_is_authoritative(router, mqtt_io)
+        )
+        router.mqtt_io_confirmed = False
+        mqtt_io.seen = True
+        self.assertTrue(
+            coordinator_mqtt.mqtt_availability_is_authoritative(router, mqtt_io)
+        )
+        coordinator = types.SimpleNamespace(
+            zigbee_role="coordinator", mqtt_io_confirmed=False
+        )
+        mqtt_io.seen = False
+        self.assertTrue(
+            coordinator_mqtt.mqtt_availability_is_authoritative(
+                coordinator, mqtt_io
+            )
+        )
 
     async def test_protocol_and_ranges_are_strict(self):
         changes = [
@@ -274,7 +327,9 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
             rgb_valid=False,
             sound_mqtt=True,
         )
+        bridge._availability_message(types.SimpleNamespace(payload="online"))
         bridge._state_message(types.SimpleNamespace(payload=json.dumps(router_state)))
+        await bridge._refresh_task
         self.assertTrue(bridge.available)
         self.assertTrue(bridge.sound_supported)
         self.assertTrue(client.mqtt_io_confirmed)
@@ -294,6 +349,7 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         bridge._telemetry_message(
             types.SimpleNamespace(payload=json.dumps(router_telemetry))
         )
+        await bridge._refresh_task
         self.assertEqual(bridge.telemetry, router_telemetry)
 
     async def test_router_rejoin_pauses_and_resumes_persistent_uart_owner(self):

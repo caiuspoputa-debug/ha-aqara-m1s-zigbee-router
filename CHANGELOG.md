@@ -1,3 +1,18 @@
+## 0.36.8 TEST - Coherent MQTT hub availability
+
+- Make the retained MQTT availability topic authoritative for Coordinators and
+  for Routers that have confirmed the persistent on-hub MQTT agent.
+- Route every MQTT state, telemetry and availability change through the main
+  coordinator refresh instead of falsely marking an `offline` message as a
+  successful update.
+- Use only the retained availability topic to change MQTT online/offline state,
+  so a stale retained telemetry/state payload cannot revive an offline hub.
+- Keep `Hub Connectivity`, the red unavailable device label and all dependent
+  entities in one state: WAV buttons, media controls, ring light and sensors now
+  become unavailable together and recover automatically on `online`.
+- Preserve the complete audio, upload, media-group, Zigbee, RGB, lux and shared
+  MQTT implementations from `0.36.7`.
+
 ## 0.36.7 TEST - Reliable single-WAV upload preflight
 
 - Check the 8 MiB `/data` reserve before opening the progress dialog, so a
