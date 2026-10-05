@@ -27,13 +27,12 @@ def hub_io_base_topic(host: str) -> str:
 coordinator_io_base_topic = hub_io_base_topic
 
 
-def mqtt_availability_is_authoritative(client, mqtt_io) -> bool:
-    """Return whether MQTT LWT owns this hub's availability state."""
-    return mqtt_io is not None and (
-        client.zigbee_role == "coordinator"
-        or client.mqtt_io_confirmed
-        or mqtt_io.seen
-    )
+async def async_detect_hub_connectivity(hass, client, mqtt_io) -> tuple[bool, str]:
+    """Return physical hub reachability and the path that proved it."""
+    if mqtt_io is not None and mqtt_io.available:
+        return True, "mqtt"
+    telnet_online = await hass.async_add_executor_job(client.check_online)
+    return bool(telnet_online), "telnet" if telnet_online else "none"
 
 
 def validate_state(payload: str) -> dict[str, Any]:
@@ -252,6 +251,8 @@ class M1SHubMQTTIO:
         )
         self._mark_seen()
         self.client.coordinator_io_state = state
+        if not bool(getattr(message, "retain", False)):
+            self.available = True
         data = dict(self.coordinator.data or {})
         data["illuminance"] = (
             {key: state[key] for key in ("raw", "millivolts", "lux")}
@@ -293,6 +294,8 @@ class M1SHubMQTTIO:
             return
         self._mark_seen()
         self.telemetry = telemetry
+        if not bool(getattr(message, "retain", False)):
+            self.available = True
         data = dict(self.coordinator.data or {})
         data["telemetry"] = telemetry
         self.coordinator.data = data

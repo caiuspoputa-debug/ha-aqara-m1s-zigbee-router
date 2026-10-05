@@ -76,6 +76,7 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
             zigbee_role="coordinator",
             mqtt_io_confirmed=False,
             coordinator_io_state=None,
+            check_online=Mock(),
         )
         self.coordinator = FakeCoordinator(self.entry)
         config_entries = types.SimpleNamespace(
@@ -145,7 +146,6 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_state_updates_rgb_and_lux(self):
-        self.bridge._availability_message(types.SimpleNamespace(payload="online"))
         self.bridge._state_message(types.SimpleNamespace(payload=json.dumps(GOOD)))
         await self.bridge._refresh_task
         self.assertTrue(self.bridge.available)
@@ -159,7 +159,9 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.coordinator.refresh_count, 1)
 
     async def test_retained_state_cannot_override_offline_availability(self):
-        self.bridge._state_message(types.SimpleNamespace(payload=json.dumps(GOOD)))
+        self.bridge._state_message(
+            types.SimpleNamespace(payload=json.dumps(GOOD), retain=True)
+        )
         await self.bridge._refresh_task
         self.assertFalse(self.bridge.available)
         self.assertEqual(self.client.coordinator_io_state, GOOD)
@@ -200,32 +202,36 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.bridge.available)
         self.assertEqual(self.coordinator.refresh_count, 1)
 
-    async def test_mqtt_lwt_is_authoritative_after_router_confirmation(self):
-        mqtt_io = types.SimpleNamespace(seen=False)
-        router = types.SimpleNamespace(
-            zigbee_role="router", mqtt_io_confirmed=False
+    async def test_mqtt_online_proves_hub_connectivity_without_telnet(self):
+        mqtt_io = types.SimpleNamespace(available=True)
+        self.hass.async_add_executor_job = AsyncMock()
+        online, source = await coordinator_mqtt.async_detect_hub_connectivity(
+            self.hass, self.client, mqtt_io
         )
-        self.assertFalse(
-            coordinator_mqtt.mqtt_availability_is_authoritative(router, mqtt_io)
+        self.assertTrue(online)
+        self.assertEqual(source, "mqtt")
+        self.hass.async_add_executor_job.assert_not_awaited()
+
+    async def test_telnet_is_fallback_when_mqtt_is_not_online(self):
+        mqtt_io = types.SimpleNamespace(available=False)
+        self.hass.async_add_executor_job = AsyncMock(return_value=True)
+        online, source = await coordinator_mqtt.async_detect_hub_connectivity(
+            self.hass, self.client, mqtt_io
         )
-        router.mqtt_io_confirmed = True
-        self.assertTrue(
-            coordinator_mqtt.mqtt_availability_is_authoritative(router, mqtt_io)
+        self.assertTrue(online)
+        self.assertEqual(source, "telnet")
+        self.hass.async_add_executor_job.assert_awaited_once_with(
+            self.client.check_online
         )
-        router.mqtt_io_confirmed = False
-        mqtt_io.seen = True
-        self.assertTrue(
-            coordinator_mqtt.mqtt_availability_is_authoritative(router, mqtt_io)
+
+    async def test_hub_is_offline_only_when_mqtt_and_telnet_are_both_down(self):
+        mqtt_io = types.SimpleNamespace(available=False)
+        self.hass.async_add_executor_job = AsyncMock(return_value=False)
+        online, source = await coordinator_mqtt.async_detect_hub_connectivity(
+            self.hass, self.client, mqtt_io
         )
-        coordinator = types.SimpleNamespace(
-            zigbee_role="coordinator", mqtt_io_confirmed=False
-        )
-        mqtt_io.seen = False
-        self.assertTrue(
-            coordinator_mqtt.mqtt_availability_is_authoritative(
-                coordinator, mqtt_io
-            )
-        )
+        self.assertFalse(online)
+        self.assertEqual(source, "none")
 
     async def test_protocol_and_ranges_are_strict(self):
         changes = [
@@ -327,7 +333,6 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
             rgb_valid=False,
             sound_mqtt=True,
         )
-        bridge._availability_message(types.SimpleNamespace(payload="online"))
         bridge._state_message(types.SimpleNamespace(payload=json.dumps(router_state)))
         await bridge._refresh_task
         self.assertTrue(bridge.available)

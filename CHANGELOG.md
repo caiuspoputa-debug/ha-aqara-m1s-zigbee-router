@@ -1,3 +1,20 @@
+## 0.36.9 TEST - Defined dual-path hub connectivity
+
+- Define `Hub Connectivity` as physical hub reachability: MQTT IO online or a
+  successful fresh Telnet TCP probe is sufficient.
+- Mark a hub unavailable only when neither independent path can reach it,
+  preventing online hubs from becoming unavailable during MQTT startup or an
+  MQTT-agent interruption.
+- Keep MQTT `offline` from falsely setting coordinator success; it now triggers
+  the same dual-path connectivity evaluation as the permanent watchdog.
+- Accept a fresh non-retained MQTT state or telemetry packet as proof that the
+  agent has recovered, while stale retained packets cannot revive an offline
+  MQTT path.
+- Add the active `connection_source` (`mqtt`, `telnet` or `none`) as an
+  attribute of the always-readable Hub Connectivity sensor.
+- Preserve audio, WAV upload, media-group, Zigbee, RGB, lux and shared MQTT
+  behavior from `0.36.8`.
+
 ## 0.36.8 TEST - Coherent MQTT hub availability
 
 - Make the retained MQTT availability topic authoritative for Coordinators and

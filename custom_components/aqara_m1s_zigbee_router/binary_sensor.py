@@ -45,3 +45,8 @@ class AqaraM1SHubConnectivity(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return bool(self.coordinator.last_update_success)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Expose which independent path currently proves connectivity."""
+        return {"connection_source": self.coordinator.connectivity_source}

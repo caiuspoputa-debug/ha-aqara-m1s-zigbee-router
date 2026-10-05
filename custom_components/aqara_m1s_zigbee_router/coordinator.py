@@ -8,7 +8,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DATA_COORDINATOR_MQTT, DOMAIN
-from .coordinator_mqtt import mqtt_availability_is_authoritative
+from .coordinator_mqtt import async_detect_hub_connectivity
 from .device import device_identifier
 
 
@@ -40,6 +40,7 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         self._mqtt_applied = None
         self._mqtt_retry_at = 0.0
         self.mqtt_sync_state = "not_configured"
+        self.connectivity_source = "none"
         self._visual_availability_online: bool | None = None
         super().__init__(
             hass,
@@ -81,10 +82,9 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             raise
 
     async def _async_update_data(self) -> dict:
-        # MQTT availability is authoritative for Coordinators and for Routers
-        # that have confirmed the persistent on-hub agent.  Falling back to a
-        # successful Telnet socket after their MQTT LWT says offline would keep
-        # media controls enabled while the agent-backed entities are dead.
+        # Either live MQTT IO or a fresh Telnet connection proves that the hub
+        # itself is online.  MQTT-backed diagnostics may be unavailable while
+        # the remaining hub controls continue to work through Telnet.
         mqtt_io = None
         if self.config_entry is not None:
             mqtt_io = (
@@ -92,15 +92,9 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
                 .get(DATA_COORDINATOR_MQTT, {})
                 .get(self.config_entry.entry_id)
             )
-        mqtt_is_authoritative = mqtt_availability_is_authoritative(
-            self.client, mqtt_io
+        online, self.connectivity_source = await async_detect_hub_connectivity(
+            self.hass, self.client, mqtt_io
         )
-        if mqtt_is_authoritative:
-            online = mqtt_io.available
-        else:
-            # client.check_online() uses a fresh TCP socket and never touches
-            # the JN5189 sideband or Router UART data path.
-            online = await self.hass.async_add_executor_job(self.client.check_online)
         if not online:
             self.mqtt_sync_state = "offline"
             if self._was_online:
@@ -147,6 +141,7 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             # Coordinator diagnostics are pushed by the on-hub MQTT agent.
             "telemetry": previous.get("telemetry"),
             "online_generation": self._online_generation,
+            "connectivity_source": self.connectivity_source,
         }
 
     async def _sync_shared_mqtt(self, manager, target):
