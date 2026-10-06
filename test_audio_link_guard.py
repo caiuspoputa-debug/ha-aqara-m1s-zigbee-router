@@ -18,7 +18,7 @@ SOURCE = (
 )
 GROUP_SOURCE = SOURCE.with_name("media_group.py")
 MEDIA_PLAYER_SHA256 = "1f8953bb3c9ecde01876d8b08492b27395c163b56f53aa68789e215d7624c2a8"
-MEDIA_GROUP_SHA256 = "0be39750c1656142337bef7a8584bda877069c42aba0b3ac01dd92858c5c8f64"
+MEDIA_GROUP_SHA256 = "8be6279b71e716d0e194c0925d3c9213df5b92e7a980ee7c37478be9e7efa975"
 
 
 def evaluated_constants(source: Path = SOURCE) -> dict[str, object]:
@@ -178,7 +178,7 @@ class AudioCleanShutdownTests(unittest.TestCase):
             GROUP_SOURCE.read_text(encoding="utf-8"),
         )
 
-    def test_group_transport_matches_v0373_reviewed_baseline(self):
+    def test_group_transport_matches_v0374_reviewed_baseline(self):
         actual = hashlib.sha256(GROUP_SOURCE.read_bytes()).hexdigest()
         self.assertEqual(actual, MEDIA_GROUP_SHA256)
 

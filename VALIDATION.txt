@@ -1,13 +1,21 @@
-Aqara M1S Zigbee Coordinator + Router v0.37.3 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.37.4 TEST validation
 
 Validation prepared for this package on 2026-10-07:
 - All integration and regression-test Python files compile.
-- manifest.json reports version 0.37.3.
+- manifest.json reports version 0.37.4.
 - manifest.json, strings.json and both translations parse as JSON.
 - The Router compatibility shell script passes shell syntax validation.
-- All 64 isolated regression tests pass: 20 MQTT IO/coordinator, 7 shared
-  MQTT, 9 WAV deletion, 8 WAV upload/storage, 10 audio transport, 7 group-loss
+- All 65 isolated regression tests pass: 20 MQTT IO/coordinator, 7 shared
+  MQTT, 9 WAV deletion, 8 WAV upload/storage, 10 audio transport, 8 group-loss
   simulations and 3 WAV priority/transport tests.
+
+Group volume precision added in 0.37.4:
+- The group entity preserves four normalized decimal places, equivalent to
+  0.01 percentage point.
+- Native group volume-up/down and the exposed step use the same precision.
+- Volume remains live PCM software gain and does not restart or resynchronise
+  the radio stream.
+- Individual volume and per-hub Fine Volume Trim are unchanged.
 
 Group recovery changed in 0.37.3 after the 0.37.2 live test:
 - Automatic complete-cohort pause/rebuild was removed.
@@ -41,7 +49,7 @@ Audio regression boundary:
 - media_player.py SHA-256:
   1F8953BB3C9ECDE01876D8B08492B27395C163B56F53AA68789E215D7624C2A8
 - media_group.py SHA-256:
-  0BE39750C1656142337BEF7A8584BDA877069C42ABA0B3AC01DD92858C5C8F64
+  8BE6279B71E716D0E194C0925D3C9213DF5B92E7A980EE7C37478BE9E7EFA975
 - group_sync.py SHA-256:
   BF80BB04E2E7840D6BCA07744D2EB88F3036BADB246486AB43ECDE2033B265A8
 - sound_player.py SHA-256:

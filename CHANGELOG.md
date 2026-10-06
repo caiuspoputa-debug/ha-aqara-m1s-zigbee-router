@@ -1,3 +1,12 @@
+## 0.37.4 TEST - Hundredth-percent group volume
+
+- Preserve group `volume_level` to four decimal places, allowing real
+  `0.01%` software-gain adjustments instead of rounding them to `0.1%`.
+- Report the group volume step as `0.01%` and use that step for native
+  volume-up and volume-down calls.
+- Keep individual-player volume, fine per-hub trim, group synchronization,
+  receiver recovery and every transport path unchanged from `0.37.3`.
+
 ## 0.37.3 TEST - Single-member quarantine recovery
 
 - Replaces the automatic complete receiver-cohort rebuild introduced in

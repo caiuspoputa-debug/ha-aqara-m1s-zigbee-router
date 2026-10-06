@@ -920,7 +920,7 @@ class AqaraM1SMediaGroupManager:
             "volume_apply_pending": False,
             "applied_volume_level": self._applied_volume,
             "applied_is_volume_muted": self._applied_muted,
-            "volume_step_percent": 0.1,
+            "volume_step_percent": 0.01,
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
             "ffmpeg_nice_target": FFMPEG_NICE_TARGET,
             "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
@@ -1360,10 +1360,10 @@ class AqaraM1SMediaGroupManager:
 
     @staticmethod
     def normalize_volume(volume: float) -> float:
-        """Quantize the complete 0-100% range in uniform 0.1% steps."""
+        """Quantize group volume in uniform 0.01 percentage-point steps."""
         volume = max(0.0, min(1.0, float(volume)))
-        quantized = round(volume / 0.001) * 0.001
-        return max(0.0, min(1.0, round(quantized, 3)))
+        quantized = round(volume / 0.0001) * 0.0001
+        return max(0.0, min(1.0, round(quantized, 4)))
 
     def _effective_gain(self) -> float:
         if self._applied_muted:
@@ -3643,7 +3643,7 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
     _attr_unique_id = "aqara_m1s_media_group"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    _attr_volume_step = 0.001
+    _attr_volume_step = 0.0001
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
@@ -3956,11 +3956,11 @@ class AqaraM1SMediaGroup(MediaPlayerEntity, RestoreEntity):
 
     async def async_volume_up(self) -> None:
         current = self.manager.volume
-        await self.async_set_volume_level(current + 0.001)
+        await self.async_set_volume_level(current + 0.0001)
 
     async def async_volume_down(self) -> None:
         current = self.manager.volume
-        await self.async_set_volume_level(current - 0.001)
+        await self.async_set_volume_level(current - 0.0001)
 
     async def async_mute_volume(self, mute: bool) -> None:
         await self.manager.async_set_muted(mute)

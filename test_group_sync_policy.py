@@ -41,7 +41,26 @@ def _manager_method(name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
     )
 
 
+def _standalone_manager_method(name: str):
+    """Compile a dependency-free manager method for behavioral tests."""
+    method = _manager_method(name)
+    method.decorator_list = []
+    module = ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]))
+    namespace: dict[str, object] = {}
+    exec(compile(module, str(GROUP_SOURCE), "exec"), namespace)
+    return namespace[name]
+
+
 class GroupSyncLossSimulationTests(unittest.TestCase):
+    def test_group_volume_preserves_hundredth_percent_precision(self):
+        normalize = _standalone_manager_method("normalize_volume")
+
+        self.assertEqual(normalize(0.0059), 0.0059)
+        self.assertEqual(normalize(0.0060), 0.0060)
+        self.assertEqual(normalize(0.0061), 0.0061)
+        self.assertEqual(normalize(-1), 0.0)
+        self.assertEqual(normalize(2), 1.0)
+
     def test_light_data_loss_keeps_every_receiver_untouched(self):
         for lag_ms in (35, 140, 350, 700, 999):
             decision = POLICY.decide_group_sync_recovery(shared_lag_ms=lag_ms)

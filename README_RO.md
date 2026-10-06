@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.3 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.4 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.37.3 TEST` înlocuiește reconstrucția automată nereușită a întregului grup din `0.37.2`. Un hub lent sau blocat este acum izolat și reintrat separat, iar receptoarele sănătoase, ceasul comun și sursa FFmpeg continuă fără întrerupere. Reîncercările nereușite păstrează un backoff progresiv în loc să repornească imediat. Playerul individual rămâne neschimbat față de `0.37.1`, inclusiv protecția relay-ului persistent al Coordinatorului. Pachetul nu scrie și nu face flash pe JN5189.
+Versiunea `0.37.4 TEST` păstrează recuperarea stabilă din `0.37.3` și adaugă volum de grup cu precizie reală de `0,01%`. Reglajul este aplicat în software pe fluxul PCM activ, fără repornirea radioului sau resincronizarea receptoarelor. Playerul individual, reglajul fin separat al fiecărui hub și transporturile rămân neschimbate. Pachetul nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
@@ -130,20 +130,20 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.37.3` a trecut:
+Sursa `0.37.4` a trecut:
 
-- 19 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART, conectivitate și rejoin Router.
+- 20 de teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART, conectivitate și rejoin Router.
 - 3 teste dedicate priorității și transportului WAV: Coordinator MQTT, Router MQTT și fallback Telnet pentru un Router fără capabilitatea nouă.
 - 9 teste pentru ștergerea directă WAV, protecția folderului de sistem și manifestul fragmentat.
 - 8 teste pentru verificarea spațiului, transferul TCP real pe socket, progresul monoton, fallback și protecția căilor de sistem.
 - 7 teste pentru persistența și revenirea configurării MQTT comune.
-- 15 teste de regresie și simulare audio pentru oprirea remote înainte de local, comenzile
+- 18 teste de regresie și simulare audio pentru precizia volumului de grup, oprirea remote înainte de local, comenzile
   limitate, diagnosticul de buffering, ultima comandă prioritară, restaurarea
   limitată, eliberarea playerelor individuale și realinierea receptorilor după
   pierderea dovedită a poziției comune.
 - Compilarea Python și parsarea fișierelor JSON/YAML.
 - Verificarea de sintaxă a tuturor scripturilor Router și compilarea agentului static MIPS32 cu avertismente tratate ca erori.
-- Toate cele 62 de teste izolate trec. Hashurile verificate pentru ambele
+- Toate cele 65 de teste izolate trec. Hashurile verificate pentru ambele
   transporturi audio sunt notate în `VALIDATION.txt`.
 
 Uploadul a fost verificat și pe Routerul `192.168.0.221`: 128.044 octeți în 5,46 secunde, MD5 identic, progres intermediar și ștergerea confirmată a fișierului temporar.

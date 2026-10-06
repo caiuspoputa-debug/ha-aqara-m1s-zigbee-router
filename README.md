@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.3 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.4 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.37.3 TEST` replaces the failed automatic cohort rebuild from `0.37.2`. A slow or stale hub is now quarantined and rejoined independently while healthy group receivers, the shared clock and the FFmpeg source continue uninterrupted. Failed rejoins retain an exponential retry history instead of retrying immediately. The individual player remains unchanged from `0.37.1`, including protection for the Coordinator's persistent relay. This package does not write or flash the JN5189.
+Version `0.37.4 TEST` retains the stable receiver recovery from `0.37.3` and adds true `0.01%` group-volume precision. The adjustment is applied in software to the live PCM stream without restarting the radio or resynchronising receivers. Individual playback, per-hub fine trim and all transport paths remain unchanged. This package does not write or flash the JN5189.
 
 ## Requirements
 
@@ -130,19 +130,19 @@ The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_soun
 
 ## Validation and TEST status
 
-The `0.37.3` source passed:
+The `0.37.4` source passed:
 
-- 19 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation, connectivity and Router-rejoin tests.
+- 20 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation, connectivity and Router-rejoin tests.
 - 3 WAV priority and transport tests covering Coordinator MQTT, Router MQTT and Telnet fallback for a Router without the new capability.
 - 9 direct WAV deletion, protected-system-folder and chunked-manifest tests.
 - 8 storage, real-socket TCP transfer, monotonic progress, fallback and protected-path tests.
 - 7 shared-MQTT persistence and recovery tests.
-- 15 audio regression and loss-simulation tests covering remote-before-local shutdown, scoped
+- 18 audio regression and loss-simulation tests covering group-volume precision, remote-before-local shutdown, scoped
   commands, buffering diagnostics, latest-request-wins, bounded restoration,
   individual-player release and single-member quarantine recovery.
 - Python compilation plus JSON/YAML parsing.
 - Shell syntax validation for every Router script and a static MIPS32 agent build with warnings treated as errors.
-- All 62 isolated tests pass. The reviewed hashes of both audio transports are
+- All 65 isolated tests pass. The reviewed hashes of both audio transports are
   recorded in `VALIDATION.txt`.
 
 Upload was also verified on Router `192.168.0.221`: 128044 bytes in 5.46 seconds, identical MD5, intermediate progress and confirmed removal of the temporary probe file.
