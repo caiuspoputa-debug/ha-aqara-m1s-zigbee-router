@@ -264,6 +264,31 @@ class CoordinatorMQTTTests(unittest.IsolatedAsyncioTestCase):
         client.run_isolated_command.assert_not_called()
         client.run_command.assert_not_called()
 
+    async def test_close_never_stops_coordinator_uart_relay(self):
+        coordinator = client_module.AqaraM1SClient("192.168.0.220")
+        coordinator.zigbee_role = "coordinator"
+        coordinator._close_uart_locked = Mock()
+        coordinator._run_command_locked = Mock()
+        coordinator._close_locked = Mock()
+
+        coordinator.close()
+
+        coordinator._close_uart_locked.assert_called_once_with()
+        coordinator._run_command_locked.assert_not_called()
+        coordinator._close_locked.assert_called_once_with()
+
+        router = client_module.AqaraM1SClient("192.168.0.221")
+        router.zigbee_role = "router"
+        router._close_uart_locked = Mock()
+        router._run_command_locked = Mock()
+        router._close_locked = Mock()
+
+        router.close()
+
+        router._run_command_locked.assert_called_once_with(
+            client_module.UART_STOP_COMMAND
+        )
+
     async def test_online_probe_retries_transient_telnet_accept_delays(self):
         client = client_module.AqaraM1SClient("192.168.0.220")
         connected = Mock()

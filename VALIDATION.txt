@@ -1,11 +1,11 @@
-Aqara M1S Zigbee Coordinator + Router v0.37.0 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.37.1 TEST validation
 
 Validation performed for this package on 2026-10-06:
 - All integration and regression-test Python files compile.
-- manifest.json reports version 0.37.0.
+- manifest.json reports version 0.37.1.
 - manifest.json, strings.json and both translations parse as JSON.
 - The Router compatibility shell script passes shell syntax validation.
-- All 55 isolated regression tests pass: 19 MQTT IO/coordinator, 7 shared
+- All 56 isolated regression tests pass: 20 MQTT IO/coordinator, 7 shared
   MQTT, 9 WAV deletion, 8 WAV upload/storage, 9 audio transport and 3 WAV
   priority/transport tests.
 
@@ -26,6 +26,11 @@ Audio behavior added in 0.37.0:
 - Adaptive synchronization, per-hub resampling and periodic automatic receiver
   resync remain disabled. One shared PCM history and one common playout clock
   remain authoritative.
+
+Coordinator unload safety added in 0.37.1:
+- Integration unload, reload and update close only local Coordinator sockets.
+- The persistent Coordinator TCP/UART relay on port 1886 is never stopped.
+- Temporary Router sideband UART tunnels retain their existing cleanup.
 
 Audio regression boundary:
 - media_player.py SHA-256:

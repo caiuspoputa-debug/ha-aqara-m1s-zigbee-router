@@ -1,3 +1,13 @@
+## 0.37.1 TEST - Coordinator-safe integration reload
+
+- Never stop the Coordinator's persistent TCP/UART relay on integration
+  unload, reload or update. Only local Home Assistant sockets are closed.
+- Preserve cleanup of temporary Router sideband UART tunnels.
+- Add regression coverage proving that Coordinator close cannot execute the
+  remote `UART_STOP_COMMAND` while Router cleanup still can.
+- Preserve all deterministic radio, availability, MQTT IO, WAV and Zigbee
+  behavior from `0.37.0`.
+
 ## 0.37.0 TEST - Deterministic radio playback and bounded group recovery
 
 - Report `buffering` while an individual or group source is filling or

@@ -196,10 +196,15 @@ class AqaraM1SClient:
     def close(self) -> None:
         with self._lock:
             self._close_uart_locked()
-            try:
-                self._run_command_locked(UART_STOP_COMMAND)
-            except Exception:
-                pass
+            # Port 1886 is the persistent Zigbee2MQTT transport on a
+            # Coordinator. Reloading or updating the HA integration must
+            # never stop that remote relay. Router sideband tunnels are
+            # temporary and remain eligible for cleanup on unload.
+            if self.zigbee_role != "coordinator":
+                try:
+                    self._run_command_locked(UART_STOP_COMMAND)
+                except Exception:
+                    pass
             self._close_locked()
 
     def disconnect(self) -> None:

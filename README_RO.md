@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.0 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.1 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.37.0 TEST` face redarea radio individuală și de grup deterministă și ușor de diagnosticat. Afișează starea reală de buffering, clasifică blocajele playerului individual, face ca ultima comandă de grup să câștige, eliberează playerele individuale după Stop, limitează așteptarea la restaurare și reconstruiește numai receiverul cu trei erori ALSA confirmate. Sincronizarea adaptivă și resamplingul separat pe hub rămân dezactivate. Sunt păstrate disponibilitatea pe două căi și toate funcțiile Zigbee, MQTT IO, upload/ștergere WAV și sunetele locale din `0.36.9`. Pachetul nu scrie și nu face flash pe JN5189.
+Versiunea `0.37.1 TEST` împiedică update-ul sau reîncărcarea integrării să oprească relay-ul TCP/UART persistent al Coordinatorului. Păstrează redarea radio deterministă, disponibilitatea pe două căi și toate funcțiile Zigbee, MQTT IO, upload/ștergere WAV și sunetele locale din `0.37.0`. Pachetul nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
@@ -130,7 +130,7 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.37.0` a trecut:
+Sursa `0.37.1` a trecut:
 
 - 19 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART, conectivitate și rejoin Router.
 - 3 teste dedicate priorității și transportului WAV: Coordinator MQTT, Router MQTT și fallback Telnet pentru un Router fără capabilitatea nouă.
@@ -142,7 +142,7 @@ Sursa `0.37.0` a trecut:
   limitată, eliberarea playerelor individuale și repararea unui singur receiver.
 - Compilarea Python și parsarea fișierelor JSON/YAML.
 - Verificarea de sintaxă a tuturor scripturilor Router și compilarea agentului static MIPS32 cu avertismente tratate ca erori.
-- Toate cele 55 de teste izolate trec. Hashurile verificate pentru ambele
+- Toate cele 56 de teste izolate trec. Hashurile verificate pentru ambele
   transporturi audio sunt notate în `VALIDATION.txt`.
 
 Uploadul a fost verificat și pe Routerul `192.168.0.221`: 128.044 octeți în 5,46 secunde, MD5 identic, progres intermediar și ștergerea confirmată a fișierului temporar.

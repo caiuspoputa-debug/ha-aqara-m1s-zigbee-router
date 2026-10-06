@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.0 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.1 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.37.0 TEST` makes individual and group radio playback deterministic and observable. It reports real buffering, classifies individual playout stalls, makes the newest group command win, releases individual players after group Stop, bounds restored-group startup and rebuilds only a receiver with three confirmed ALSA faults. Adaptive synchronization and per-hub resampling remain disabled. The dual-path connectivity and all Zigbee, MQTT IO, WAV upload/deletion and stored-sound behavior from `0.36.9` are retained. This package does not write or flash the JN5189.
+Version `0.37.1 TEST` prevents integration reload or update from stopping the Coordinator's persistent TCP/UART relay. It retains the deterministic individual and group radio playback, dual-path connectivity and all Zigbee, MQTT IO, WAV upload/deletion and stored-sound behavior from `0.37.0`. This package does not write or flash the JN5189.
 
 ## Requirements
 
@@ -130,7 +130,7 @@ The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_soun
 
 ## Validation and TEST status
 
-The `0.37.0` source passed:
+The `0.37.1` source passed:
 
 - 19 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation, connectivity and Router-rejoin tests.
 - 3 WAV priority and transport tests covering Coordinator MQTT, Router MQTT and Telnet fallback for a Router without the new capability.
@@ -142,7 +142,7 @@ The `0.37.0` source passed:
   individual-player release and member-only receiver recovery.
 - Python compilation plus JSON/YAML parsing.
 - Shell syntax validation for every Router script and a static MIPS32 agent build with warnings treated as errors.
-- All 55 isolated tests pass. The reviewed hashes of both audio transports are
+- All 56 isolated tests pass. The reviewed hashes of both audio transports are
   recorded in `VALIDATION.txt`.
 
 Upload was also verified on Router `192.168.0.221`: 128044 bytes in 5.46 seconds, identical MD5, intermediate progress and confirmed removal of the temporary probe file.
