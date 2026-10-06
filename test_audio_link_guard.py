@@ -1,4 +1,4 @@
-"""Regression tests for clean individual-audio shutdown."""
+"""Regression tests for the individual and group audio transports."""
 
 from __future__ import annotations
 
@@ -16,7 +16,9 @@ SOURCE = (
     / "aqara_m1s_zigbee_router"
     / "media_player.py"
 )
-MEDIA_GROUP_SHA256 = "33da7a17f7b782e7eca6baad5dc690c7e294d9dca6c6ec140cacec23726378a8"
+GROUP_SOURCE = SOURCE.with_name("media_group.py")
+MEDIA_PLAYER_SHA256 = "1f8953bb3c9ecde01876d8b08492b27395c163b56f53aa68789e215d7624c2a8"
+MEDIA_GROUP_SHA256 = "be908398f72fe5db5e56537962061731a1a14d3525ddb42fc17d4aa1433cc89d"
 
 
 def evaluated_constants(source: Path = SOURCE) -> dict[str, object]:
@@ -94,10 +96,79 @@ class AudioCleanShutdownTests(unittest.TestCase):
         self.assertNotIn("idle_ticks", source)
         self.assertNotIn("m1s_audio_guard", source)
 
-    def test_group_transport_is_byte_identical_to_v0362(self):
-        group_source = SOURCE.with_name("media_group.py")
-        actual = hashlib.sha256(group_source.read_bytes()).hexdigest()
+    def test_individual_buffering_and_rebase_diagnostics_are_exposed(self):
+        source = SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("self._attr_state = MediaPlayerState.BUFFERING", source)
+        self.assertIn('"single_last_playout_rebase_lag_ms"', source)
+        self.assertIn('"single_last_playout_rebase_cause"', source)
+        self.assertIn('"single_last_tcp_drain_ms"', source)
+        self.assertIn('likely_cause = "tcp_drain_timeout"', source)
+        self.assertIn('likely_cause = "ha_scheduler_or_other_await"', source)
+
+    def test_group_latest_request_wins_before_and_after_media_resolution(self):
+        tree = ast.parse(GROUP_SOURCE.read_text(encoding="utf-8"))
+        entity_class = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "AqaraM1SMediaGroup"
+        )
+        play = next(
+            node
+            for node in entity_class.body
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "async_play_media"
+        )
+        source = ast.unparse(play)
+
+        self.assertLess(
+            source.index("next_media_intent"),
+            source.index("async_resolve_media"),
+        )
+        self.assertIn("intent_generation=intent_generation", source)
+
+    def test_group_stop_releases_individual_players(self):
+        tree = ast.parse(GROUP_SOURCE.read_text(encoding="utf-8"))
+        manager_class = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "AqaraM1SMediaGroupManager"
+        )
+        stop = next(
+            node
+            for node in manager_class.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "async_stop"
+        )
+        reset = next(
+            node
+            for node in manager_class.body
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "async_force_reset"
+        )
+
+        self.assertIn("_resume_suspended_individuals", ast.unparse(stop))
+        self.assertIn("_resume_suspended_individuals", ast.unparse(reset))
+
+    def test_group_recovery_is_bounded_and_member_scoped(self):
+        values = evaluated_constants(GROUP_SOURCE)
+        source = GROUP_SOURCE.read_text(encoding="utf-8")
+
+        self.assertEqual(values["STARTUP_RESTORE_MAX_WAIT_SECONDS"], 30.0)
+        self.assertEqual(values["GROUP_RECEIVER_STALE_CONFIRMATIONS"], 3)
+        self.assertFalse(values["ADAPTIVE_SYNC_ENABLED"])
+        self.assertFalse(values["PERIODIC_RECEIVER_RESYNC_ENABLED"])
+        self.assertIn("confirmed stale ALSA receiver", source)
+        self.assertIn("timeout_partial_cohort", source)
+        self.assertIn('"source_rebuffering"', source)
+
+    def test_group_transport_matches_v0370_reviewed_baseline(self):
+        actual = hashlib.sha256(GROUP_SOURCE.read_bytes()).hexdigest()
         self.assertEqual(actual, MEDIA_GROUP_SHA256)
+
+    def test_individual_transport_matches_v0370_reviewed_baseline(self):
+        actual = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
+        self.assertEqual(actual, MEDIA_PLAYER_SHA256)
 
 
 if __name__ == "__main__":

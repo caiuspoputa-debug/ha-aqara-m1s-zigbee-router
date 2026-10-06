@@ -1,73 +1,57 @@
-Aqara M1S Zigbee Coordinator + Router v0.36.9 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.37.0 TEST validation
 
-Validation performed for this package on 2026-10-05:
-- All Python files compile.
-- manifest.json reports version 0.36.9.
+Validation performed for this package on 2026-10-06:
+- All integration and regression-test Python files compile.
+- manifest.json reports version 0.37.0.
 - manifest.json, strings.json and both translations parse as JSON.
-- The upload labels state that one WAV file can be uploaded at a time and do
-  not advertise ZIP upload.
-- All 50 isolated regression tests pass: 19 MQTT IO/coordinator, 7 shared
-  MQTT, 9 WAV deletion, 8 WAV upload/storage, 4 clean audio shutdown and 3
-  WAV priority/transport tests.
+- The Router compatibility shell script passes shell syntax validation.
+- All 55 isolated regression tests pass: 19 MQTT IO/coordinator, 7 shared
+  MQTT, 9 WAV deletion, 8 WAV upload/storage, 9 audio transport and 3 WAV
+  priority/transport tests.
 
-Availability regression coverage:
-- Hub Connectivity is online when either MQTT IO or Telnet independently proves
-  the physical hub reachable, and offline only when both paths are down.
-- The sensor exposes the active proof as `connection_source` without coupling
-  general hub availability to optional MQTT-only diagnostics.
-- MQTT callbacks never call `async_set_updated_data`, which previously changed
-  `last_update_success` to true even for an `offline` LWT message.
-- Every valid state, telemetry, `online` or `offline` message requests a main
-  coordinator refresh, with bursts coalesced without losing the final state.
-- A retained state payload cannot override a retained `offline` availability
-  message during Home Assistant or MQTT reconnection.
-- MQTT LWT is authoritative for all Coordinators and confirmed MQTT Routers;
-  legacy Routers without the persistent agent retain the Telnet probe fallback.
-- Consequently, Hub Connectivity and all CoordinatorEntity controls transition
-  unavailable and available together.
-
-Router MQTT WAV behavior:
-- A Router must publish retained state with role=router and sound_mqtt=true
-  before Home Assistant uses the MQTT WAV command path.
-- Routers without that marker automatically keep the existing Telnet WAV path.
-- MQTT carries only prepare and stop commands plus their status. Audio remains
-  on the existing Home Assistant FFmpeg -> TCP 12347/12348 -> hub aplay path.
-- Radio, media play/pause/stop, WAV and media-player volume, mute, PCM data and
-  M1S Media Group synchronization are unchanged.
-- The 500 ms clean WAV end cushion and suspend/restore priority sequence remain.
-
-Live Router evidence:
-- Router agent 1.1.1 was installed and left running on 192.168.0.200-209 and
-  192.168.0.222-225.
-- Each of those 14 hubs advertised sound_mqtt=true through its own configured
-  MQTT broker and topic derived from its current IP.
-- Each passed prepare, both TCP listeners 12347/12348, stop and listener cleanup.
-- Router 192.168.0.221 remains part of the deployment scope but was unreachable,
-  so it was skipped without modification and must be updated when it returns.
-- Every changed hub received an on-hub backup before service replacement; no
-  rollback was needed.
-
-WAV upload guarantees retained from 0.36.5:
-- Configure accepts exactly one WAV per operation; ZIP is not accepted.
-- Capacity preflight runs before the progress dialog through a dedicated client;
-  insufficient space returns the 8 MiB reserve error immediately.
-- The transfer uses a separate short-lived client, so runtime polling cannot hold
-  the upload behind the shared client lock.
-- WAV validation requires uncompressed PCM, mono, 32000 Hz, 32-bit little-endian
-  and limits a file to 20 MiB.
-- Capacity checks account for replacement and preserve at least 8 MiB on /data.
-- TCP and Telnet/Base64 transfer paths report monotonic measured progress and
-  success requires remote size and MD5 verification.
+Audio behavior added in 0.37.0:
+- Individual and group entities report BUFFERING during initial prefill and
+  source recovery instead of reporting false active playback.
+- Individual playout rebases expose count, lag, last TCP drain duration and a
+  likely cause: TCP timeout, slow TCP drain or Home Assistant scheduler/await.
+- Group media requests use latest-request-wins generations before and after
+  asynchronous media-source and title resolution.
+- Group Stop and hard reset release all individual players suspended by the
+  group, unless a newer group request already superseded that shutdown.
+- A group receiver is rebuilt independently after three consecutive stale ALSA
+  samples at five-second intervals. One sample never triggers a rebuild.
+- Restored playback prefers the complete selected cohort for at most 30 seconds,
+  then starts the available hubs and lets missing hubs use late join.
+- Manual group Play uses a one-second initial cohort grace window.
+- Adaptive synchronization, per-hub resampling and periodic automatic receiver
+  resync remain disabled. One shared PCM history and one common playout clock
+  remain authoritative.
 
 Audio regression boundary:
 - media_player.py SHA-256:
-  2D0A7A029801142BF48B32505258F572855730259F141B48E527C36DA8D2C352
+  1F8953BB3C9ECDE01876D8B08492B27395C163B56F53AA68789E215D7624C2A8
 - media_group.py SHA-256:
-  33DA7A17F7B782E7ECA6BAAD5DC690C7E294D9DCA6C6EC140CACEC23726378A8
+  BE908398F72FE5DB5E56537962061731A1A14D3525DDB42FC17D4AA1433CC89D
 - sound_player.py SHA-256:
   449211E7AA677A864DBEBCB5E7558A310D65C7758FC6A4C1BF2DF7D11F7035AA
-- media_player.py and media_group.py are byte-identical to v0.36.3.
-- sound_player.py changes only Router remote receiver prepare/stop selection and
-  retains the existing FFmpeg arguments, PCM format, timing, priority and restore.
+
+Availability regression coverage retained from 0.36.9:
+- Hub Connectivity is online when either MQTT IO or Telnet independently proves
+  the physical hub reachable, and offline only when both paths are down.
+- The sensor exposes connection_source without coupling general availability to
+  optional MQTT-only diagnostics.
+- Retained state cannot override retained offline availability during reconnect.
+- Hub Connectivity and dependent CoordinatorEntity controls transition together.
+
+WAV upload and playback guarantees retained:
+- Configure accepts exactly one WAV per operation; ZIP is not accepted.
+- Capacity preflight runs before progress and preserves at least 8 MiB on /data.
+- The dedicated transfer client prevents normal polling from holding the upload.
+- WAV validation requires PCM mono, 32000 Hz, signed 32-bit little-endian and a
+  maximum file size of 20 MiB.
+- Transfer success requires matching remote size and MD5.
+- Stored WAV priority still suspends media, plays the WAV, then restores the
+  remembered individual or group playback.
+- MQTT transports only receiver prepare/stop commands, never radio PCM.
 
 No JN5189 firmware write or flash is performed by this integration package.

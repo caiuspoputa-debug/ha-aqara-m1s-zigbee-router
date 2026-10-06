@@ -1,3 +1,29 @@
+## 0.37.0 TEST - Deterministic radio playback and bounded group recovery
+
+- Report `buffering` while an individual or group source is filling or
+  recovering its PCM buffer instead of showing a false playing state.
+- Classify individual playout-clock rebases as TCP timeout, slow TCP drain or
+  Home Assistant scheduler/other-await delay, and expose the last lag, cause
+  and TCP drain duration as entity diagnostics.
+- Make group Play requests deterministic with a latest-request-wins token, so
+  slow media-source/title resolution cannot start an older station after a
+  newer Play or Stop request.
+- Release every individual player suspended by the group after normal Stop or
+  hard reset, while preserving a newer group Play request that arrives during
+  shutdown.
+- Rebuild only one group receiver after three consecutive five-second ALSA
+  stale samples. One bad sample never rebuilds a hub and no member fault
+  restarts the shared source.
+- Bound restored group startup to 30 seconds. Prefer the complete selected
+  cohort, then start the available hubs and let missing hubs join later.
+- Increase the manual Play cohort grace from 300 ms to one second so healthy
+  hubs entering together receive the same initial prefill more consistently.
+- Keep adaptive synchronization, per-hub resampling and periodic automatic
+  receiver resync disabled. The shared PCM timeline and common playout clock
+  remain the only group timing source.
+- Preserve the dual-path hub connectivity, MQTT IO, Zigbee, WAV upload,
+  deletion and stored-sound behavior from `0.36.9`.
+
 ## 0.36.9 TEST - Defined dual-path hub connectivity
 
 - Define `Hub Connectivity` as physical hub reachability: MQTT IO online or a

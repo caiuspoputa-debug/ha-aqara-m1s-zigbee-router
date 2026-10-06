@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.7 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.0 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.36.7 TEST` verifică rezerva de 8 MiB înainte să deschidă progresul uploadului și execută preflightul și transferul printr-un client Telnet temporar, separat. Un hub fără spațiu răspunde acum imediat cu mesajul de ștergere a fișierelor, fără spinner blocat. Sunt păstrate comenzile WAV rapide MQTT din `0.36.6`, traseul audio și toate funcțiile Zigbee, radio și grup media. Pachetul nu scrie și nu face flash pe JN5189.
+Versiunea `0.37.0 TEST` face redarea radio individuală și de grup deterministă și ușor de diagnosticat. Afișează starea reală de buffering, clasifică blocajele playerului individual, face ca ultima comandă de grup să câștige, eliberează playerele individuale după Stop, limitează așteptarea la restaurare și reconstruiește numai receiverul cu trei erori ALSA confirmate. Sincronizarea adaptivă și resamplingul separat pe hub rămân dezactivate. Sunt păstrate disponibilitatea pe două căi și toate funcțiile Zigbee, MQTT IO, upload/ștergere WAV și sunetele locale din `0.36.9`. Pachetul nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
@@ -110,7 +110,9 @@ Starea `applied` înseamnă că configurația a fost scrisă cu succes pe hub; c
 
 Pentru un WAV local se păstrează exact prioritatea confirmată: redarea individuală sau de grup este suspendată, WAV-ul rulează prin traseul existent TCP/FFmpeg/aplay, apoi redarea memorată este reluată. Pe Coordinator, MQTT înlocuiește numai comanda care pregătește sau oprește traseul dedicat WAV. Pe Router, tot traseul WAV rămâne pe implementarea existentă. MQTT nu transportă audio radio/grup și nu modifică sincronizarea.
 
-Protecția existentă la lipsa datelor rămâne neschimbată. Dacă o sursă individuală nu mai livrează PCM, receiverul hubului este oprit înainte de rebuffer și este reconstruit numai după revenirea datelor PCM reale. La o întrerupere temporară a sursei de grup, PCM zero continuă pe aceeași secvență comună. Protecția introdusă în `0.36.3` oprește suplimentar receiverul individual de pe hub la oprirea ordonată a integrării, înainte de închiderea writerului local. Nu adaugă watchdog activ pe hub și nu modifică ordinea PLAY, sincronizarea grupului, bufferele, FFmpeg/aplay, volumul sau timpii de recovery.
+Dacă o sursă individuală nu mai livrează PCM, entitatea afișează acum `buffering`, oprește receiverul remote și îl reconstruiește numai după revenirea datelor PCM reale. La un rebase sunt memorate întârzierea, durata ultimei scrieri TCP și cauza probabilă (`tcp_drain_timeout`, `tcp_drain_slow` sau `ha_scheduler_or_other_await`). Protecția la oprirea ordonată continuă să oprească receiverul individual înainte de închiderea writerului local și nu adaugă watchdog activ pe hub.
+
+Grupul media păstrează o singură istorie PCM comună și un singur ceas de redare. Sincronizarea adaptivă, resamplingul separat pe hub și resincronizarea automată periodică rămân dezactivate. Un receiver este reconstruit separat numai după trei probe ALSA stale consecutive, la interval de cinci secunde. Redarea restaurată așteaptă cel mult 30 de secunde cohorta selectată completă, apoi pornește huburile disponibile și le primește ulterior pe cele lipsă prin mecanismul existent de late join. Play manual lasă o fereastră de o secundă pentru cohorta inițială. Cea mai nouă comandă Play/Stop câștigă întotdeauna, iar Stop sau resetarea grupului eliberează toate playerele individuale suspendate.
 
 După ce FFmpeg termină normal un WAV, integrarea păstrează traseul încă 500 ms înainte de comanda de oprire și de reluarea redării anterioare. Această rezervă era 400 ms în `0.36.0`; nu se aplică la Stop manual, eroare FFmpeg, radio sau grupul media.
 
@@ -128,18 +130,20 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.36.7` a trecut:
+Sursa `0.37.0` a trecut:
 
-- 14 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART și rejoin Router.
+- 19 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART, conectivitate și rejoin Router.
 - 3 teste dedicate priorității și transportului WAV: Coordinator MQTT, Router MQTT și fallback Telnet pentru un Router fără capabilitatea nouă.
 - 9 teste pentru ștergerea directă WAV, protecția folderului de sistem și manifestul fragmentat.
 - 8 teste pentru verificarea spațiului, transferul TCP real pe socket, progresul monoton, fallback și protecția căilor de sistem.
 - 7 teste pentru persistența și revenirea configurării MQTT comune.
-- 4 teste pentru oprirea curată: ordinea remote înainte de local, comenzi limitate
-  la procesele proprii, absența pollingului activ și grupul media byte-identic.
+- 9 teste de regresie audio pentru oprirea remote înainte de local, comenzile
+  limitate, diagnosticul de buffering, ultima comandă prioritară, restaurarea
+  limitată, eliberarea playerelor individuale și repararea unui singur receiver.
 - Compilarea Python și parsarea fișierelor JSON/YAML.
 - Verificarea de sintaxă a tuturor scripturilor Router și compilarea agentului static MIPS32 cu avertismente tratate ca erori.
-- Toate cele 45 de teste izolate trec. `media_player.py` și `media_group.py` rămân byte-identice cu `0.36.3`; în `sound_player.py` s-a schimbat numai alegerea transportului pentru pregătirea și oprirea receiverului WAV.
+- Toate cele 55 de teste izolate trec. Hashurile verificate pentru ambele
+  transporturi audio sunt notate în `VALIDATION.txt`.
 
 Uploadul a fost verificat și pe Routerul `192.168.0.221`: 128.044 octeți în 5,46 secunde, MD5 identic, progres intermediar și ștergerea confirmată a fișierului temporar.
 

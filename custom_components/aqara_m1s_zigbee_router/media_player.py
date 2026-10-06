@@ -113,6 +113,7 @@ SINGLE_RECEIVER_STALE_AVAIL_MULTIPLIER = 2
 GAIN_RAMP_SECONDS = 0.04
 GAIN_RAMP_SAMPLES = max(1, int(PCM_RATE * GAIN_RAMP_SECONDS))
 WRITER_DRAIN_TIMEOUT = 5.0
+SINGLE_SLOW_DRAIN_THRESHOLD_SECONDS = 0.50
 # Teardown must never hold the single-player transport lock indefinitely.
 # Stop/Play only detaches the active session. The producer keeps draining
 # FFmpeg stdout and discards PCM after detach; the watcher remains the sole
@@ -249,6 +250,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._single_receiver_rebuilds = 0
         self._last_receiver_health: dict[str, Any] | None = None
         self._last_receiver_rebuild_reason: str | None = None
+        self._playout_rebase_count = 0
+        self._last_playout_rebase_lag_ms: int | None = None
+        self._last_playout_rebase_cause: str | None = None
+        self._last_tcp_drain_ms: int | None = None
         self._shutting_down = False
         self._group_manager = None
         self._priority_sound_suspended = False
@@ -691,6 +696,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "last_receiver_health": self._last_receiver_health,
             "last_receiver_rebuild_reason": self._last_receiver_rebuild_reason,
             "single_source_stall_timeout_seconds": SINGLE_SOURCE_STALL_TIMEOUT,
+            "single_playout_rebase_count": self._playout_rebase_count,
+            "single_last_playout_rebase_lag_ms": self._last_playout_rebase_lag_ms,
+            "single_last_playout_rebase_cause": self._last_playout_rebase_cause,
+            "single_last_tcp_drain_ms": self._last_tcp_drain_ms,
             "single_write_high_water_ms": int(
                 SINGLE_WRITE_HIGH_WATER_BYTES / (PCM_RATE * PCM_SAMPLE_BYTES) * 1000
             ),
@@ -1529,14 +1538,14 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 and self._resume_after_reconnect
                 and self._resume_media_id
                 and self.coordinator.last_update_success
-                and self._attr_state != MediaPlayerState.PLAYING
+                and self._ffmpeg is None
             ):
                 await self._restart_current_generation(generation)
             await asyncio.sleep(0.5)
             if (
                 generation == self._play_generation
                 and self._resume_after_reconnect
-                and self._attr_state != MediaPlayerState.PLAYING
+                and self._ffmpeg is None
                 and self.coordinator.last_update_success
             ):
                 next_kind = self._last_failure_kind or "unknown"
@@ -1797,7 +1806,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._attr_volume_level or 0.0, self._attr_is_volume_muted,
             FFMPEG_NICE_TARGET, self._ffmpeg_nice_applied,
         )
-        self._attr_state = MediaPlayerState.PLAYING
+        self._attr_state = MediaPlayerState.BUFFERING
         self._start_icy_metadata(process, generation)
         self.async_write_ha_state()
         self._watch_task = self.hass.async_create_background_task(
@@ -1869,6 +1878,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         tcp_recovery_events = 0
         tcp_recovery_window_started = 0.0
         consecutive_drain_timeouts = 0
+        last_tcp_drain_timed_out = False
         playout_catchup_events = 0
         last_catchup_log = 0.0
         last_low_queue_log = 0.0
@@ -2064,16 +2074,24 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             )
 
         async def _write_chunk_to_hub(raw_chunk: bytes, *, stage: str) -> None:
-            nonlocal consecutive_drain_timeouts
+            nonlocal consecutive_drain_timeouts, last_tcp_drain_timed_out
             pcm = self._apply_live_pcm_gain(raw_chunk)
+            drain_started = time.monotonic()
             try:
                 writer.write(pcm)
                 await asyncio.wait_for(
                     writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
                 )
+                drain_elapsed = time.monotonic() - drain_started
+                self._last_tcp_drain_ms = int(drain_elapsed * 1000)
+                last_tcp_drain_timed_out = False
                 consecutive_drain_timeouts = 0
                 return
             except asyncio.TimeoutError as err:
+                self._last_tcp_drain_ms = int(
+                    (time.monotonic() - drain_started) * 1000
+                )
+                last_tcp_drain_timed_out = True
                 consecutive_drain_timeouts += 1
                 if consecutive_drain_timeouts < 2:
                     _LOGGER.debug(
@@ -2143,6 +2161,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             )
 
             primed_chunks = await _prefill_remote_receiver()
+            if self._ffmpeg is process and self._generation_is_current(generation):
+                self._attr_state = MediaPlayerState.PLAYING
+                self.async_write_ha_state()
             _LOGGER.info(
                 "Aqara media remote receiver prefilled entity=%s session=%s "
                 "host=%s remote_prefill_ms=%s remaining_ha_buffer_ms=%s",
@@ -2171,16 +2192,36 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 else:
                     lag = now - next_send_monotonic
                     if lag > SINGLE_PACE_REBASE_SECONDS:
+                        if last_tcp_drain_timed_out:
+                            likely_cause = "tcp_drain_timeout"
+                        elif (
+                            self._last_tcp_drain_ms is not None
+                            and self._last_tcp_drain_ms
+                            >= int(SINGLE_SLOW_DRAIN_THRESHOLD_SECONDS * 1000)
+                        ):
+                            likely_cause = "tcp_drain_slow"
+                        else:
+                            likely_cause = "ha_scheduler_or_other_await"
+                        self._playout_rebase_count += 1
+                        self._last_playout_rebase_lag_ms = int(lag * 1000)
+                        self._last_playout_rebase_cause = likely_cause
                         _LOGGER.warning(
                             "Aqara media playout clock rebased after jitter "
                             "window exceeded entity=%s session=%s host=%s "
-                            "lag_ms=%s jitter_buffer_ms=%s action=rebase",
+                            "lag_ms=%s jitter_buffer_ms=%s queued_ms=%s "
+                            "last_tcp_drain_ms=%s likely_cause=%s rebases=%s "
+                            "action=rebase",
                             self.entity_id,
                             session,
                             self.client.host,
                             int(lag * 1000),
                             int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
+                            int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
+                            self._last_tcp_drain_ms,
+                            likely_cause,
+                            self._playout_rebase_count,
                         )
+                        last_tcp_drain_timed_out = False
                         next_send_monotonic = now
                     elif lag >= SINGLE_CATCHUP_LOG_THRESHOLD_SECONDS:
                         playout_catchup_events += 1
@@ -2273,6 +2314,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 if not rebuffering and queue.empty() and not producer_done.is_set():
                     rebuffering = True
                     rebuffer_events += 1
+                    if self._ffmpeg is process:
+                        self._attr_state = MediaPlayerState.BUFFERING
+                        self.async_write_ha_state()
                     await _stop_receiver_for_source_rebuffer()
                     last_source_progress_monotonic = time.monotonic()
                     next_send_monotonic = time.monotonic()
@@ -2303,6 +2347,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         rebuffering = False
                         last_real_pcm_monotonic = time.monotonic()
                         next_send_monotonic = time.monotonic()
+                        if self._ffmpeg is process:
+                            self._attr_state = MediaPlayerState.PLAYING
+                            self.async_write_ha_state()
                         _LOGGER.info(
                             "Aqara media single rebuffer ended entity=%s session=%s "
                             "host=%s queued_ms=%s remote_prefill_ms=%s "
@@ -2519,7 +2566,17 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             tcp_recovery_events,
             playout_catchup_events,
         )
-        self._attr_state = MediaPlayerState.IDLE
+        recovery_requested = (
+            not self._shutting_down
+            and generation == self._play_generation
+            and self._resume_after_reconnect
+            and bool(self._resume_media_id)
+        )
+        self._attr_state = (
+            MediaPlayerState.BUFFERING
+            if recovery_requested
+            else MediaPlayerState.IDLE
+        )
         self.async_write_ha_state()
 
         if failure_kind in ("tcp_pcm_backpressure", "hub_audio", "unknown"):
@@ -2621,7 +2678,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 generation != self._play_generation
                 or not self._resume_after_reconnect
                 or not self._resume_media_id
-                or self._attr_state == MediaPlayerState.PLAYING
+                or self._ffmpeg is not None
             ):
                 return
             if not self.coordinator.last_update_success:
@@ -2644,7 +2701,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             if (
                 generation == self._play_generation
                 and self._resume_after_reconnect
-                and self._attr_state != MediaPlayerState.PLAYING
+                and self._ffmpeg is None
                 and self.coordinator.last_update_success
             ):
                 next_kind = self._last_failure_kind or failure_kind
@@ -2683,7 +2740,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 generation != self._play_generation
                 or not self._resume_after_reconnect
                 or not self._resume_media_id
-                or self._attr_state == MediaPlayerState.PLAYING
+                or self._ffmpeg is not None
             ):
                 return
             if not self.coordinator.last_update_success:

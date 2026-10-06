@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.36.7 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.0 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.36.7 TEST` checks the 8 MiB sound-storage reserve before opening the upload progress dialog and runs preflight and transfer through a dedicated short-lived Telnet client. A full hub now returns a clear delete-files message immediately instead of an indefinite spinner. It retains the `0.36.6` persistent-MQTT stored-WAV commands, audio path and all Zigbee, radio and media-group behavior. This package does not write or flash the JN5189.
+Version `0.37.0 TEST` makes individual and group radio playback deterministic and observable. It reports real buffering, classifies individual playout stalls, makes the newest group command win, releases individual players after group Stop, bounds restored-group startup and rebuilds only a receiver with three confirmed ALSA faults. Adaptive synchronization and per-hub resampling remain disabled. The dual-path connectivity and all Zigbee, MQTT IO, WAV upload/deletion and stored-sound behavior from `0.36.9` are retained. This package does not write or flash the JN5189.
 
 ## Requirements
 
@@ -110,7 +110,9 @@ The username and password must use printable ASCII and may contain at most 80 ch
 
 For a stored WAV, the confirmed priority sequence is preserved exactly: current individual/group playback is suspended, the WAV runs through the existing TCP/FFmpeg/aplay path, and the remembered playback is restored after completion. On the Coordinator, MQTT replaces only the command that prepares or stops this dedicated WAV pipeline. On a Router, the complete WAV path remains on the existing implementation. MQTT does not transport radio/group audio and does not alter synchronization.
 
-The existing no-data protection is retained unchanged. If an individual source stops delivering PCM, its remote receiver is stopped before rebuffering and rebuilt only after real PCM returns. During a temporary group-source gap, zero PCM continues on the same shared sequence. The protection introduced in `0.36.3` additionally pre-stops the individual hub receiver during an orderly Home Assistant unload, before the local writer is closed. It adds no active hub watchdog and does not change PLAY ordering, group synchronization, buffers, FFmpeg/aplay, volume or recovery timing.
+If an individual source stops delivering PCM, the entity now reports `buffering`, stops its remote receiver and rebuilds it only after real PCM returns. A playout rebase records the lag, latest TCP drain duration and the most likely cause (`tcp_drain_timeout`, `tcp_drain_slow` or `ha_scheduler_or_other_await`). The orderly unload protection still stops the individual hub receiver before closing the local writer and adds no active watchdog on the hub.
+
+The media group keeps one shared PCM history and one common playout clock. Adaptive synchronization, per-hub resampling and periodic automatic resync remain disabled. A receiver is rebuilt independently only after three consecutive stale ALSA samples, taken five seconds apart. Restored playback waits up to 30 seconds for the complete selected cohort, then starts the available hubs and admits missing hubs through the existing late-join path. Manual Play allows a one-second initial cohort window. The newest Play/Stop request always wins, and group Stop or hard reset releases every suspended individual player.
 
 After FFmpeg completes a WAV normally, the integration keeps the path open for 500 ms before remote stop and playback restoration. This cushion was 400 ms in `0.36.0`; it does not apply to manual Stop, FFmpeg errors, radio or media-group playback.
 
@@ -128,18 +130,20 @@ The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_soun
 
 ## Validation and TEST status
 
-The `0.36.7` source passed:
+The `0.37.0` source passed:
 
-- 14 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation and Router-rejoin tests.
+- 19 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation, connectivity and Router-rejoin tests.
 - 3 WAV priority and transport tests covering Coordinator MQTT, Router MQTT and Telnet fallback for a Router without the new capability.
 - 9 direct WAV deletion, protected-system-folder and chunked-manifest tests.
 - 8 storage, real-socket TCP transfer, monotonic progress, fallback and protected-path tests.
 - 7 shared-MQTT persistence and recovery tests.
-- 4 clean-shutdown tests covering remote-before-local ordering, scoped commands,
-  the absence of active hub polling and byte-identical group transport.
+- 9 audio regression tests covering remote-before-local shutdown, scoped
+  commands, buffering diagnostics, latest-request-wins, bounded restoration,
+  individual-player release and member-only receiver recovery.
 - Python compilation plus JSON/YAML parsing.
 - Shell syntax validation for every Router script and a static MIPS32 agent build with warnings treated as errors.
-- All 45 isolated tests pass. `media_player.py` and `media_group.py` remain byte-identical to `0.36.3`; `sound_player.py` changes only how the stored-WAV receiver is prepared and stopped.
+- All 55 isolated tests pass. The reviewed hashes of both audio transports are
+  recorded in `VALIDATION.txt`.
 
 Upload was also verified on Router `192.168.0.221`: 128044 bytes in 5.46 seconds, identical MD5, intermediate progress and confirmed removal of the temporary probe file.
 
