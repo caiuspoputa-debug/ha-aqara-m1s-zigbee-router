@@ -1,3 +1,28 @@
+## 0.37.3 TEST - Single-member quarantine recovery
+
+- Replaces the automatic complete receiver-cohort rebuild introduced in
+  `0.37.2`. Live testing showed that one slow Coordinator could pause all six
+  receivers, produce repeated `late join could not obtain shared PCM history`
+  failures and cause healthy Router sockets to report `Connection lost`.
+- A confirmed cursor lag, shared-history overrun, two consecutive TCP drain
+  timeouts or three consecutive stale/XRUN ALSA samples now quarantines only
+  the affected member. Healthy receivers, the common playout clock and FFmpeg
+  continue without a group-wide pause or automatic timeline restart.
+- Keeps the 1.25-second TCP drain timeout so a blocked member is detected while
+  its position is still inside the four-second shared history. The first
+  timeout remains tolerated.
+- Fixes retry accounting for late joins. The failure counter is reset only
+  after history prefill, catch-up and live admission all succeed. Failed joins
+  therefore back off through approximately 1.5, 3, 6, 12 and 15 seconds rather
+  than repeatedly restarting the remote receiver at the shortest interval.
+- Restores the ALSA stale/XRUN requirement from two to three consecutive probes
+  to avoid acting on one transient receiver sample.
+- Adds `quarantined_hubs`, `member_prepare_failures`, `member_last_error` and
+  `automatic_cohort_rebuild_enabled` group diagnostics.
+- Keeps the explicit `resync_media_group` service as the only path that restarts
+  the complete shared timeline. Individual playback remains byte-identical to
+  `0.37.1` and `0.37.2`.
+
 ## 0.37.2 TEST - Hard-loss group receiver realignment
 
 - Fix the impossible recovery budget where one tolerated 5-second TCP drain

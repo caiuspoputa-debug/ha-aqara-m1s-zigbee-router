@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.2 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.3 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.37.2 TEST` repară recuperarea grupului după un timeout TCP, un overrun al istoricului comun sau un ALSA XRUN confirmat. Când poziția audio este pierdută, integrarea păstrează sursa FFmpeg, oprește foarte scurt distribuția și reconstruiește toate receptoarele grupului din aceeași poziție. Playerul individual rămâne neschimbat față de `0.37.1`, inclusiv protecția relay-ului persistent al Coordinatorului. Pachetul nu scrie și nu face flash pe JN5189.
+Versiunea `0.37.3 TEST` înlocuiește reconstrucția automată nereușită a întregului grup din `0.37.2`. Un hub lent sau blocat este acum izolat și reintrat separat, iar receptoarele sănătoase, ceasul comun și sursa FFmpeg continuă fără întrerupere. Reîncercările nereușite păstrează un backoff progresiv în loc să repornească imediat. Playerul individual rămâne neschimbat față de `0.37.1`, inclusiv protecția relay-ului persistent al Coordinatorului. Pachetul nu scrie și nu face flash pe JN5189.
 
 ## Cerințe
 
@@ -112,7 +112,7 @@ Pentru un WAV local se păstrează exact prioritatea confirmată: redarea indivi
 
 Dacă o sursă individuală nu mai livrează PCM, entitatea afișează acum `buffering`, oprește receiverul remote și îl reconstruiește numai după revenirea datelor PCM reale. La un rebase sunt memorate întârzierea, durata ultimei scrieri TCP și cauza probabilă (`tcp_drain_timeout`, `tcp_drain_slow` sau `ha_scheduler_or_other_await`). Protecția la oprirea ordonată continuă să oprească receiverul individual înainte de închiderea writerului local și nu adaugă watchdog activ pe hub.
 
-Grupul media păstrează o singură istorie PCM comună și un singur ceas de redare. Sincronizarea adaptivă, resamplingul separat pe hub și resincronizarea periodică rămân dezactivate. Un singur timeout TCP de 1,25 secunde este tolerat; două timeouturi consecutive, depășirea istoricului comun sau două probe ALSA stale/XRUN confirmă pierderea poziției. În acel caz sunt reconstruite împreună numai receptoarele grupului, din aceeași poziție, fără repornirea sursei FFmpeg. Redarea restaurată așteaptă cel mult 30 de secunde cohorta selectată completă, apoi pornește huburile disponibile și le primește ulterior pe cele lipsă prin mecanismul existent de late join. Play manual lasă o fereastră de o secundă pentru cohorta inițială. Cea mai nouă comandă Play/Stop câștigă întotdeauna, iar Stop sau resetarea grupului eliberează toate playerele individuale suspendate.
+Grupul media păstrează o singură istorie PCM comună și un singur ceas de redare. Sincronizarea adaptivă, resamplingul separat pe hub, resincronizarea periodică și reconstrucția automată a întregului grup rămân dezactivate. Un singur timeout TCP de 1,25 secunde este tolerat. Două timeouturi consecutive, depășirea istoricului comun, o întârziere de cel puțin 1000 ms sau trei probe ALSA stale/XRUN izolează numai hubul afectat. Restul receptoarelor continuă pe același ceas. Hubul izolat reintră din istoricul PCM comun, cu pauze progresive de aproximativ 1,5, 3, 6, 12 și 15 secunde; numărătoarea se resetează doar după reintrarea reușită. Repornirea completă a cronologiei rămâne disponibilă numai prin serviciul manual de resincronizare. Redarea restaurată așteaptă cel mult 30 de secunde cohorta selectată completă, apoi pornește huburile disponibile și le primește ulterior pe cele lipsă prin mecanismul existent de late join. Play manual lasă o fereastră de o secundă pentru cohorta inițială. Cea mai nouă comandă Play/Stop câștigă întotdeauna, iar Stop sau resetarea grupului eliberează toate playerele individuale suspendate.
 
 După ce FFmpeg termină normal un WAV, integrarea păstrează traseul încă 500 ms înainte de comanda de oprire și de reluarea redării anterioare. Această rezervă era 400 ms în `0.36.0`; nu se aplică la Stop manual, eroare FFmpeg, radio sau grupul media.
 
@@ -130,7 +130,7 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 ## Validare și statut TEST
 
-Sursa `0.37.2` a trecut:
+Sursa `0.37.3` a trecut:
 
 - 19 teste izolate pentru MQTT RGB/lux, telemetrie, roluri, topicuri, izolarea UART, conectivitate și rejoin Router.
 - 3 teste dedicate priorității și transportului WAV: Coordinator MQTT, Router MQTT și fallback Telnet pentru un Router fără capabilitatea nouă.

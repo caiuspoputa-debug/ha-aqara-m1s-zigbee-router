@@ -1,45 +1,38 @@
-Aqara M1S Zigbee Coordinator + Router v0.37.2 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.37.3 TEST validation
 
-Validation performed for this package on 2026-10-06:
+Validation prepared for this package on 2026-10-07:
 - All integration and regression-test Python files compile.
-- manifest.json reports version 0.37.2.
+- manifest.json reports version 0.37.3.
 - manifest.json, strings.json and both translations parse as JSON.
 - The Router compatibility shell script passes shell syntax validation.
-- All 62 isolated regression tests pass: 20 MQTT IO/coordinator, 7 shared
-  MQTT, 9 WAV deletion, 8 WAV upload/storage, 15 audio transport/simulation and 3 WAV
-  priority/transport tests.
+- All 64 isolated regression tests pass: 20 MQTT IO/coordinator, 7 shared
+  MQTT, 9 WAV deletion, 8 WAV upload/storage, 10 audio transport, 7 group-loss
+  simulations and 3 WAV priority/transport tests.
 
-Group hard-loss repair added in 0.37.2:
-- Two 1.25-second TCP drain budgets fit inside the 4-second shared history.
-- A synthetic 35-999 ms cursor delay remains on the live timeline without a
-  receiver rebuild; a 1000 ms delay requests one bounded cohort realignment.
-- A shared-history overrun, two consecutive drain failures or two confirmed
-  ALSA stale/XRUN samples schedules one receiver-cohort realignment.
-- The common broadcaster pauses while all active group receivers are rebuilt
-  from the same history position; the FFmpeg source and media intent stay live.
-- Simultaneous member faults coalesce into one repair with a 10-second cooldown.
-- If a cohort repair is no longer possible, only the affected member is
-  isolated as a bounded fallback.
+Group recovery changed in 0.37.3 after the 0.37.2 live test:
+- Automatic complete-cohort pause/rebuild was removed.
+- Synthetic 35-999 ms cursor delays remain on the live timeline.
+- A 1000 ms cursor delay quarantines only the affected receiver.
+- One 1.25-second TCP drain timeout is tolerated; two consecutive timeouts
+  quarantine only the affected receiver.
+- Three consecutive stale/XRUN ALSA samples are required before quarantine.
+- Shared-history overrun also quarantines only the affected receiver.
+- Healthy receivers, the common playout clock, media intent and FFmpeg source
+  remain live during every automatic member recovery path.
+- No automatic recovery path calls the complete timeline restart, group STOP or
+  the removed broadcaster-pause mechanism.
+- Full timeline resync remains an explicit user service only.
 
-Audio behavior added in 0.37.0:
-- Individual and group entities report BUFFERING during initial prefill and
-  source recovery instead of reporting false active playback.
-- Individual playout rebases expose count, lag, last TCP drain duration and a
-  likely cause: TCP timeout, slow TCP drain or Home Assistant scheduler/await.
-- Group media requests use latest-request-wins generations before and after
-  asynchronous media-source and title resolution.
-- Group Stop and hard reset release all individual players suspended by the
-  group, unless a newer group request already superseded that shutdown.
-- One isolated ALSA sample is ignored; two consecutive stale/XRUN samples prove
-  a hard synchronization loss and realign the receiver cohort.
-- Restored playback prefers the complete selected cohort for at most 30 seconds,
-  then starts the available hubs and lets missing hubs use late join.
-- Manual group Play uses a one-second initial cohort grace window.
-- Adaptive synchronization, per-hub resampling and periodic automatic receiver
-  resync remain disabled. One shared PCM history and one common playout clock
-  remain authoritative.
+Retry-storm repair:
+- A reconnect is successful only after PCM-history prefill, live catch-up and
+  final admission all complete.
+- The retry counter is not reset when a socket merely opens.
+- Failed joins back off through approximately 1.5, 3, 6, 12 and 15 seconds.
+- Successful admission resets the counter and clears the member error.
+- Group diagnostics expose quarantined_hubs, member_prepare_failures and
+  member_last_error.
 
-Coordinator unload safety added in 0.37.1:
+Coordinator unload safety retained from 0.37.1:
 - Integration unload, reload and update close only local Coordinator sockets.
 - The persistent Coordinator TCP/UART relay on port 1886 is never stopped.
 - Temporary Router sideband UART tunnels retain their existing cleanup.
@@ -48,9 +41,9 @@ Audio regression boundary:
 - media_player.py SHA-256:
   1F8953BB3C9ECDE01876D8B08492B27395C163B56F53AA68789E215D7624C2A8
 - media_group.py SHA-256:
-  CD903B18717CE11CD6BD91AA9C4E99F680CEC5CA0B989116290FFEA19F5CC874
+  0BE39750C1656142337BEF7A8584BDA877069C42ABA0B3AC01DD92858C5C8F64
 - group_sync.py SHA-256:
-  4FF76776AFCE889899C61E2A9CDC6607263D1B39E85A1AC11CADF40DD7A0F4D3
+  BF80BB04E2E7840D6BCA07744D2EB88F3036BADB246486AB43ECDE2033B265A8
 - sound_player.py SHA-256:
   449211E7AA677A864DBEBCB5E7558A310D65C7758FC6A4C1BF2DF7D11F7035AA
 

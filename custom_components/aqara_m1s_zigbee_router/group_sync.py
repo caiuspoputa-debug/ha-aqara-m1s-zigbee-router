@@ -11,14 +11,14 @@ from dataclasses import dataclass
 
 GROUP_HARD_SYNC_LOSS_MS = 1000
 GROUP_DRAIN_TIMEOUT_CONFIRMATIONS = 2
-GROUP_STALE_CONFIRMATIONS = 2
+GROUP_STALE_CONFIRMATIONS = 3
 
 
 @dataclass(frozen=True)
 class GroupSyncDecision:
-    """Describe whether receiver positions are still safe to preserve."""
+    """Describe whether one receiver must leave the healthy live cohort."""
 
-    requires_realign: bool
+    requires_member_isolation: bool
     trigger: str | None = None
 
 
@@ -28,7 +28,7 @@ def decide_group_sync_recovery(
     consecutive_drain_timeouts: int = 0,
     stale_samples: int = 0,
 ) -> GroupSyncDecision:
-    """Return a deterministic recovery action for one transport snapshot."""
+    """Return a deterministic recovery action for one receiver snapshot."""
     if shared_lag_ms >= GROUP_HARD_SYNC_LOSS_MS:
         return GroupSyncDecision(True, "shared_cursor_lag")
     if consecutive_drain_timeouts >= GROUP_DRAIN_TIMEOUT_CONFIRMATIONS:
@@ -36,4 +36,3 @@ def decide_group_sync_recovery(
     if stale_samples >= GROUP_STALE_CONFIRMATIONS:
         return GroupSyncDecision(True, "alsa_stale")
     return GroupSyncDecision(False)
-
