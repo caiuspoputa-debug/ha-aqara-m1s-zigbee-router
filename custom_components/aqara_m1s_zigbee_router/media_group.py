@@ -28,6 +28,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dis
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .icy_metadata import watch_icy_metadata
+from .group_sync import decide_group_sync_recovery
 
 from .const import (
     DATA_RADIO_PLAYERS,
@@ -72,6 +73,7 @@ GROUP_SOURCE_STALL_TIMEOUT = 5.0
 # that falls behind the shared history window is isolated without moving the
 # common group position.
 SHARED_FANOUT_SECONDS = GROUP_JITTER_BUFFER_SECONDS
+GROUP_HARD_SYNC_LOSS_SECONDS = 1.0
 SYNC_LEAD_SECONDS = GROUP_REMOTE_PREFILL_SECONDS
 SYNC_LEAD_CHUNKS = GROUP_REMOTE_PREFILL_CHUNKS
 JOIN_BOUNDARY_SECONDS = CHUNK_SECONDS
@@ -94,14 +96,18 @@ MEMBER_RETRY_MAX_SECONDS = 15.0
 PCM_HEALTH_CHECK_SECONDS = 2.0
 PCM_STALL_TIMEOUT = 12.0
 PCM_START_GRACE_SECONDS = 8.0
-WRITER_DRAIN_TIMEOUT = 5.0
+# Two consecutive drain budgets must fit inside the four-second shared history.
+# Once that position is lost, replaying one member's backlog would preserve an
+# audible offset, so the receiver cohort is realigned while FFmpeg stays alive.
+WRITER_DRAIN_TIMEOUT = 1.25
 WRITER_HIGH_WATER_BYTES = CHUNK_BYTES * 16
 WRITER_LOW_WATER_BYTES = CHUNK_BYTES * 8
 SOCKET_SNDBUF_BYTES = CHUNK_BYTES * 16
 GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS = 5.0
 GROUP_RECEIVER_STALE_DELAY_FRAMES = int(PCM_RATE * 0.20)
 GROUP_RECEIVER_STALE_AVAIL_MULTIPLIER = 2
-GROUP_RECEIVER_STALE_CONFIRMATIONS = 3
+GROUP_RECEIVER_STALE_CONFIRMATIONS = 2
+AUTO_RECEIVER_RESYNC_COOLDOWN_SECONDS = 10.0
 RADIO_BROWSER_API_BASE = "http://de1.api.radio-browser.info/json/stations"
 RADIO_BROWSER_MEDIA_PREFIX = "media-source://radio_browser/"
 WATCHDOG_RESTART_DELAY = 3.0
@@ -692,6 +698,9 @@ class AqaraM1SMediaGroupManager:
             "group_prebuffer_seconds": GROUP_PREBUFFER_SECONDS,
             "group_rebuffer_resume_seconds": GROUP_REBUFFER_RESUME_SECONDS,
             "group_remote_prefill_seconds": GROUP_REMOTE_PREFILL_SECONDS,
+            "hard_sync_loss_threshold_ms": int(
+                GROUP_HARD_SYNC_LOSS_SECONDS * 1000
+            ),
             "rebuffer_events": self._rebuffer_events,
             "source_rebuffering": self._source_rebuffering,
             "silence_fill_events": self._silence_fill_events,
@@ -721,12 +730,18 @@ class AqaraM1SMediaGroupManager:
             "last_full_resync_reason": self._last_full_resync_reason,
             "full_resync_retry_seconds": FULL_RESYNC_RETRY_SECONDS,
             "receiver_drift_guard_mode": (
-                "three_confirmed_alsa_samples_rebuild_member_only"
+                "confirmed_hard_fault_realigns_complete_receiver_cohort"
             ),
             "receiver_soft_resync_threshold_ms": int(
                 SOFT_RESYNC_DRIFT_THRESHOLD_FRAMES * 1000 / PCM_RATE
             ),
             "receiver_resync_interval_seconds": PERIODIC_RECEIVER_RESYNC_SECONDS,
+            "automatic_receiver_resync_cooldown_seconds": (
+                AUTO_RECEIVER_RESYNC_COOLDOWN_SECONDS
+            ),
+            "automatic_receiver_resync_pending": bool(
+                self.resync_task is not None and not self.resync_task.done()
+            ),
             "manual_resync_cooldown_seconds": MANUAL_GROUP_RESYNC_COOLDOWN_SECONDS,
             "manual_resync_cohort_seconds": MANUAL_GROUP_RESYNC_COHORT_SECONDS,
             "last_manual_resync_age_seconds": (
@@ -874,7 +889,9 @@ class AqaraM1SMediaGroupManager:
                 member.name for member in self.members.values() if member.muted_in_group
             ),
             "sync_policy": "single_shared_fanout_buffer_common_sequence_no_adaptive",
-            "queue_overflow_policy": "shared_history_overrun_detach_only_slow_member",
+            "queue_overflow_policy": (
+                "hard_sync_loss_pause_and_realign_receiver_cohort"
+            ),
             "receiver_health_interval_seconds": GROUP_RECEIVER_HEALTH_INTERVAL_SECONDS,
             "receiver_stale_confirmations_required": (
                 GROUP_RECEIVER_STALE_CONFIRMATIONS
@@ -889,6 +906,7 @@ class AqaraM1SMediaGroupManager:
                 if member.last_receiver_health is not None
             },
             "writer_high_water_ms": int(WRITER_HIGH_WATER_BYTES / (PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES) * 1000),
+            "writer_drain_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "periodic_receiver_resync_enabled": PERIODIC_RECEIVER_RESYNC_ENABLED,
             "volume_apply_mode": "live_pcm_software_gain",
             "volume_stream_restart": False,
@@ -1800,6 +1818,109 @@ class AqaraM1SMediaGroupManager:
         if delay > 0:
             await asyncio.sleep(delay)
 
+    def _schedule_receiver_cohort_resync(
+        self, member: GroupMember, *, reason: str
+    ) -> bool:
+        """Realign every receiver after proof that the common position was lost."""
+        if self._shutting_down or not self.desired_playing or not self.ffmpeg_running:
+            return False
+        if len(self.ready_members) < PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS:
+            return False
+
+        member.last_error = reason
+        existing = self.resync_task
+        if existing is not None and not existing.done():
+            return True
+
+        member_generation = member.generation
+        now = time.monotonic()
+        delay = 0.0
+        if self._last_receiver_resync_monotonic is not None:
+            delay = max(
+                0.0,
+                AUTO_RECEIVER_RESYNC_COOLDOWN_SECONDS
+                - (now - self._last_receiver_resync_monotonic),
+            )
+        scheduled_at = now
+
+        async def _runner() -> None:
+            try:
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                if self._shutting_down or not self.desired_playing:
+                    return
+                if (
+                    self._last_receiver_resync_monotonic is not None
+                    and self._last_receiver_resync_monotonic > scheduled_at
+                ):
+                    _LOGGER.info(
+                        "M1S group automatic receiver realignment skipped because "
+                        "a newer resync already completed"
+                    )
+                    return
+
+                async with self._lock:
+                    if (
+                        self.ffmpeg_running
+                        and self.desired_playing
+                        and len(self.ready_members)
+                        >= PERIODIC_RECEIVER_RESYNC_MIN_MEMBERS
+                    ):
+                        await self._resync_receivers_preserve_source_locked(
+                            reason=f"automatic_hard_sync_loss:{member.name}:{reason}"
+                        )
+                        return
+
+                    # If the cohort disappeared before the repair could run, do
+                    # not leave the triggering writer alive without a drain loop.
+                    if (
+                        member.generation == member_generation
+                        and member.writer is not None
+                    ):
+                        await self._detach_member(
+                            member.entry_id,
+                            stop_remote=True,
+                            new_state=(
+                                "offline"
+                                if not self._member_online(member)
+                                else "waiting_for_sync"
+                            ),
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                member.last_error = f"receiver cohort resync failed: {err}"
+                _LOGGER.warning(
+                    "M1S group receiver-cohort realignment failed member=%s "
+                    "reason=%s error=%s",
+                    member.name,
+                    reason,
+                    err,
+                )
+                if member.writer is not None and not member.detaching:
+                    self._schedule_isolate_member(
+                        member,
+                        reason=f"cohort realignment failed: {err}",
+                    )
+            finally:
+                if self.resync_task is asyncio.current_task():
+                    self.resync_task = None
+                self._signal_update()
+
+        _LOGGER.warning(
+            "M1S group hard sync loss scheduling receiver-cohort realignment "
+            "member=%s reason=%s delay=%.1fs "
+            "action=pause_rebuild_all_receivers_keep_source",
+            member.name,
+            reason,
+            delay,
+        )
+        self.resync_task = self.hass.async_create_background_task(
+            _runner(), "aqara_m1s_group_hard_sync_realign"
+        )
+        self._signal_update()
+        return True
+
     def _schedule_isolate_member(self, member: GroupMember, *, reason: str) -> None:
         if member.detaching:
             return
@@ -2094,6 +2215,7 @@ class AqaraM1SMediaGroupManager:
         if writer is None or member.shared_cursor is None:
             return
         consecutive_timeouts = 0
+        cohort_resync_requested = False
         try:
             while member.generation == generation:
                 chunk: bytes | None = None
@@ -2137,15 +2259,25 @@ class AqaraM1SMediaGroupManager:
 
                 if overflow_reason is not None:
                     member.last_error = overflow_reason
+                    cohort_resync_requested = self._schedule_receiver_cohort_resync(
+                        member, reason=overflow_reason
+                    )
                     _LOGGER.warning(
-                        "M1S group isolating slow member after shared-buffer overrun "
-                        "member=%s cursor=%s oldest=%s current=%s reason=%s",
+                        "M1S group shared-buffer overrun member=%s cursor=%s "
+                        "oldest=%s current=%s reason=%s action=%s",
                         member.name,
                         member.shared_cursor,
                         self._pcm_history[0][0] if self._pcm_history else None,
                         self._sequence,
                         overflow_reason,
+                        (
+                            "realign_receiver_cohort"
+                            if cohort_resync_requested
+                            else "isolate_member"
+                        ),
                     )
+                    if cohort_resync_requested:
+                        return
                     self._set_member_retry(member, failed=True)
                     member.detaching = True
                     return
@@ -2163,7 +2295,10 @@ class AqaraM1SMediaGroupManager:
                 except asyncio.TimeoutError:
                     consecutive_timeouts += 1
                     member.consecutive_drain_timeouts = consecutive_timeouts
-                    if consecutive_timeouts < 2:
+                    decision = decide_group_sync_recovery(
+                        consecutive_drain_timeouts=consecutive_timeouts
+                    )
+                    if not decision.requires_realign:
                         _LOGGER.warning(
                             "M1S group first consecutive TCP drain timeout tolerated "
                             "member=%s seq=%s timeout=%ss action=keep_receiver",
@@ -2172,6 +2307,22 @@ class AqaraM1SMediaGroupManager:
                             WRITER_DRAIN_TIMEOUT,
                         )
                         continue
+                    timeout_reason = (
+                        f"two consecutive TCP drain timeouts of "
+                        f"{WRITER_DRAIN_TIMEOUT:.2f}s"
+                    )
+                    cohort_resync_requested = self._schedule_receiver_cohort_resync(
+                        member, reason=timeout_reason
+                    )
+                    if cohort_resync_requested:
+                        _LOGGER.warning(
+                            "M1S group TCP drain proved hard sync loss member=%s "
+                            "seq=%s consecutive=%s action=realign_receiver_cohort",
+                            member.name,
+                            sequence,
+                            consecutive_timeouts,
+                        )
+                        return
                     raise
         except asyncio.CancelledError:
             raise
@@ -2181,7 +2332,7 @@ class AqaraM1SMediaGroupManager:
             member.detaching = True
             _LOGGER.warning("M1S group member writer failed %s: %s", member.name, err)
         finally:
-            if member.generation == generation:
+            if member.generation == generation and not cohort_resync_requested:
                 self.hass.async_create_task(
                     self._detach_member(
                         member.entry_id,
@@ -3212,10 +3363,26 @@ class AqaraM1SMediaGroupManager:
                 member.stale_health_samples += 1
                 member.last_stale_reason = reason
                 health["stale_confirmation"] = member.stale_health_samples
+                hard_fault_confirmed = (
+                    decide_group_sync_recovery(
+                        stale_samples=member.stale_health_samples
+                    ).requires_realign
+                    and not member.detaching
+                )
+                cohort_resync_requested = False
+                if hard_fault_confirmed:
+                    cohort_resync_requested = self._schedule_receiver_cohort_resync(
+                        member,
+                        reason=(
+                            "confirmed stale ALSA receiver: "
+                            f"{reason} ({member.stale_health_samples} samples)"
+                        ),
+                    )
                 action = (
-                    "rebuild_receiver"
-                    if member.stale_health_samples
-                    >= GROUP_RECEIVER_STALE_CONFIRMATIONS
+                    "realign_receiver_cohort"
+                    if cohort_resync_requested
+                    else "rebuild_receiver"
+                    if hard_fault_confirmed
                     else "await_confirmation"
                 )
                 _LOGGER.warning(
@@ -3232,11 +3399,7 @@ class AqaraM1SMediaGroupManager:
                     GROUP_RECEIVER_STALE_CONFIRMATIONS,
                     action,
                 )
-                if (
-                    member.stale_health_samples
-                    >= GROUP_RECEIVER_STALE_CONFIRMATIONS
-                    and not member.detaching
-                ):
+                if hard_fault_confirmed and not cohort_resync_requested:
                     self._schedule_isolate_member(
                         member,
                         reason=(
@@ -3296,9 +3459,32 @@ class AqaraM1SMediaGroupManager:
                         member.was_online = False
                         member.online_since_monotonic = None
 
-                # Probe each aligned receiver independently. FIN_WAIT by itself is
-                # diagnostic only. A confirmed ALSA fault rebuilds only that hub
-                # after three consecutive samples, never the shared group source.
+                # A member-specific cursor lag is hard evidence that its acoustic
+                # position can no longer be trusted. Realign all receivers while
+                # retaining the common FFmpeg source.
+                for member in list(self.ready_members):
+                    if member.shared_cursor is None:
+                        continue
+                    lag_seconds = max(
+                        0, self._sequence - member.shared_cursor
+                    ) * CHUNK_SECONDS
+                    decision = decide_group_sync_recovery(
+                        shared_lag_ms=int(lag_seconds * 1000)
+                    )
+                    if not decision.requires_realign:
+                        continue
+                    self._schedule_receiver_cohort_resync(
+                        member,
+                        reason=(
+                            f"shared PCM cursor lag {int(lag_seconds * 1000)} ms "
+                            f"exceeded {int(GROUP_HARD_SYNC_LOSS_SECONDS * 1000)} ms"
+                        ),
+                    )
+                    # One cohort operation repairs every active receiver.
+                    break
+
+                # FIN_WAIT alone remains diagnostic. Two consecutive stale/XRUN
+                # samples prove a hard receiver fault and use the same cohort repair.
                 for member in list(self.ready_members):
                     task = member.receiver_health_task
                     if task is not None and task.done():

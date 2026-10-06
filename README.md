@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.1 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.2 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.37.1 TEST` prevents integration reload or update from stopping the Coordinator's persistent TCP/UART relay. It retains the deterministic individual and group radio playback, dual-path connectivity and all Zigbee, MQTT IO, WAV upload/deletion and stored-sound behavior from `0.37.0`. This package does not write or flash the JN5189.
+Version `0.37.2 TEST` repairs group recovery after a TCP timeout, shared-history overrun or confirmed ALSA XRUN. Once the common audio position is proven lost, it keeps the FFmpeg source alive, briefly pauses distribution and rebuilds the complete receiver cohort from one identical position. The individual player remains unchanged from `0.37.1`, including protection for the Coordinator's persistent relay. This package does not write or flash the JN5189.
 
 ## Requirements
 
@@ -112,7 +112,7 @@ For a stored WAV, the confirmed priority sequence is preserved exactly: current 
 
 If an individual source stops delivering PCM, the entity now reports `buffering`, stops its remote receiver and rebuilds it only after real PCM returns. A playout rebase records the lag, latest TCP drain duration and the most likely cause (`tcp_drain_timeout`, `tcp_drain_slow` or `ha_scheduler_or_other_await`). The orderly unload protection still stops the individual hub receiver before closing the local writer and adds no active watchdog on the hub.
 
-The media group keeps one shared PCM history and one common playout clock. Adaptive synchronization, per-hub resampling and periodic automatic resync remain disabled. A receiver is rebuilt independently only after three consecutive stale ALSA samples, taken five seconds apart. Restored playback waits up to 30 seconds for the complete selected cohort, then starts the available hubs and admits missing hubs through the existing late-join path. Manual Play allows a one-second initial cohort window. The newest Play/Stop request always wins, and group Stop or hard reset releases every suspended individual player.
+The media group keeps one shared PCM history and one common playout clock. Adaptive synchronization, per-hub resampling and periodic resync remain disabled. One 1.25-second TCP timeout is tolerated; two consecutive timeouts, a shared-history overrun or two stale/XRUN ALSA samples prove that position was lost. The group receivers are then rebuilt together from one position without restarting the FFmpeg source. Restored playback waits up to 30 seconds for the complete selected cohort, then starts the available hubs and admits missing hubs through the existing late-join path. Manual Play allows a one-second initial cohort window. The newest Play/Stop request always wins, and group Stop or hard reset releases every suspended individual player.
 
 After FFmpeg completes a WAV normally, the integration keeps the path open for 500 ms before remote stop and playback restoration. This cushion was 400 ms in `0.36.0`; it does not apply to manual Stop, FFmpeg errors, radio or media-group playback.
 
@@ -130,19 +130,19 @@ The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_soun
 
 ## Validation and TEST status
 
-The `0.37.1` source passed:
+The `0.37.2` source passed:
 
 - 19 isolated MQTT RGB/lux, telemetry, role, topic, UART-isolation, connectivity and Router-rejoin tests.
 - 3 WAV priority and transport tests covering Coordinator MQTT, Router MQTT and Telnet fallback for a Router without the new capability.
 - 9 direct WAV deletion, protected-system-folder and chunked-manifest tests.
 - 8 storage, real-socket TCP transfer, monotonic progress, fallback and protected-path tests.
 - 7 shared-MQTT persistence and recovery tests.
-- 9 audio regression tests covering remote-before-local shutdown, scoped
+- 15 audio regression and loss-simulation tests covering remote-before-local shutdown, scoped
   commands, buffering diagnostics, latest-request-wins, bounded restoration,
-  individual-player release and member-only receiver recovery.
+  individual-player release and hard-loss receiver-cohort realignment.
 - Python compilation plus JSON/YAML parsing.
 - Shell syntax validation for every Router script and a static MIPS32 agent build with warnings treated as errors.
-- All 56 isolated tests pass. The reviewed hashes of both audio transports are
+- All 62 isolated tests pass. The reviewed hashes of both audio transports are
   recorded in `VALIDATION.txt`.
 
 Upload was also verified on Router `192.168.0.221`: 128044 bytes in 5.46 seconds, identical MD5, intermediate progress and confirmed removal of the temporary probe file.

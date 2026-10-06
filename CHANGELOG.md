@@ -1,3 +1,26 @@
+## 0.37.2 TEST - Hard-loss group receiver realignment
+
+- Fix the impossible recovery budget where one tolerated 5-second TCP drain
+  timeout already exceeded the 4-second shared PCM history window.
+- Use a 1.25-second drain budget; two consecutive failures are detected within
+  the shared history window instead of silently preserving an old position.
+- Detect one member reaching 1 second of shared-cursor lag even before a TCP
+  drain timeout expires, so a delayed receiver cannot remain audibly behind.
+- Treat a shared-history overrun, two consecutive drain timeouts or two
+  confirmed ALSA stale/XRUN samples as proof that acoustic synchronization was
+  lost.
+- On proven loss, briefly pause the common broadcaster, rebuild the complete
+  receiver cohort from one identical history position and resume the existing
+  FFmpeg source. Healthy hubs are no longer left playing against an
+  approximately rejoined late receiver.
+- Coalesce simultaneous faults into one bounded repair and apply a 10-second
+  cooldown. If a cohort repair is no longer possible, fall back to isolating
+  only the affected member.
+- Keep the individual player transport byte-identical to 0.37.1 and retain the
+  Coordinator unload protection, connectivity, Zigbee, MQTT IO and WAV paths.
+- Add deterministic simulations for light lag, one tolerated drain timeout,
+  confirmed TCP/ALSA loss and receiver-only repair with FFmpeg kept alive.
+
 ## 0.37.1 TEST - Coordinator-safe integration reload
 
 - Never stop the Coordinator's persistent TCP/UART relay on integration

@@ -1,13 +1,25 @@
-Aqara M1S Zigbee Coordinator + Router v0.37.1 TEST validation
+Aqara M1S Zigbee Coordinator + Router v0.37.2 TEST validation
 
 Validation performed for this package on 2026-10-06:
 - All integration and regression-test Python files compile.
-- manifest.json reports version 0.37.1.
+- manifest.json reports version 0.37.2.
 - manifest.json, strings.json and both translations parse as JSON.
 - The Router compatibility shell script passes shell syntax validation.
-- All 56 isolated regression tests pass: 20 MQTT IO/coordinator, 7 shared
-  MQTT, 9 WAV deletion, 8 WAV upload/storage, 9 audio transport and 3 WAV
+- All 62 isolated regression tests pass: 20 MQTT IO/coordinator, 7 shared
+  MQTT, 9 WAV deletion, 8 WAV upload/storage, 15 audio transport/simulation and 3 WAV
   priority/transport tests.
+
+Group hard-loss repair added in 0.37.2:
+- Two 1.25-second TCP drain budgets fit inside the 4-second shared history.
+- A synthetic 35-999 ms cursor delay remains on the live timeline without a
+  receiver rebuild; a 1000 ms delay requests one bounded cohort realignment.
+- A shared-history overrun, two consecutive drain failures or two confirmed
+  ALSA stale/XRUN samples schedules one receiver-cohort realignment.
+- The common broadcaster pauses while all active group receivers are rebuilt
+  from the same history position; the FFmpeg source and media intent stay live.
+- Simultaneous member faults coalesce into one repair with a 10-second cooldown.
+- If a cohort repair is no longer possible, only the affected member is
+  isolated as a bounded fallback.
 
 Audio behavior added in 0.37.0:
 - Individual and group entities report BUFFERING during initial prefill and
@@ -18,8 +30,8 @@ Audio behavior added in 0.37.0:
   asynchronous media-source and title resolution.
 - Group Stop and hard reset release all individual players suspended by the
   group, unless a newer group request already superseded that shutdown.
-- A group receiver is rebuilt independently after three consecutive stale ALSA
-  samples at five-second intervals. One sample never triggers a rebuild.
+- One isolated ALSA sample is ignored; two consecutive stale/XRUN samples prove
+  a hard synchronization loss and realign the receiver cohort.
 - Restored playback prefers the complete selected cohort for at most 30 seconds,
   then starts the available hubs and lets missing hubs use late join.
 - Manual group Play uses a one-second initial cohort grace window.
@@ -36,7 +48,9 @@ Audio regression boundary:
 - media_player.py SHA-256:
   1F8953BB3C9ECDE01876D8B08492B27395C163B56F53AA68789E215D7624C2A8
 - media_group.py SHA-256:
-  BE908398F72FE5DB5E56537962061731A1A14D3525DDB42FC17D4AA1433CC89D
+  CD903B18717CE11CD6BD91AA9C4E99F680CEC5CA0B989116290FFEA19F5CC874
+- group_sync.py SHA-256:
+  4FF76776AFCE889899C61E2A9CDC6607263D1B39E85A1AC11CADF40DD7A0F4D3
 - sound_player.py SHA-256:
   449211E7AA677A864DBEBCB5E7558A310D65C7758FC6A4C1BF2DF7D11F7035AA
 

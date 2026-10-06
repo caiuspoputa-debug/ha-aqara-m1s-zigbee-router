@@ -18,7 +18,7 @@ SOURCE = (
 )
 GROUP_SOURCE = SOURCE.with_name("media_group.py")
 MEDIA_PLAYER_SHA256 = "1f8953bb3c9ecde01876d8b08492b27395c163b56f53aa68789e215d7624c2a8"
-MEDIA_GROUP_SHA256 = "be908398f72fe5db5e56537962061731a1a14d3525ddb42fc17d4aa1433cc89d"
+MEDIA_GROUP_SHA256 = "cd903b18717ce11cd6bd91aa9c4e99f680cec5ca0b989116290ffea19f5cc874"
 
 
 def evaluated_constants(source: Path = SOURCE) -> dict[str, object]:
@@ -150,19 +150,34 @@ class AudioCleanShutdownTests(unittest.TestCase):
         self.assertIn("_resume_suspended_individuals", ast.unparse(stop))
         self.assertIn("_resume_suspended_individuals", ast.unparse(reset))
 
-    def test_group_recovery_is_bounded_and_member_scoped(self):
+    def test_group_recovery_is_bounded_and_hard_faults_realign_cohort(self):
         values = evaluated_constants(GROUP_SOURCE)
         source = GROUP_SOURCE.read_text(encoding="utf-8")
 
         self.assertEqual(values["STARTUP_RESTORE_MAX_WAIT_SECONDS"], 30.0)
-        self.assertEqual(values["GROUP_RECEIVER_STALE_CONFIRMATIONS"], 3)
+        self.assertEqual(values["GROUP_RECEIVER_STALE_CONFIRMATIONS"], 2)
         self.assertFalse(values["ADAPTIVE_SYNC_ENABLED"])
         self.assertFalse(values["PERIODIC_RECEIVER_RESYNC_ENABLED"])
         self.assertIn("confirmed stale ALSA receiver", source)
+        self.assertIn("_schedule_receiver_cohort_resync", source)
+        self.assertIn("_resync_receivers_preserve_source_locked", source)
+        self.assertIn("automatic_hard_sync_loss", source)
         self.assertIn("timeout_partial_cohort", source)
         self.assertIn('"source_rebuffering"', source)
 
-    def test_group_transport_matches_v0370_reviewed_baseline(self):
+    def test_group_drain_timeout_fits_shared_history_budget(self):
+        values = evaluated_constants(GROUP_SOURCE)
+
+        self.assertLess(
+            values["WRITER_DRAIN_TIMEOUT"] * 2,
+            values["SHARED_FANOUT_SECONDS"],
+        )
+        self.assertIn(
+            "pause_rebuild_all_receivers_keep_source",
+            GROUP_SOURCE.read_text(encoding="utf-8"),
+        )
+
+    def test_group_transport_matches_v0372_reviewed_baseline(self):
         actual = hashlib.sha256(GROUP_SOURCE.read_bytes()).hexdigest()
         self.assertEqual(actual, MEDIA_GROUP_SHA256)
 
