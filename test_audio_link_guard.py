@@ -17,7 +17,7 @@ SOURCE = (
     / "media_player.py"
 )
 GROUP_SOURCE = SOURCE.with_name("media_group.py")
-MEDIA_PLAYER_SHA256 = "1f8953bb3c9ecde01876d8b08492b27395c163b56f53aa68789e215d7624c2a8"
+MEDIA_PLAYER_SHA256 = "444b5c673e714cc71a1860581a7b78bddad1289b7cfe924954848461d82ef5d6"
 MEDIA_GROUP_SHA256 = "8be6279b71e716d0e194c0925d3c9213df5b92e7a980ee7c37478be9e7efa975"
 
 
@@ -45,6 +45,34 @@ def evaluated_constants(source: Path = SOURCE) -> dict[str, object]:
 
 
 class AudioCleanShutdownTests(unittest.TestCase):
+    def test_individual_volume_preserves_hundredth_percent_precision(self):
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+        player_class = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "AqaraM1SRadioPlayer"
+        )
+        method = next(
+            node
+            for node in player_class.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_normalize_volume"
+        )
+        method.decorator_list = []
+        module = ast.fix_missing_locations(
+            ast.Module(body=[method], type_ignores=[])
+        )
+        namespace: dict[str, object] = {}
+        exec(compile(module, str(SOURCE), "exec"), namespace)
+        normalize = namespace["_normalize_volume"]
+
+        self.assertEqual(normalize(0.0059), 0.0059)
+        self.assertEqual(normalize(0.0060), 0.0060)
+        self.assertEqual(normalize(0.0061), 0.0061)
+        self.assertEqual(normalize(-1), 0.0)
+        self.assertEqual(normalize(2), 1.0)
+
     def test_remote_commands_are_scoped_short_and_shell_valid(self):
         values = evaluated_constants()
         start = str(values["REMOTE_START_COMMAND"])
@@ -182,7 +210,7 @@ class AudioCleanShutdownTests(unittest.TestCase):
         actual = hashlib.sha256(GROUP_SOURCE.read_bytes()).hexdigest()
         self.assertEqual(actual, MEDIA_GROUP_SHA256)
 
-    def test_individual_transport_matches_v0370_reviewed_baseline(self):
+    def test_individual_transport_matches_v0375_reviewed_baseline(self):
         actual = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
         self.assertEqual(actual, MEDIA_PLAYER_SHA256)
 

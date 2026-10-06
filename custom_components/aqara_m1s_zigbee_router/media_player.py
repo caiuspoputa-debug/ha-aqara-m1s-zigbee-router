@@ -183,11 +183,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_name = "Media Player"
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
-    # Main native Home Assistant slider: 0-100% in uniform 0.1% steps.
+    # Main native Home Assistant slider: 0-100% in uniform 0.01% steps.
         # v0.5.9 adds a separate per-player Fine Volume Trim Number entity
         # (-2.00..+1.00 percentage points in 0.01 steps) without changing this
     # convenient coarse/main control.
-    _attr_volume_step = 0.001
+    _attr_volume_step = 0.0001
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
@@ -656,7 +656,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_request_policy": "latest_request_wins",
             "volume_apply_mode": "live_pcm_software_gain",
             "volume_stream_restart": False,
-            "volume_step_percent": 0.1,
+            "volume_step_percent": 0.01,
             "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "writer_close_timeout_seconds": WRITER_CLOSE_TIMEOUT,
@@ -1380,20 +1380,20 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     @staticmethod
     def _normalize_volume(volume: float) -> float:
-        """Quantize the complete 0-100% range in uniform 0.1% steps."""
+        """Quantize individual volume in 0.01 percentage-point steps."""
         volume = max(0.0, min(1.0, volume))
-        quantized = round(volume / 0.001) * 0.001
-        return max(0.0, min(1.0, round(quantized, 3)))
+        quantized = round(volume / 0.0001) * 0.0001
+        return max(0.0, min(1.0, round(quantized, 4)))
 
     async def async_volume_up(self) -> None:
-        """Increase volume by 0.1%."""
+        """Increase volume by 0.01%."""
         current = self._attr_volume_level or 0.0
-        await self.async_set_volume_level(current + 0.001)
+        await self.async_set_volume_level(current + 0.0001)
 
     async def async_volume_down(self) -> None:
-        """Decrease volume by 0.1%."""
+        """Decrease volume by 0.01%."""
         current = self._attr_volume_level or 0.0
-        await self.async_set_volume_level(current - 0.001)
+        await self.async_set_volume_level(current - 0.0001)
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Apply mute live through the same PCM gain path."""

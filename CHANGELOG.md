@@ -1,3 +1,13 @@
+## 0.37.5 TEST - Hundredth-percent individual volume
+
+- Preserve every individual player's `volume_level` to four decimal places,
+  allowing real `0.01%` software-gain adjustments instead of rounding them to
+  `0.1%`.
+- Report the individual volume step as `0.01%` and use the same precision for
+  native volume-up and volume-down calls.
+- Retain the `0.37.4` group-volume precision, group synchronization, receiver
+  recovery and all audio transport behavior unchanged.
+
 ## 0.37.4 TEST - Hundredth-percent group volume
 
 - Preserve group `volume_level` to four decimal places, allowing real
