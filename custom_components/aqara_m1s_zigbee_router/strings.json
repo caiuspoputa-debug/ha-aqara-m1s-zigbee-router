@@ -160,6 +160,7 @@
       "shared_mqtt_failed": "Setari invalide, broker inaccesibil, autentificare respinsa sau salvare esuata. Configuratia activa nu a fost schimbata."
     },
     "abort": {
+      "coordinator_only": "This Zigbee-only coordinator supports only network address and Wi-Fi configuration.",
       "no_managed_sounds": "No WAV files were found below /data/musics.",
       "wifi_change_started": "Testul noii rețele Wi-Fi a fost pornit pe hub. Conexiunea poate cădea temporar. Hubul păstrează noua rețea numai după obținerea unui IPv4 proaspăt."
     }

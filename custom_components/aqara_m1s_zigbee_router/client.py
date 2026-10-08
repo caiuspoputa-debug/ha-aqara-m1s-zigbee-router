@@ -737,7 +737,9 @@ class AqaraM1SClient:
             }:
                 status[key] = value
         if status.get("role") != "router":
-            status["role"] = "coordinator" if "state" in status else "router"
+            if "state" not in status:
+                raise RuntimeError("Hub returned no confirmed Zigbee role")
+            status["role"] = "coordinator"
         return status
 
     def set_rgb(self, red: int, green: int, blue: int) -> None:

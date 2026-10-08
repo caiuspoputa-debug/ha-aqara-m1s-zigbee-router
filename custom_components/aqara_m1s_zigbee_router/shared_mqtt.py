@@ -54,6 +54,8 @@ def probe_broker(settings):
 
 def apply_to_hub(client, settings):
     """Back up and atomically replace only the existing MQTT configuration."""
+    if getattr(client, "zigbee_role", "router") == "coordinator":
+        return
     names = {"host": "BROKER_HOST", "port": "BROKER_PORT", "username": "MQTT_USERNAME", "password": "MQTT_PASSWORD"}
     content = "".join(f"{names[k]}={shlex.quote(str(settings[k]))}\n" for k in names)
     payload = base64.b64encode(content.encode()).decode()

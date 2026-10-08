@@ -9,6 +9,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import DATA_COORDINATOR_MQTT, DOMAIN
 from .coordinator_mqtt import async_detect_hub_connectivity
+from .coordinator_profile import DIAGNOSTICS_INTERVAL_SECONDS, read_diagnostics
 from .device import device_identifier
 
 
@@ -36,6 +37,8 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         self._watchdog_task: asyncio.Task | None = None
         self._lux_task: asyncio.Task | None = None
         self._last_lux_started = 0.0
+        self._diagnostics_task: asyncio.Task | None = None
+        self._last_diagnostics_started = 0.0
         self._mqtt_task = None
         self._mqtt_applied = None
         self._mqtt_retry_at = 0.0
@@ -118,11 +121,21 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             # The stock red boot-ring cleanup belongs only to initial setup.
             # A later generation is a confirmed reconnect; the light entity
             # restores its remembered state without an unconditional OFF.
-            if self._online_generation == 1:
+            if self._online_generation == 1 and self.client.zigbee_role != "coordinator":
                 self._schedule_post_online_cleanup(self._online_generation)
             self._schedule_lux_refresh(force=True)
         else:
             self._schedule_lux_refresh(force=False)
+
+        if self.client.zigbee_role == "coordinator":
+            self.mqtt_sync_state = "not_used"
+            self._schedule_diagnostics_refresh()
+            return {
+                "online": True,
+                "online_generation": self._online_generation,
+                "connectivity_source": self.connectivity_source,
+                "coordinator_diagnostics": (self.data or {}).get("coordinator_diagnostics"),
+            }
 
         from .shared_mqtt import get_shared_mqtt
         manager = await get_shared_mqtt(self.hass)
@@ -138,13 +151,15 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             # Keep the most recent good lux sample.  Lux is deliberately not
             # awaited here because UART startup/read can take several seconds.
             "illuminance": previous.get("illuminance"),
-            # Coordinator diagnostics are pushed by the on-hub MQTT agent.
+            # Router diagnostics are pushed by the on-hub MQTT agent.
             "telemetry": previous.get("telemetry"),
             "online_generation": self._online_generation,
             "connectivity_source": self.connectivity_source,
         }
 
     async def _sync_shared_mqtt(self, manager, target):
+        if self.client.zigbee_role == "coordinator":
+            return
         from .shared_mqtt import apply_to_hub
         try:
             await self.hass.async_add_executor_job(apply_to_hub, self.client, dict(manager.settings))
@@ -156,10 +171,35 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             self._mqtt_retry_at = 0
             self.mqtt_sync_state = "applied"
 
+    def _schedule_diagnostics_refresh(self) -> None:
+        task = self._diagnostics_task
+        if task is not None and not task.done():
+            return
+        now = self.hass.loop.time()
+        if self.data and self.data.get("online_generation") == self._online_generation:
+            if now - self._last_diagnostics_started < DIAGNOSTICS_INTERVAL_SECONDS:
+                return
+        self._last_diagnostics_started = now
+        self._diagnostics_task = self.hass.async_create_task(
+            self._async_refresh_diagnostics(self._online_generation)
+        )
+
+    async def _async_refresh_diagnostics(self, generation: int) -> None:
+        try:
+            diagnostics = await self.hass.async_add_executor_job(read_diagnostics, self.client)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            diagnostics = None
+        if not self._was_online or generation != self._online_generation:
+            return
+        data = dict(self.data or {})
+        data["coordinator_diagnostics"] = diagnostics
+        self.async_set_updated_data(data)
+
     @callback
     def _schedule_lux_refresh(self, *, force: bool) -> None:
-        # Coordinator lux is pushed by the persistent on-hub MQTT service.
-        # Never open a Telnet sideband request from the HA watchdog.
+        # The dedicated Coordinator never samples lux or accesses its UART.
         if self.client.zigbee_role == "coordinator":
             return
         mqtt_io = None
@@ -256,7 +296,7 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             return
 
     async def async_shutdown(self) -> None:
-        for attr in ("_watchdog_task", "_lux_task", "_post_online_task", "_mqtt_task"):
+        for attr in ("_watchdog_task", "_lux_task", "_post_online_task", "_mqtt_task", "_diagnostics_task"):
             task = getattr(self, attr)
             setattr(self, attr, None)
             if task is not None and not task.done():

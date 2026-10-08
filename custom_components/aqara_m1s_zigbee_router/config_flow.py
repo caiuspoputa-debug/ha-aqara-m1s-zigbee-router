@@ -30,6 +30,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_BUTTON_TOPIC_ID,
     CONF_DEVICE_MAC,
+    CONF_ZIGBEE_ROLE,
     DEFAULT_PASSWORD,
     DEFAULT_PORT,
     DEFAULT_USERNAME,
@@ -38,6 +39,7 @@ from .const import (
 )
 from .client import AqaraM1SClient, NetworkChangeError, SoundStorageError
 from .device import entry_title_with_host
+from .coordinator_profile import COORDINATOR_OPTIONS
 from .sound_upload import destination_for_filename, read_uploaded_sounds
 
 _LOGGER = logging.getLogger(__name__)
@@ -229,6 +231,11 @@ class AqaraM1SZigbeeRouterOptionsFlow(
     def _client(self):
         return self.hass.data[DOMAIN][DATA_CLIENTS][self.config_entry.entry_id]
 
+    @property
+    def _coordinator_only(self) -> bool:
+        client = self.hass.data.get(DOMAIN, {}).get(DATA_CLIENTS, {}).get(self.config_entry.entry_id)
+        return self.config_entry.data.get(CONF_ZIGBEE_ROLE) == "coordinator" or getattr(client, "zigbee_role", None) == "coordinator"
+
     def _new_operation_client(self) -> AqaraM1SClient:
         """Return a short-lived client for long Configure-flow operations."""
         data = self.config_entry.data
@@ -263,6 +270,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             client.disconnect()
 
     async def async_step_init(self, user_input=None):
+        if self._coordinator_only:
+            return self.async_show_menu(step_id="init", menu_options=list(COORDINATOR_OPTIONS))
         menu_options = ["shared_mqtt", "network_address", "change_wifi", "upload_sound"]
         try:
             zigbee_status = await self.hass.async_add_executor_job(
@@ -270,6 +279,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             )
         except (OSError, RuntimeError):
             zigbee_status = {"role": "router"}
+        if zigbee_status.get("role") == "coordinator":
+            return self.async_show_menu(step_id="init", menu_options=list(COORDINATOR_OPTIONS))
         try:
             sounds = await self.hass.async_add_executor_job(
                 self._client.list_sounds
@@ -290,6 +301,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         )
 
     async def async_step_shared_mqtt(self, user_input=None):
+        if self._coordinator_only:
+            return self.async_abort(reason="coordinator_only")
         from .shared_mqtt import get_shared_mqtt
 
         manager = await get_shared_mqtt(self.hass)
@@ -597,6 +610,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         self.async_update_progress(1.0)
 
     async def async_step_upload_sound(self, user_input=None):
+        if self._coordinator_only:
+            return self.async_abort(reason="coordinator_only")
         errors = {}
 
         if self._upload_task is not None:
@@ -690,6 +705,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         )
 
     async def async_step_delete_sound(self, user_input=None):
+        if self._coordinator_only:
+            return self.async_abort(reason="coordinator_only")
         errors = {}
         if user_input is not None:
             selected_paths = user_input.get("path", [])
@@ -732,6 +749,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         )
 
     async def async_step_confirm_delete_sound(self, user_input=None):
+        if self._coordinator_only:
+            return self.async_abort(reason="coordinator_only")
         if not self._pending_sound_delete_paths:
             return await self.async_step_delete_sound()
 
@@ -771,6 +790,8 @@ class AqaraM1SZigbeeRouterOptionsFlow(
 
     async def async_step_rejoin_zigbee(self, user_input=None):
         """Move the JN5189 router to a different Zigbee coordinator."""
+        if self._coordinator_only:
+            return self.async_abort(reason="coordinator_only")
         try:
             status = await self.hass.async_add_executor_job(
                 self._client.coordinator_runtime_status

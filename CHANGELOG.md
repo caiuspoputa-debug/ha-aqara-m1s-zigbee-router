@@ -814,6 +814,17 @@ Replace the final-octet slider with an always-visible numeric box in both static
 
 # Changelog
 
+## 0.37.6 TEST - 2026-10-08
+
+- Coordinator-only profile: connectivity and four read-only Linux diagnostics.
+- Configure menu reduced to network address and Wi-Fi change for Coordinators.
+- No Coordinator media/sound/group runtime or auxiliary MQTT subscription/sync.
+- Retire former per-Coordinator controls and stale telemetry entities; keep Router and shared-group IDs.
+- Block legacy WAV/media actions and physical-button triggers for Coordinators.
+- Preserve confirmed Coordinator role when its runtime cannot be read.
+- Router audio transport, fine volume, group synchronization and WAV implementation unchanged.
+- No firmware write, hub service change, restart or automatic deployment.
+
 ## 0.5.11 - test
 
 - Configure → Delete WAV now uses Home Assistant's native multi-select selector, so multiple managed WAV files can be selected and deleted in one operation

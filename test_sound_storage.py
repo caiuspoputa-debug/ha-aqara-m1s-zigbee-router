@@ -8,6 +8,8 @@ import sys
 import threading
 import types
 import unittest
+
+from shell_test_support import shell_command
 import wave
 from unittest.mock import Mock
 
@@ -72,7 +74,7 @@ class SoundStorageTests(unittest.TestCase):
         self.assertIn("two with space.wav", final_command)
         self.assertIn(str(client_module.SOUND_STORAGE_MIN_FREE_BYTES), final_command)
         syntax = subprocess.run(
-            ["sh", "-n"],
+            shell_command("-n"),
             input=final_command,
             text=True,
             capture_output=True,

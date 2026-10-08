@@ -19,6 +19,7 @@ from .const import (
     DOMAIN,
 )
 from .device import device_info
+from .coordinator_profile import COORDINATOR_SENSOR_KEYS
 
 
 @dataclass
@@ -99,6 +100,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
     coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
+    if client.zigbee_role == "coordinator":
+        definitions = [definition for definition in SENSORS if definition.key in COORDINATOR_SENSOR_KEYS]
+        definitions.append(SensorDef("zigbee_transport", "Zigbee Transport", "", str))
+        async_add_entities([
+            AqaraM1SCoordinatorDiagnosticSensor(entry, coordinator, definition)
+            for definition in definitions
+        ])
+        return
     entities = [
         AqaraM1SRouterSensor(
             hass,
@@ -121,6 +130,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         )
     )
     async_add_entities(entities, coordinator.last_update_success)
+
+
+class AqaraM1SCoordinatorDiagnosticSensor(CoordinatorEntity, SensorEntity):
+    """Live Linux data, independent of the intentionally disabled MQTT agent."""
+
+    _attr_should_poll = False
+    _attr_entity_category = "diagnostic"
+
+    def __init__(self, entry, coordinator, definition: SensorDef) -> None:
+        super().__init__(coordinator)
+        self.definition = definition
+        self._attr_name = definition.name
+        self._attr_unique_id = f"{entry.entry_id}_{definition.key}"
+        self._attr_device_info = device_info(entry)
+
+    @property
+    def available(self):
+        return super().available and isinstance((self.coordinator.data or {}).get("coordinator_diagnostics"), dict)
+
+    @property
+    def native_value(self):
+        return ((self.coordinator.data or {}).get("coordinator_diagnostics") or {}).get(self.definition.key)
 
 
 class AqaraM1SMQTTSyncSensor(CoordinatorEntity, SensorEntity):

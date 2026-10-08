@@ -8,6 +8,8 @@ from pathlib import Path
 import subprocess
 import unittest
 
+from shell_test_support import shell_command
+
 
 ROOT = Path(__file__).parent
 SOURCE = (
@@ -94,7 +96,7 @@ class AudioCleanShutdownTests(unittest.TestCase):
 
         for command in (start, stop):
             checked = subprocess.run(
-                ["sh", "-n", "-c", command],
+                shell_command("-n", "-c", command),
                 check=False,
                 capture_output=True,
                 text=True,

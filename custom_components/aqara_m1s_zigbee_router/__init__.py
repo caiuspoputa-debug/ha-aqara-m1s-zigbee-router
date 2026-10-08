@@ -11,6 +11,7 @@ from homeassistant.const import (
     CONF_USERNAME,
 )
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -46,6 +47,7 @@ from .const import (
 from .device import device_identifier, entry_title_with_host
 from .coordinator import AqaraM1SRouterCoordinator
 from .coordinator_mqtt import M1SHubMQTTIO
+from .coordinator_profile import COORDINATOR_PLATFORMS, obsolete_coordinator_entities
 from .media_group import AqaraM1SMediaGroupManager
 from .media_player import AqaraM1SRadioPlayer
 from .sound_player import AqaraM1SSoundPlayer
@@ -136,14 +138,6 @@ async def async_setup_entry(
     except Exception:
         network_status = None
     if network_status is not None:
-        # v0.30.0: keep the v0.21.15 physical-button watcher timing migration.
-        # This changes only the Linux GPIO watcher and is independent of the
-        # JN5189 Router/Coordinator role. Failures must never block setup.
-        try:
-            await hass.async_add_executor_job(client.ensure_fast_button_polling)
-        except Exception:
-            pass
-
         updated_data = dict(entry.data)
         updated_data[CONF_DEVICE_MAC] = network_status["wifi_mac"]
         updated_data[CONF_BUTTON_TOPIC_ID] = network_status.get("button_topic_id", "")
@@ -159,8 +153,8 @@ async def async_setup_entry(
         )
         client.zigbee_role = zigbee_status.get("role", "router")
         client.mqtt_io_confirmed = bool(
-            client.zigbee_role == "coordinator"
-            or zigbee_status.get("mqtt_io_enabled") == "1"
+            client.zigbee_role != "coordinator"
+            and zigbee_status.get("mqtt_io_enabled") == "1"
         )
         if entry.data.get(CONF_ZIGBEE_ROLE) != client.zigbee_role:
             updated_data = dict(entry.data)
@@ -172,9 +166,17 @@ async def async_setup_entry(
         # traffic to the RCP UART after connectivity returns.
         client.zigbee_role = entry.data.get(CONF_ZIGBEE_ROLE, "router")
         client.mqtt_io_confirmed = bool(
-            entry.data.get(CONF_MQTT_IO_CONFIRMED)
-            or client.zigbee_role == "coordinator"
+            client.zigbee_role != "coordinator"
+            and entry.data.get(CONF_MQTT_IO_CONFIRMED)
         )
+    coordinator_only = client.zigbee_role == "coordinator"
+    if network_status is not None and not coordinator_only:
+        # Keep the existing Router watcher migration, never run it on a
+        # dedicated Coordinator. A migration failure must not block setup.
+        try:
+            await hass.async_add_executor_job(client.ensure_fast_button_polling)
+        except Exception:
+            pass
     if entry.data.get(CONF_MQTT_IO_CONFIRMED) is not client.mqtt_io_confirmed:
         updated_data = dict(entry.data)
         updated_data[CONF_MQTT_IO_CONFIRMED] = client.mqtt_io_confirmed
@@ -200,7 +202,7 @@ async def async_setup_entry(
         DATA_SOUND_PLAYERS,
         {},
     )
-    if DATA_MEDIA_GROUP not in hass.data[DOMAIN]:
+    if not coordinator_only and DATA_MEDIA_GROUP not in hass.data[DOMAIN]:
         hass.data[DOMAIN][DATA_MEDIA_GROUP] = AqaraM1SMediaGroupManager(hass)
 
     hass.data[DOMAIN][DATA_CLIENTS][
@@ -209,26 +211,24 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_COORDINATORS][
         entry.entry_id
     ] = coordinator
-    coordinator_mqtt = M1SHubMQTTIO(hass, client, coordinator)
-    hass.data[DOMAIN][DATA_COORDINATOR_MQTT][entry.entry_id] = coordinator_mqtt
-    hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][
-        entry.entry_id
-    ] = 50
-    radio_player = AqaraM1SRadioPlayer(
-        hass, entry, client, coordinator
-    )
-    hass.data[DOMAIN][DATA_RADIO_PLAYERS][entry.entry_id] = radio_player
-    group_manager = hass.data[DOMAIN][DATA_MEDIA_GROUP]
-    group_manager.register_member(
-        entry.entry_id,
-        entry.data.get("name", f"Aqara M1S {host}"),
-        client,
-        coordinator,
-    )
-    radio_player.set_group_manager(group_manager)
-    hass.data[DOMAIN][DATA_SOUND_PLAYERS][entry.entry_id] = AqaraM1SSoundPlayer(
-        hass, client, entry.entry_id, radio_player, group_manager
-    )
+    coordinator_mqtt = None
+    if not coordinator_only:
+        coordinator_mqtt = M1SHubMQTTIO(hass, client, coordinator)
+        hass.data[DOMAIN][DATA_COORDINATOR_MQTT][entry.entry_id] = coordinator_mqtt
+        hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][entry.entry_id] = 50
+        radio_player = AqaraM1SRadioPlayer(hass, entry, client, coordinator)
+        hass.data[DOMAIN][DATA_RADIO_PLAYERS][entry.entry_id] = radio_player
+        group_manager = hass.data[DOMAIN][DATA_MEDIA_GROUP]
+        group_manager.register_member(
+            entry.entry_id,
+            entry.data.get("name", f"Aqara M1S {host}"),
+            client,
+            coordinator,
+        )
+        radio_player.set_group_manager(group_manager)
+        hass.data[DOMAIN][DATA_SOUND_PLAYERS][entry.entry_id] = AqaraM1SSoundPlayer(
+            hass, client, entry.entry_id, radio_player, group_manager
+        )
 
     device_registry = dr.async_get(hass)
     stable_identifier = device_identifier(entry)
@@ -252,7 +252,7 @@ async def async_setup_entry(
         identifiers={stable_identifier},
         name=device_name,
         manufacturer="Aqara",
-        model="M1S Gen 1 / JN5189 Router",
+        model=("M1S Gen 1 / JN5189 Coordinator" if coordinator_only else "M1S Gen 1 / JN5189 Router"),
     )
     device_updates = {}
     if device.name != device_name:
@@ -265,6 +265,12 @@ async def async_setup_entry(
         device_registry.async_update_device(device.id, **device_updates)
 
     entity_registry = er.async_get(hass)
+    if coordinator_only:
+        # Keep stable IDs for live diagnostics; retire this hub's media, WAV,
+        # RGB, lux and auxiliary-MQTT entities, including disabled old entries.
+        old_entities = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+        for entity_id in obsolete_coordinator_entities(old_entities, entry.entry_id, DOMAIN):
+            entity_registry.async_remove(entity_id)
 
     # Clean up old IP-based device-registry rows that can remain after the hub
     # has already moved to its stable MAC identifier. Preserve any entities by
@@ -339,7 +345,7 @@ async def async_setup_entry(
             )
     await hass.config_entries.async_forward_entry_setups(
         entry,
-        PLATFORMS,
+        COORDINATOR_PLATFORMS if coordinator_only else PLATFORMS,
     )
 
     # Entity platforms can write their plain device_info name during setup.
@@ -408,6 +414,7 @@ async def async_setup_entry(
 
     async def play_url(call: ServiceCall) -> None:
         selected_entry_id, selected_client = await _get_target(call)
+        _require_media_router(selected_client)
         url = call.data["url"]
         sound_player = hass.data[DOMAIN][DATA_SOUND_PLAYERS].get(selected_entry_id)
         if sound_player is not None:
@@ -428,6 +435,7 @@ async def async_setup_entry(
         call: ServiceCall,
     ) -> None:
         selected_entry_id, selected_client = await _get_target(call)
+        _require_media_router(selected_client)
         path = call.data["path"]
         sound_player = hass.data[DOMAIN][DATA_SOUND_PLAYERS][selected_entry_id]
         await sound_player.async_play(
@@ -446,6 +454,7 @@ async def async_setup_entry(
 
     async def upload_sound(call: ServiceCall) -> None:
         selected_entry_id, selected_client = await _get_target(call)
+        _require_media_router(selected_client)
         source = call.data["source"]
         filename, content = await hass.async_add_executor_job(
             read_uploaded_sound, hass, source
@@ -474,13 +483,15 @@ async def async_setup_entry(
         if call.data.get("confirm") is not True:
             raise ValueError("Explicit confirmation is required for WAV deletion")
         selected_entry_id, selected_client = await _get_target(call)
+        _require_media_router(selected_client)
         await hass.async_add_executor_job(
             selected_client.delete_sound, call.data["path"]
         )
         async_dispatcher_send(hass, sound_list_signal(selected_entry_id))
 
     async def refresh_sounds(call: ServiceCall) -> None:
-        selected_entry_id, _ = await _get_target(call)
+        selected_entry_id, selected_client = await _get_target(call)
+        _require_media_router(selected_client)
         async_dispatcher_send(hass, sound_list_signal(selected_entry_id))
 
     async def reset_media_group(call: ServiceCall) -> None:
@@ -541,10 +552,12 @@ async def async_unload_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> bool:
+    client = hass.data[DOMAIN][DATA_CLIENTS].get(entry.entry_id)
+    platforms = COORDINATOR_PLATFORMS if client is not None and client.zigbee_role == "coordinator" else PLATFORMS
     unloaded = (
         await hass.config_entries.async_unload_platforms(
             entry,
-            PLATFORMS,
+            platforms,
         )
     )
     if not unloaded:
@@ -557,7 +570,7 @@ async def async_unload_entry(
         await coordinator_mqtt.async_stop()
 
     group_manager = hass.data[DOMAIN].get(DATA_MEDIA_GROUP)
-    if group_manager is not None:
+    if group_manager is not None and entry.entry_id in group_manager.members:
         await group_manager.unregister_member(entry.entry_id)
         if not group_manager.members:
             await group_manager.async_shutdown()
@@ -589,3 +602,8 @@ async def async_unload_entry(
         None,
     )
     return True
+
+
+def _require_media_router(client) -> None:
+    if client.zigbee_role == "coordinator":
+        raise HomeAssistantError("This hub is a Zigbee-only coordinator; media and sound actions are disabled")

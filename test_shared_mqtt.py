@@ -10,6 +10,8 @@ import types
 import unittest
 from unittest.mock import patch
 
+from shell_test_support import shell_command, shell_path
+
 ROOT = pathlib.Path(__file__).parent
 stored = {}
 
@@ -71,23 +73,24 @@ class Tests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError): module.probe_broker(SETTINGS)
 
     async def test_atomic_shell_write_backup_and_idempotence(self):
-        shell = pathlib.Path('C:/Program Files/Git/bin/bash.exe')
-        if not shell.exists(): self.skipTest('Git bash unavailable')
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=ROOT.parent) as directory:
             root = pathlib.Path(directory)
             config = root / 'm1s_button.conf'
             config.write_text('OLD=1\n')
             (root / 'm1s_mqtt_publish.sh').write_text('#!/bin/sh\n')
-            unix = '/'+str(root).replace('\\', '/').replace(':', '', 1)
+            unix = shell_path(root)
             class Client:
                 def run_command(self, command, **kwargs):
                     command = command.replace('/data/m1s_button', unix)
-                    result = subprocess.run([str(shell), '-c', command], capture_output=True, text=True)
+                    result = subprocess.run(shell_command('-c', command), capture_output=True, text=True)
+                    if result.returncode:
+                        raise RuntimeError(result.stderr)
                     return result.stdout
             module.apply_to_hub(Client(), SETTINGS)
             self.assertEqual((root / 'm1s_button.conf.before_shared').read_text(), 'OLD=1\n')
             content = config.read_text()
-            result = subprocess.run([str(shell), '-c', f'. "{unix}/m1s_button.conf"; printf "%s" "$MQTT_PASSWORD"'], capture_output=True, text=True)
+            result = subprocess.run(shell_command('-c', f'. "{unix}/m1s_button.conf"; printf "%s" "$MQTT_PASSWORD"'), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, SETTINGS['password'])
             module.apply_to_hub(Client(), SETTINGS)
             self.assertEqual(config.read_text(), content)
@@ -104,7 +107,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         method = next(n for n in original.body if isinstance(n, ast.AsyncFunctionDef) and n.name == '_sync_shared_mqtt')
         namespace = {'__name__': 'm1stest.coordinator', '__package__': 'm1stest'}
         exec(compile(ast.Module(body=[method], type_ignores=[]), '<sync>', 'exec'), namespace)
-        coordinator = types.SimpleNamespace(hass=Hass(), client=object(), _mqtt_applied=None)
+        coordinator = types.SimpleNamespace(hass=Hass(), client=types.SimpleNamespace(zigbee_role='router'), _mqtt_applied=None)
         manager = types.SimpleNamespace(settings=SETTINGS)
         with patch.object(module, 'apply_to_hub', side_effect=OSError('offline')):
             await namespace['_sync_shared_mqtt'](coordinator, manager, (1, 1))

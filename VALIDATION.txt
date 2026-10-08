@@ -1,84 +1,46 @@
-Aqara M1S Zigbee Coordinator + Router v0.37.5 TEST validation
+M1S Integration 0.37.6 TEST - Coordinator-only profile
+Generated: 2026-10-08T19:13:04.626544+00:00
+Base ZIP SHA256: b2a878eac0fd482d894fef4ea06e005f137d8fbe1e8f6da01eb364e29d439549
 
-Validation prepared for this package on 2026-10-07:
-- All integration and regression-test Python files compile.
-- manifest.json reports version 0.37.5.
-- manifest.json, strings.json and both translations parse as JSON.
-- The Router compatibility shell script passes shell syntax validation.
-- All 66 isolated regression tests pass: 20 MQTT IO/coordinator, 7 shared
-  MQTT, 9 WAV deletion, 8 WAV upload/storage, 11 audio transport, 8 group-loss
-  simulations and 3 WAV priority/transport tests.
+EXECUTED TESTS
+test_audio_link_guard.py: 11 passed
+test_coordinator_io.py: 20 passed
+test_coordinator_profile.py: 25 passed
+test_group_sync_policy.py: 8 passed
+test_shared_mqtt.py: 7 passed
+test_sound_delete.py: 9 passed
+test_sound_priority.py: 3 passed
+test_sound_storage.py: 8 passed
+Total: 91 passed; no failures
+Python compilation: passed (all packaged Python sources)
+JSON/YAML parsing: passed
+Network/IP/Wi-Fi method AST comparison: unchanged
+Audio transports and Router entity modules: byte-identical to supplied 0.37.5 ZIP
+Read-only .220 diagnostics: {"mqtt_process": "running", "telnet_process": "running", "wifi_ip": "192.168.0.220", "zigbee_transport": "connected"}
+Diagnostic shell syntax: passed (BusyBox sh -n)
+Windows Expand-Archive: passed; native extraction and all payload SHA256 values verified
 
-Individual volume precision added in 0.37.5:
-- Every individual player preserves four normalized decimal places, equivalent
-  to 0.01 percentage point.
-- Native individual volume-up/down and the exposed step use the same precision.
-- Volume remains live PCM software gain and does not restart the stream.
-- Fine Volume Trim remains available internally and is unchanged.
+LIMITS
+Home Assistant behavior is tested with small API stand-ins, not a full HA installation.
+No deployment, hub service change, firmware write, UART access or HA/Z2M restart was performed.
+TCP connected is transport status, not proof that every Zigbee device is reachable.
+Historical hardware claims from 0.37.5 were not repeated by this build.
 
-Group volume precision added in 0.37.4:
-- The group entity preserves four normalized decimal places, equivalent to
-  0.01 percentage point.
-- Native group volume-up/down and the exposed step use the same precision.
-- Volume remains live PCM software gain and does not restart or resynchronise
-  the radio stream.
-- Individual volume and per-hub Fine Volume Trim are unchanged.
-
-Group recovery changed in 0.37.3 after the 0.37.2 live test:
-- Automatic complete-cohort pause/rebuild was removed.
-- Synthetic 35-999 ms cursor delays remain on the live timeline.
-- A 1000 ms cursor delay quarantines only the affected receiver.
-- One 1.25-second TCP drain timeout is tolerated; two consecutive timeouts
-  quarantine only the affected receiver.
-- Three consecutive stale/XRUN ALSA samples are required before quarantine.
-- Shared-history overrun also quarantines only the affected receiver.
-- Healthy receivers, the common playout clock, media intent and FFmpeg source
-  remain live during every automatic member recovery path.
-- No automatic recovery path calls the complete timeline restart, group STOP or
-  the removed broadcaster-pause mechanism.
-- Full timeline resync remains an explicit user service only.
-
-Retry-storm repair:
-- A reconnect is successful only after PCM-history prefill, live catch-up and
-  final admission all complete.
-- The retry counter is not reset when a socket merely opens.
-- Failed joins back off through approximately 1.5, 3, 6, 12 and 15 seconds.
-- Successful admission resets the counter and clears the member error.
-- Group diagnostics expose quarantined_hubs, member_prepare_failures and
-  member_last_error.
-
-Coordinator unload safety retained from 0.37.1:
-- Integration unload, reload and update close only local Coordinator sockets.
-- The persistent Coordinator TCP/UART relay on port 1886 is never stopped.
-- Temporary Router sideband UART tunnels retain their existing cleanup.
-
-Audio regression boundary:
-- media_player.py SHA-256:
-  444B5C673E714CC71A1860581A7B78BDDAD1289B7CFE924954848461D82EF5D6
-- media_group.py SHA-256:
-  8BE6279B71E716D0E194C0925D3C9213DF5B92E7A980EE7C37478BE9E7EFA975
-- group_sync.py SHA-256:
-  BF80BB04E2E7840D6BCA07744D2EB88F3036BADB246486AB43ECDE2033B265A8
-- sound_player.py SHA-256:
-  449211E7AA677A864DBEBCB5E7558A310D65C7758FC6A4C1BF2DF7D11F7035AA
-
-Availability regression coverage retained from 0.36.9:
-- Hub Connectivity is online when either MQTT IO or Telnet independently proves
-  the physical hub reachable, and offline only when both paths are down.
-- The sensor exposes connection_source without coupling general availability to
-  optional MQTT-only diagnostics.
-- Retained state cannot override retained offline availability during reconnect.
-- Hub Connectivity and dependent CoordinatorEntity controls transition together.
-
-WAV upload and playback guarantees retained:
-- Configure accepts exactly one WAV per operation; ZIP is not accepted.
-- Capacity preflight runs before progress and preserves at least 8 MiB on /data.
-- The dedicated transfer client prevents normal polling from holding the upload.
-- WAV validation requires PCM mono, 32000 Hz, signed 32-bit little-endian and a
-  maximum file size of 20 MiB.
-- Transfer success requires matching remote size and MD5.
-- Stored WAV priority still suspends media, plays the WAV, then restores the
-  remembered individual or group playback.
-- MQTT transports only receiver prepare/stop commands, never radio PCM.
-
-No JN5189 firmware write or flash is performed by this integration package.
+PRESERVED FILE SHA256
+444b5c673e714cc71a1860581a7b78bddad1289b7cfe924954848461d82ef5d6  custom_components/aqara_m1s_zigbee_router/media_player.py
+8be6279b71e716d0e194c0925d3c9213df5b92e7a980ee7c37478be9e7efa975  custom_components/aqara_m1s_zigbee_router/media_group.py
+bf80bb04e2e7840d6bca07744d2eb88f3036badb246486ab43ecde2033b265a8  custom_components/aqara_m1s_zigbee_router/group_sync.py
+449211e7aa677a864dbebcb5e7558a310d65c7758fc6a4c1bf2df7d11f7035aa  custom_components/aqara_m1s_zigbee_router/sound_player.py
+35f6ce4bba126628d7bde2360dc0e014863c3edd5d0e53fbd872ac573a57944a  custom_components/aqara_m1s_zigbee_router/icy_metadata.py
+f968e9b78df08febe76b12e5d2cd033705a2bde8d000af92cf5df52b32492f73  custom_components/aqara_m1s_zigbee_router/light.py
+155081779105e932a71f18a82d33a144053a14e79fa3bef5f024b27314cfc8c0  custom_components/aqara_m1s_zigbee_router/button.py
+20c760f4a0d4fb80f48e07a84896b1f2dd093f802eb79f4df060a7cfcb9bb11d  custom_components/aqara_m1s_zigbee_router/number.py
+f50779ebe7fda3d8908cff5705f5c53aaff6a1733bd04c979065d1833396f148  custom_components/aqara_m1s_zigbee_router/event.py
+fbc49704b659b19f3a6d95f8a7bd5255b059d7b91bdcf11417813fd9059cc5fa  custom_components/aqara_m1s_zigbee_router/switch.py
+f2ca06a89d7b0efe9ef9aee86518e6b1048f10a0d06dea772f19f079d7bdadd7  custom_components/aqara_m1s_zigbee_router/binary_sensor.py
+08c50d006528ba9e71408787fa654d4a34c1eeeb70d3257e704d2d6298737908  custom_components/aqara_m1s_zigbee_router/device.py
+0987d058e170117871ec6084fab70848d5458facbfd84720587c2182c39b1b2b  custom_components/aqara_m1s_zigbee_router/coordinator_mqtt.py
+7caf5417ccaf732ac980365414da7727073922d20b2dbed46ac6550052fea809  custom_components/aqara_m1s_zigbee_router/network_manager_compat.sh
+86e3ac4779e1c7ff759c6d16ebceceddfbde9cc2233bc5d734f4419c77b62ead  custom_components/aqara_m1s_zigbee_router/coordinator_io.py
+1e39d8b603b60c4da8cb561a9fb4624e1d068861bd570d320308d62732e5a1d1  custom_components/aqara_m1s_zigbee_router/mqtt_client.py
+c805dae8d79e4f66c15303e5ebafa7c301620c0cad227471f0b022ea73d650da  custom_components/aqara_m1s_zigbee_router/sound_upload.py

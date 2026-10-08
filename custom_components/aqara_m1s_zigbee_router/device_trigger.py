@@ -11,7 +11,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.trigger import TriggerActionType, TriggerInfo
 
-from .const import BUTTON_ACTIONS, DOMAIN, button_topic_for_entry
+from .const import BUTTON_ACTIONS, CONF_ZIGBEE_ROLE, DOMAIN, button_topic_for_entry
 
 CONF_SUBTYPE = "subtype"
 TRIGGER_SCHEMA = DEVICE_TRIGGER_BASE_SCHEMA.extend(
@@ -36,7 +36,8 @@ def _entry_for_device(hass: HomeAssistant, device_id: str):
 async def async_get_triggers(
     hass: HomeAssistant, device_id: str
 ) -> list[dict[str, Any]]:
-    if _entry_for_device(hass, device_id) is None:
+    entry = _entry_for_device(hass, device_id)
+    if entry is None or entry.data.get(CONF_ZIGBEE_ROLE) == "coordinator":
         return []
     return [
         {
@@ -65,6 +66,8 @@ async def async_attach_trigger(
     entry = _entry_for_device(hass, config[CONF_DEVICE_ID])
     if entry is None:
         raise ValueError("Aqara M1S config entry not found for device")
+    if entry.data.get(CONF_ZIGBEE_ROLE) == "coordinator":
+        raise ValueError("Physical-button triggers are disabled for a Zigbee-only coordinator")
     topic = button_topic_for_entry(entry)
     wanted = config[CONF_SUBTYPE]
 

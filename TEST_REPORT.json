@@ -1,0 +1,142 @@
+{
+  "version": "0.37.6",
+  "status": "TEST",
+  "generated_at_utc": "2026-10-08T19:13:04.626544+00:00",
+  "base_zip": "M1S_Integration_0.37.5_TEST_Windows.zip",
+  "base_zip_sha256": "b2a878eac0fd482d894fef4ea06e005f137d8fbe1e8f6da01eb364e29d439549",
+  "tests": [
+    {
+      "file": "test_audio_link_guard.py",
+      "passed": 11,
+      "status": "passed",
+      "output": "...........\n----------------------------------------------------------------------\nRan 11 tests in 0.181s\n\nOK\n"
+    },
+    {
+      "file": "test_coordinator_io.py",
+      "passed": 20,
+      "status": "passed",
+      "output": ".............Ignored M1S MQTT state for role coordinator on router entry\n.......\n----------------------------------------------------------------------\nRan 20 tests in 0.556s\n\nOK\n"
+    },
+    {
+      "file": "test_coordinator_profile.py",
+      "passed": 25,
+      "status": "passed",
+      "output": "test_coordinator_refresh_has_no_mqtt_or_uart_work (__main__.CoordinatorTests.test_coordinator_refresh_has_no_mqtt_or_uart_work) ... ok\ntest_coordinator_sensor_platform_exposes_four_live_diagnostics (__main__.CoordinatorTests.test_coordinator_sensor_platform_exposes_four_live_diagnostics) ... ok\ntest_diagnostics_refresh_is_throttled (__main__.CoordinatorTests.test_diagnostics_refresh_is_throttled) ... ok\ntest_failed_diagnostics_do_not_set_hub_offline (__main__.CoordinatorTests.test_failed_diagnostics_do_not_set_hub_offline) ... ok\ntest_result_after_disconnect_or_new_generation_is_ignored (__main__.CoordinatorTests.test_result_after_disconnect_or_new_generation_is_ignored) ... ok\ntest_coordinator_menu_is_exactly_two_items_without_hub_calls (__main__.OptionsTests.test_coordinator_menu_is_exactly_two_items_without_hub_calls) ... ok\ntest_router_menu_keeps_media_and_shared_mqtt (__main__.OptionsTests.test_router_menu_keeps_media_and_shared_mqtt) ... ok\ntest_saved_role_preserved_when_runtime_is_unavailable (__main__.OptionsTests.test_saved_role_preserved_when_runtime_is_unavailable) ... ok\ntest_sound_and_rejoin_steps_blocked_even_when_invoked_directly (__main__.OptionsTests.test_sound_and_rejoin_steps_blocked_even_when_invoked_directly) ... ok\ntest_diagnostics_ignore_shell_echo (__main__.ProfileTests.test_diagnostics_ignore_shell_echo) ... ok\ntest_diagnostics_use_only_read_only_linux_commands (__main__.ProfileTests.test_diagnostics_use_only_read_only_linux_commands) ... ok\ntest_incomplete_and_invalid_diagnostics_are_rejected (__main__.ProfileTests.test_incomplete_and_invalid_diagnostics_are_rejected) ... ok\ntest_keep_only_live_per_hub_entities (__main__.ProfileTests.test_keep_only_live_per_hub_entities) ... ok\ntest_shared_mqtt_never_writes_to_coordinator (__main__.ProfileTests.test_shared_mqtt_never_writes_to_coordinator) ... ok\ntest_stopped_processes_are_not_reported_running (__main__.ProfileTests.test_stopped_processes_are_not_reported_running) ... ok\ntest_transport_requires_local_port_not_an_outgoing_connection (__main__.ProfileTests.test_transport_requires_local_port_not_an_outgoing_connection) ... ok\ntest_unknown_role_keeps_setup_fallback_possible (__main__.ProfileTests.test_unknown_role_keeps_setup_fallback_possible) ... ok\ntest_coordinator_does_not_construct_any_media_or_mqtt_runtime (__main__.SetupTests.test_coordinator_does_not_construct_any_media_or_mqtt_runtime) ... ok\ntest_coordinator_unload_does_not_touch_router_group (__main__.SetupTests.test_coordinator_unload_does_not_touch_router_group) ... ok\ntest_offline_coordinator_still_uses_restricted_profile (__main__.SetupTests.test_offline_coordinator_still_uses_restricted_profile) ... ok\ntest_old_sound_actions_fail_before_read_or_play (__main__.SetupTests.test_old_sound_actions_fail_before_read_or_play) ... ok\ntest_router_still_constructs_and_registers_media_runtime (__main__.SetupTests.test_router_still_constructs_and_registers_media_runtime) ... ok\ntest_coordinator_has_no_physical_button_triggers (__main__.TriggerTests.test_coordinator_has_no_physical_button_triggers) ... ok\ntest_old_coordinator_trigger_cannot_subscribe_to_auxiliary_mqtt (__main__.TriggerTests.test_old_coordinator_trigger_cannot_subscribe_to_auxiliary_mqtt) ... ok\ntest_router_physical_button_triggers_are_preserved (__main__.TriggerTests.test_router_physical_button_triggers_are_preserved) ... ok\n\n----------------------------------------------------------------------\nRan 25 tests in 0.483s\n\nOK\n"
+    },
+    {
+      "file": "test_group_sync_policy.py",
+      "passed": 8,
+      "status": "passed",
+      "output": "........\n----------------------------------------------------------------------\nRan 8 tests in 0.154s\n\nOK\n"
+    },
+    {
+      "file": "test_shared_mqtt.py",
+      "passed": 7,
+      "status": "passed",
+      "output": "Executing <Task finished name='Task-2' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\\Users\\Dell\\Documents\\Codex\\2026-09-30\\referenced-chatgpt-conversation-this-is-an\\work\\integration-0375-only-coordinator\\test_shared_mqtt.py:75> result=None created at C:\\Users\\Dell\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\asyncio\\runners.py:100> took 0.329 seconds\n.......\n----------------------------------------------------------------------\nRan 7 tests in 0.593s\n\nOK\n"
+    },
+    {
+      "file": "test_sound_delete.py",
+      "passed": 9,
+      "status": "passed",
+      "output": ".........\n----------------------------------------------------------------------\nRan 9 tests in 0.026s\n\nOK\n"
+    },
+    {
+      "file": "test_sound_priority.py",
+      "passed": 3,
+      "status": "passed",
+      "output": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.172s\n\nOK\n"
+    },
+    {
+      "file": "test_sound_storage.py",
+      "passed": 8,
+      "status": "passed",
+      "output": "........\n----------------------------------------------------------------------\nRan 8 tests in 0.051s\n\nOK\n"
+    }
+  ],
+  "tests_passed": 91,
+  "python_compiled": [
+    "custom_components/aqara_m1s_zigbee_router/__init__.py",
+    "custom_components/aqara_m1s_zigbee_router/binary_sensor.py",
+    "custom_components/aqara_m1s_zigbee_router/button.py",
+    "custom_components/aqara_m1s_zigbee_router/client.py",
+    "custom_components/aqara_m1s_zigbee_router/config_flow.py",
+    "custom_components/aqara_m1s_zigbee_router/const.py",
+    "custom_components/aqara_m1s_zigbee_router/coordinator.py",
+    "custom_components/aqara_m1s_zigbee_router/coordinator_io.py",
+    "custom_components/aqara_m1s_zigbee_router/coordinator_mqtt.py",
+    "custom_components/aqara_m1s_zigbee_router/coordinator_profile.py",
+    "custom_components/aqara_m1s_zigbee_router/device.py",
+    "custom_components/aqara_m1s_zigbee_router/device_trigger.py",
+    "custom_components/aqara_m1s_zigbee_router/event.py",
+    "custom_components/aqara_m1s_zigbee_router/group_sync.py",
+    "custom_components/aqara_m1s_zigbee_router/icy_metadata.py",
+    "custom_components/aqara_m1s_zigbee_router/light.py",
+    "custom_components/aqara_m1s_zigbee_router/media_group.py",
+    "custom_components/aqara_m1s_zigbee_router/media_player.py",
+    "custom_components/aqara_m1s_zigbee_router/mqtt_client.py",
+    "custom_components/aqara_m1s_zigbee_router/number.py",
+    "custom_components/aqara_m1s_zigbee_router/select.py",
+    "custom_components/aqara_m1s_zigbee_router/sensor.py",
+    "custom_components/aqara_m1s_zigbee_router/shared_mqtt.py",
+    "custom_components/aqara_m1s_zigbee_router/sound_player.py",
+    "custom_components/aqara_m1s_zigbee_router/sound_upload.py",
+    "custom_components/aqara_m1s_zigbee_router/switch.py",
+    "shell_test_support.py",
+    "test_audio_link_guard.py",
+    "test_coordinator_io.py",
+    "test_coordinator_profile.py",
+    "test_group_sync_policy.py",
+    "test_shared_mqtt.py",
+    "test_sound_delete.py",
+    "test_sound_priority.py",
+    "test_sound_storage.py"
+  ],
+  "json_parsed": [
+    "custom_components/aqara_m1s_zigbee_router/manifest.json",
+    "custom_components/aqara_m1s_zigbee_router/strings.json",
+    "custom_components/aqara_m1s_zigbee_router/translations/en.json",
+    "custom_components/aqara_m1s_zigbee_router/translations/ro.json",
+    "hacs.json"
+  ],
+  "yaml_parsed": [
+    "custom_components/aqara_m1s_zigbee_router/services.yaml"
+  ],
+  "preserved_files_sha256": {
+    "custom_components/aqara_m1s_zigbee_router/media_player.py": "444b5c673e714cc71a1860581a7b78bddad1289b7cfe924954848461d82ef5d6",
+    "custom_components/aqara_m1s_zigbee_router/media_group.py": "8be6279b71e716d0e194c0925d3c9213df5b92e7a980ee7c37478be9e7efa975",
+    "custom_components/aqara_m1s_zigbee_router/group_sync.py": "bf80bb04e2e7840d6bca07744d2eb88f3036badb246486ab43ecde2033b265a8",
+    "custom_components/aqara_m1s_zigbee_router/sound_player.py": "449211e7aa677a864dbebcb5e7558a310d65c7758fc6a4c1bf2df7d11f7035aa",
+    "custom_components/aqara_m1s_zigbee_router/icy_metadata.py": "35f6ce4bba126628d7bde2360dc0e014863c3edd5d0e53fbd872ac573a57944a",
+    "custom_components/aqara_m1s_zigbee_router/light.py": "f968e9b78df08febe76b12e5d2cd033705a2bde8d000af92cf5df52b32492f73",
+    "custom_components/aqara_m1s_zigbee_router/button.py": "155081779105e932a71f18a82d33a144053a14e79fa3bef5f024b27314cfc8c0",
+    "custom_components/aqara_m1s_zigbee_router/number.py": "20c760f4a0d4fb80f48e07a84896b1f2dd093f802eb79f4df060a7cfcb9bb11d",
+    "custom_components/aqara_m1s_zigbee_router/event.py": "f50779ebe7fda3d8908cff5705f5c53aaff6a1733bd04c979065d1833396f148",
+    "custom_components/aqara_m1s_zigbee_router/switch.py": "fbc49704b659b19f3a6d95f8a7bd5255b059d7b91bdcf11417813fd9059cc5fa",
+    "custom_components/aqara_m1s_zigbee_router/binary_sensor.py": "f2ca06a89d7b0efe9ef9aee86518e6b1048f10a0d06dea772f19f079d7bdadd7",
+    "custom_components/aqara_m1s_zigbee_router/device.py": "08c50d006528ba9e71408787fa654d4a34c1eeeb70d3257e704d2d6298737908",
+    "custom_components/aqara_m1s_zigbee_router/coordinator_mqtt.py": "0987d058e170117871ec6084fab70848d5458facbfd84720587c2182c39b1b2b",
+    "custom_components/aqara_m1s_zigbee_router/network_manager_compat.sh": "7caf5417ccaf732ac980365414da7727073922d20b2dbed46ac6550052fea809",
+    "custom_components/aqara_m1s_zigbee_router/coordinator_io.py": "86e3ac4779e1c7ff759c6d16ebceceddfbde9cc2233bc5d734f4419c77b62ead",
+    "custom_components/aqara_m1s_zigbee_router/mqtt_client.py": "1e39d8b603b60c4da8cb561a9fb4624e1d068861bd570d320308d62732e5a1d1",
+    "custom_components/aqara_m1s_zigbee_router/sound_upload.py": "c805dae8d79e4f66c15303e5ebafa7c301620c0cad227471f0b022ea73d650da"
+  },
+  "network_method_ast": "unchanged",
+  "live_readonly_diagnostics": {
+    "host": "192.168.0.220",
+    "values": {
+      "wifi_ip": "192.168.0.220",
+      "mqtt_process": "running",
+      "telnet_process": "running",
+      "zigbee_transport": "connected"
+    },
+    "uart_access": false,
+    "writes": false
+  },
+  "diagnostic_shell_syntax": "passed",
+  "windows_expand_archive": "passed; native extraction and all payload SHA256 values verified",
+  "test_shell": "External BusyBox for Windows; test shell selection adapted, assertions preserved",
+  "deployment_performed": false,
+  "restart_performed": false,
+  "test_limit": "HA API stand-ins; no complete HA runtime deployment test"
+}

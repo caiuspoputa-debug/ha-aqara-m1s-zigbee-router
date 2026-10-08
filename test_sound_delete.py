@@ -9,6 +9,8 @@ import types
 import unittest
 from unittest.mock import Mock
 
+from shell_test_support import shell_command
+
 ROOT = pathlib.Path(__file__).parent / "custom_components/aqara_m1s_zigbee_router"
 PACKAGE = "m1s_sound_delete_test"
 pkg = types.ModuleType(PACKAGE)
@@ -65,7 +67,7 @@ class SoundDeleteTests(unittest.TestCase):
         self.assertIn("data/musics/music-us/*", command)
         self.assertLess(command.index("validate_failed=0"), command.index("deleted=0"))
         syntax = subprocess.run(
-            ["sh", "-n"],
+            shell_command("-n"),
             input=command,
             text=True,
             capture_output=True,
