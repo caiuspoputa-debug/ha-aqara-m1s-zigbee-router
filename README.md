@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.6 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.7 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.37.6 TEST` makes the Coordinator Zigbee-only: no media, WAV, RGB, lux, physical-button bridge or shared auxiliary MQTT. Configure exposes only network address and Wi-Fi change. Live Linux diagnostics are read over Telnet every 30 seconds without accessing the UART. Router media, `0.01%` volume and group synchronization code are unchanged from `0.37.5`. See `ONLY_COORDINATOR_RO.md` before upgrading.
+Version `0.37.7 TEST` replaces independent historical late joins with a coalesced common receiver prefill while preserving the open FFmpeg source. Recovery has a 60-second cooldown while healthy receivers exist. Fresh, plausible ALSA queue changes require three confirmations before requesting this same barrier; they are not acoustic measurements. The dedicated Coordinator profile, individual playback and `0.01%` volume are preserved. See `GROUP_SYNC_RO.md` for behavior, limitations and installation; `ONLY_COORDINATOR_RO.md` describes the Coordinator profile.
 
 ## Requirements
 
@@ -110,7 +110,7 @@ For a stored WAV on a Router, the confirmed priority sequence is preserved exact
 
 If an individual source stops delivering PCM, the entity now reports `buffering`, stops its remote receiver and rebuilds it only after real PCM returns. A playout rebase records the lag, latest TCP drain duration and the most likely cause (`tcp_drain_timeout`, `tcp_drain_slow` or `ha_scheduler_or_other_await`). The orderly unload protection still stops the individual hub receiver before closing the local writer and adds no active watchdog on the hub.
 
-The media group keeps one shared PCM history and one common playout clock. Adaptive synchronization, per-hub resampling, periodic resync and automatic full-cohort rebuilds remain disabled. One 1.25-second TCP timeout is tolerated. Two consecutive timeouts, a shared-history overrun, a cursor lag of at least 1000 ms or three stale/XRUN ALSA samples quarantine only the affected hub. Healthy receivers continue on the existing clock. The quarantined hub rejoins from shared PCM history with retry delays of approximately 1.5, 3, 6, 12 and 15 seconds; the retry counter resets only after successful admission. A complete timeline restart remains available only through the explicit manual resync service. Restored playback waits up to 30 seconds for the complete selected cohort, then starts the available hubs and admits missing hubs through the existing late-join path. Manual Play allows a one-second initial cohort window. The newest Play/Stop request always wins, and group Stop or hard reset releases every suspended individual player.
+The media group keeps one shared PCM history and one common playout clock. One 1.25-second TCP timeout is tolerated; confirmed faults quarantine only the affected hub. A returning hub waits silently, without historical PCM replay, for a common receiver prefill. Requests settle for three seconds and are coalesced, with at least 60 seconds between automatic barriers while healthy audio remains. The receiver-only barrier can briefly interrupt the group, but keeps FFmpeg and the source URL open. It skips excluded, offline, individual and priority-sound hubs. Failed receivers do not block the available cohort. Retry history resets after 30 seconds of admitted playback. A cached timing audit requests the same barrier only after three fresh, plausible relative ALSA queue-change samples; stale, slow and impossible samples are rejected. No per-hub resampling or blind timer-driven reset is enabled. Acoustic alignment still needs listening/hardware validation. The existing manual resync service remains available. Restored playback retains its bounded initial-cohort wait, and group Stop releases suspended individual players.
 
 After FFmpeg completes a WAV normally, the integration keeps the path open for 500 ms before remote stop and playback restoration. This cushion was 400 ms in `0.36.0`; it does not apply to manual Stop, FFmpeg errors, radio or media-group playback.
 
@@ -130,7 +130,7 @@ Sound and media services reject a configured Coordinator before doing any work. 
 
 ## Validation and TEST status
 
-For `0.37.6`, see `TEST_REPORT.json` and `VALIDATION.txt` for the exact executed checks. Dedicated-Coordinator tests cover role-specific setup, entity cleanup, offline-role retention, passive diagnostics, service guards, the two-option menu and Router preservation. They use Home Assistant test doubles, not a deployed Home Assistant instance. The diagnostic command was also checked read-only on `.220`; this is not a complete live deployment test.
+For `0.37.7`, see `TEST_REPORT.json` and `VALIDATION.txt` for the exact executed checks. New tests exercise the actual async group manager with in-memory transports, network-loss scenarios, common prefill, priority/Stop races and a six-hour simulated cooldown timeline. Existing tests retain the Coordinator guards and Router behavior. No hub or Home Assistant was accessed by this build; simulation is not proof of acoustic synchronization or an overnight hardware test.
 
 The following is historical validation of the `0.37.5` base, not a new hardware test for this release:
 

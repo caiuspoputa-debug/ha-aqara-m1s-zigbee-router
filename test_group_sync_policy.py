@@ -108,12 +108,10 @@ class GroupSyncLossSimulationTests(unittest.TestCase):
 
     def test_failed_late_join_keeps_exponential_retry_history(self):
         prepare_source = ast.unparse(_manager_method("_prepare_member"))
-        prime_position = prepare_source.index("await self._prime_late_join_member")
-        reset_position = prepare_source.index(
-            "self._set_member_retry(member, failed=False)"
-        )
-
-        self.assertGreater(reset_position, prime_position)
+        reconcile_source = ast.unparse(_manager_method("_reconcile_loop"))
+        self.assertNotIn("self._set_member_retry(member, failed=False)", prepare_source)
+        self.assertIn("MEMBER_STABLE_RESET_SECONDS", reconcile_source)
+        self.assertIn("self._set_member_retry(member, failed=False)", reconcile_source)
 
     def test_manual_resync_remains_explicit_full_timeline_restart(self):
         manual_source = ast.unparse(_manager_method("async_manual_resync"))

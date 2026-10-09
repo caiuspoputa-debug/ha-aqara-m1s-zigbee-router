@@ -1,46 +1,26 @@
-M1S Integration 0.37.6 TEST - Coordinator-only profile
-Generated: 2026-10-08T19:13:04.626544+00:00
-Base ZIP SHA256: b2a878eac0fd482d894fef4ea06e005f137d8fbe1e8f6da01eb364e29d439549
+M1S Integration 0.37.7 TEST - group receiver recovery
+Generated: 2026-10-09T05:26:16.731499+00:00
+Base ZIP SHA256: 31e4f2944cf17315eb4605ba66239abf439e6bd10eccf00c7b1cbd3b0cb6fd81
 
-EXECUTED TESTS
+EXECUTED CHECKS
 test_audio_link_guard.py: 11 passed
 test_coordinator_io.py: 20 passed
 test_coordinator_profile.py: 25 passed
+test_group_cohort_alignment.py: 26 passed
 test_group_sync_policy.py: 8 passed
 test_shared_mqtt.py: 7 passed
 test_sound_delete.py: 9 passed
 test_sound_priority.py: 3 passed
 test_sound_storage.py: 8 passed
-Total: 91 passed; no failures
-Python compilation: passed (all packaged Python sources)
-JSON/YAML parsing: passed
-Network/IP/Wi-Fi method AST comparison: unchanged
-Audio transports and Router entity modules: byte-identical to supplied 0.37.5 ZIP
-Read-only .220 diagnostics: {"mqtt_process": "running", "telnet_process": "running", "wifi_ip": "192.168.0.220", "zigbee_transport": "connected"}
-Diagnostic shell syntax: passed (BusyBox sh -n)
-Windows Expand-Archive: passed; native extraction and all payload SHA256 values verified
+Total: 117 passed; no failures
+All packaged Python compiled; JSON/YAML parsed.
+Unchanged files SHA256 matched the 0.37.6 base.
+Individual audio, WAV, volume, MQTT, Coordinator profile, Wi-Fi/IP: unchanged.
+Windows Expand-Archive + extracted SHA256: passed
 
 LIMITS
-Home Assistant behavior is tested with small API stand-ins, not a full HA installation.
-No deployment, hub service change, firmware write, UART access or HA/Z2M restart was performed.
-TCP connected is transport status, not proof that every Zigbee device is reachable.
-Historical hardware claims from 0.37.5 were not repeated by this build.
-
-PRESERVED FILE SHA256
-444b5c673e714cc71a1860581a7b78bddad1289b7cfe924954848461d82ef5d6  custom_components/aqara_m1s_zigbee_router/media_player.py
-8be6279b71e716d0e194c0925d3c9213df5b92e7a980ee7c37478be9e7efa975  custom_components/aqara_m1s_zigbee_router/media_group.py
-bf80bb04e2e7840d6bca07744d2eb88f3036badb246486ab43ecde2033b265a8  custom_components/aqara_m1s_zigbee_router/group_sync.py
-449211e7aa677a864dbebcb5e7558a310d65c7758fc6a4c1bf2df7d11f7035aa  custom_components/aqara_m1s_zigbee_router/sound_player.py
-35f6ce4bba126628d7bde2360dc0e014863c3edd5d0e53fbd872ac573a57944a  custom_components/aqara_m1s_zigbee_router/icy_metadata.py
-f968e9b78df08febe76b12e5d2cd033705a2bde8d000af92cf5df52b32492f73  custom_components/aqara_m1s_zigbee_router/light.py
-155081779105e932a71f18a82d33a144053a14e79fa3bef5f024b27314cfc8c0  custom_components/aqara_m1s_zigbee_router/button.py
-20c760f4a0d4fb80f48e07a84896b1f2dd093f802eb79f4df060a7cfcb9bb11d  custom_components/aqara_m1s_zigbee_router/number.py
-f50779ebe7fda3d8908cff5705f5c53aaff6a1733bd04c979065d1833396f148  custom_components/aqara_m1s_zigbee_router/event.py
-fbc49704b659b19f3a6d95f8a7bd5255b059d7b91bdcf11417813fd9059cc5fa  custom_components/aqara_m1s_zigbee_router/switch.py
-f2ca06a89d7b0efe9ef9aee86518e6b1048f10a0d06dea772f19f079d7bdadd7  custom_components/aqara_m1s_zigbee_router/binary_sensor.py
-08c50d006528ba9e71408787fa654d4a34c1eeeb70d3257e704d2d6298737908  custom_components/aqara_m1s_zigbee_router/device.py
-0987d058e170117871ec6084fab70848d5458facbfd84720587c2182c39b1b2b  custom_components/aqara_m1s_zigbee_router/coordinator_mqtt.py
-7caf5417ccaf732ac980365414da7727073922d20b2dbed46ac6550052fea809  custom_components/aqara_m1s_zigbee_router/network_manager_compat.sh
-86e3ac4779e1c7ff759c6d16ebceceddfbde9cc2233bc5d734f4419c77b62ead  custom_components/aqara_m1s_zigbee_router/coordinator_io.py
-1e39d8b603b60c4da8cb561a9fb4624e1d068861bd570d320308d62732e5a1d1  custom_components/aqara_m1s_zigbee_router/mqtt_client.py
-c805dae8d79e4f66c15303e5ebafa7c301620c0cad227471f0b022ea73d650da  custom_components/aqara_m1s_zigbee_router/sound_upload.py
+Tests use HA stand-ins and in-memory transports, not a complete HA deployment.
+Six-hour test accelerates a policy timeline; no six-hour audio hardware test.
+No live hub/HA access, installation, restart, firmware or /data write performed.
+ALSA queue delay is a proxy, not an acoustic synchronization measurement.
+This release does not repair the .226 UBIFS/read-only storage problem.

@@ -1,3 +1,25 @@
+## 0.37.7 TEST - Common receiver recovery without reopening the source
+
+- Stage late receivers silently; remove independent history replay/catch-up
+  admission, which aligned the sender cursor but not receiver audio queues.
+- Coalesce recovery for three seconds and enforce a 60-second automatic
+  alignment cooldown while healthy receivers exist. At the broadcaster
+  checkpoint, rebuild the eligible receivers and send the same fresh prefill;
+  preserve FFmpeg, the radio connection, gain and shared sequence space.
+- Audit cached, fresh, plausible ALSA queue changes with three confirmations;
+  reject stale/slow/impossible samples and transport catch-up. This is a timing
+  proxy, not an acoustic measurement. No blind periodic rebuild or per-hub
+  resampling is enabled.
+- Preserve fault isolation and exponential retry history; reset retry counters
+  only after 30 seconds of admitted playback. Guard admission/health results
+  against Stop, source changes and individual/WAV ownership races.
+- Add host IP to group diagnostics and logs, with an entry-ID keyed detailed
+  map so duplicate Router names cannot hide individual receivers.
+- Preserve the dedicated-Coordinator profile from 0.37.6, individual media,
+  WAV, hundredth-percent volume, MQTT and network configuration modules.
+- Local async simulations and regression checks only; no live deployment,
+  firmware, hub-storage access or overnight acoustic validation in this build.
+
 ## 0.37.5 TEST - Hundredth-percent individual volume
 
 - Preserve every individual player's `volume_level` to four decimal places,

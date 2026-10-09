@@ -20,7 +20,6 @@ SOURCE = (
 )
 GROUP_SOURCE = SOURCE.with_name("media_group.py")
 MEDIA_PLAYER_SHA256 = "444b5c673e714cc71a1860581a7b78bddad1289b7cfe924954848461d82ef5d6"
-MEDIA_GROUP_SHA256 = "8be6279b71e716d0e194c0925d3c9213df5b92e7a980ee7c37478be9e7efa975"
 
 
 def evaluated_constants(source: Path = SOURCE) -> dict[str, object]:
@@ -187,7 +186,7 @@ class AudioCleanShutdownTests(unittest.TestCase):
         self.assertEqual(values["STARTUP_RESTORE_MAX_WAIT_SECONDS"], 30.0)
         self.assertEqual(values["GROUP_RECEIVER_STALE_CONFIRMATIONS"], 3)
         self.assertFalse(values["ADAPTIVE_SYNC_ENABLED"])
-        self.assertFalse(values["PERIODIC_RECEIVER_RESYNC_ENABLED"])
+        self.assertTrue(values["PERIODIC_RECEIVER_RESYNC_ENABLED"])
         self.assertIn("confirmed stale ALSA receiver", source)
         self.assertIn("_schedule_isolate_member", source)
         self.assertNotIn("_schedule_receiver_cohort_resync", source)
@@ -208,9 +207,24 @@ class AudioCleanShutdownTests(unittest.TestCase):
             GROUP_SOURCE.read_text(encoding="utf-8"),
         )
 
-    def test_group_transport_matches_v0374_reviewed_baseline(self):
-        actual = hashlib.sha256(GROUP_SOURCE.read_bytes()).hexdigest()
-        self.assertEqual(actual, MEDIA_GROUP_SHA256)
+    def test_group_receiver_alignment_preserves_source_and_transport_format(self):
+        values = evaluated_constants(GROUP_SOURCE)
+        self.assertEqual(values["PCM_RATE"], 32000)
+        self.assertEqual(values["PCM_CHANNELS"], 1)
+        self.assertEqual(values["PCM_SAMPLE_BYTES"], 4)
+        self.assertEqual(values["CHUNK_BYTES"], 4480)
+        tree = ast.parse(GROUP_SOURCE.read_text(encoding="utf-8"))
+        method = next(node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
+                      and node.name == "_realign_receiver_cohort")
+        source = ast.unparse(method)
+        self.assertIn("_prime_initial_cohort", source)
+        self.assertNotIn("_restart_stream_locked", source)
+        self.assertNotIn("_stop_stream_locked", source)
+        self.assertNotIn("process.terminate", source)
+        self.assertNotIn("process.kill", source)
+        audit = next(node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
+                     and node.name == "_soft_receiver_resync_audit")
+        self.assertNotIn("_read_group_receiver_health", ast.unparse(audit))
 
     def test_individual_transport_matches_v0375_reviewed_baseline(self):
         actual = hashlib.sha256(SOURCE.read_bytes()).hexdigest()

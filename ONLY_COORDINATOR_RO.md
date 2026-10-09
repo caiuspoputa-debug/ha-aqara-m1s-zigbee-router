@@ -1,7 +1,7 @@
-# 0.37.6 TEST - coordonator dedicat, Routere pastrate
+# 0.37.7 TEST - coordonator dedicat, Routere pastrate
 
 Aceasta este actualizarea integrarii Home Assistant, pornind exact de la
-arhiva 0.37.5 trimisa. Nu este firmware si nu este App-ul Zigbee2MQTT.
+arhiva 0.37.6 verificata. Nu este firmware si nu este App-ul Zigbee2MQTT.
 Nu instaleaza si nu reaplica profilul Only Coordinator de pe hub.
 
 ## Pe coordonator raman
@@ -52,8 +52,8 @@ valabil si daca hubul este offline cand porneste HA.
 ## Routerele
 
 Pastreaza media individuala si de grup, sunetele, volumele, RGB/lux,
-MQTT-ul comun si butonul fizic. Fisierele pentru transporturile audio si
-sincronizare sunt identice octet cu octet cu cele din arhiva 0.37.5.
+MQTT-ul comun si butonul fizic. Redarea individuala, WAV si volumele sunt
+neschimbate; recuperarea grupului este actualizata conform GROUP_SYNC_RO.md.
 Coordonatorul nu mai este inregistrat ca membru al grupului.
 
 ## Instalare peste versiunea existenta
@@ -66,7 +66,7 @@ Coordonatorul nu mai este inregistrat ca membru al grupului.
    Nu trebuie restartat hubul coordonator sau App-ul Zigbee2MQTT pentru aceasta
    actualizare. Pachetul nu executa singur niciun restart.
 4. Nu sterge si nu readauga intrarile integrarii existente.
-5. Verifica versiunea 0.37.6, cele cinci entitati ale coordonatorului si cele
+5. Verifica versiunea 0.37.7, cele cinci entitati ale coordonatorului si cele
    doua optiuni din Configurare. Diagnosticele pot necesita cateva secunde
    pentru primul esantion.
 6. Verifica un senzor/buton Zigbee si un Router media. Sterge din carduri
