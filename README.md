@@ -1,8 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.7 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.8 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.37.7 TEST` replaces independent historical late joins with a coalesced common receiver prefill while preserving the open FFmpeg source. Recovery has a 60-second cooldown while healthy receivers exist. Fresh, plausible ALSA queue changes require three confirmations before requesting this same barrier; they are not acoustic measurements. The dedicated Coordinator profile, individual playback and `0.01%` volume are preserved. See `GROUP_SYNC_RO.md` for behavior, limitations and installation; `ONLY_COORDINATOR_RO.md` describes the Coordinator profile.
+Version `0.37.8 TEST` repairs automatic sound-list recovery when HA starts before a Router. It uses the existing connectivity coordinator and verifies successful enumeration before replacing sound entities. No helper or persistent hub marker is added. All playback, group synchronization and `0.01%` volume behavior from `0.37.7` is preserved. See `SOUND_RECOVERY_RO.md` for the fix and its limits; `GROUP_SYNC_RO.md` and `ONLY_COORDINATOR_RO.md` describe the unchanged group and Coordinator behavior.
 
 ## Requirements
 

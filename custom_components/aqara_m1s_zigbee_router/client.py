@@ -612,10 +612,20 @@ class AqaraM1SClient:
             raise RuntimeError("Hub did not start the Wi-Fi change")
 
     def list_sounds(self) -> list[str]:
-        out = self.run_command('find /data/musics -type f -name "*.wav" 2>/dev/null')
+        out = self.run_command(
+            '__m1s_sound_rc=0\n'
+            'if [ -d /data/musics ]; then\n'
+            'find /data/musics -type f -name "*.wav" 2>/dev/null || __m1s_sound_rc=$?\n'
+            'else\n__m1s_sound_rc=1\nfi\n'
+            'printf "\\n%s%s\\n" "__M1S_SOUND_SCAN_" "$__m1s_sound_rc"'
+        )
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        completed = [(index, line) for index, line in enumerate(lines)
+                     if line.startswith("__M1S_SOUND_SCAN_")]
+        if len(completed) != 1 or completed[0][1] != "__M1S_SOUND_SCAN_0":
+            raise OSError("Sound directory scan failed or returned an incomplete result")
         sounds = []
-        for line in out.splitlines():
-            line = line.strip()
+        for line in lines[:completed[0][0]]:
             if self.is_deletable_sound_path(line):
                 sounds.append(line)
         return sorted(set(sounds))

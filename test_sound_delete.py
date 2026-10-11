@@ -150,10 +150,36 @@ class SoundDeleteTests(unittest.TestCase):
             "/data/musics/music-us/system.wav\n"
             "/data/musics/music-us/nested/system.wav\n"
             "/data/musics/original/b.wav\n"
+            "__M1S_SOUND_SCAN_0\n"
         )
         self.assertEqual(
             self.client.list_sounds(),
             ["/data/musics/music-ch/a.wav", "/data/musics/original/b.wav"],
+        )
+
+    def test_failed_or_incomplete_scan_is_not_an_empty_inventory(self):
+        self.client.run_command.side_effect = None
+        for output in ("", "__M1S_SOUND_SCAN_1", "/data/musics/music-ch/a.wav",
+                       "/data/musics/music-ch/a.wav\n__M1S_SOUND_SCAN_2"):
+            with self.subTest(output=output), self.assertRaises(OSError):
+                self.client.run_command.return_value = output
+                self.client.list_sounds()
+
+    def test_successful_empty_scan_is_authoritative(self):
+        self.client.run_command.side_effect = None
+        self.client.run_command.return_value = "__M1S_SOUND_SCAN_0\n"
+        self.assertEqual(self.client.list_sounds(), [])
+
+    def test_telnet_echo_after_completion_does_not_hide_sounds(self):
+        self.client.run_command.side_effect = None
+        self.client.run_command.return_value = (
+            '/data/musics/music-scene/door_bell_1.wav\n'
+            '# printf "\\n%s%s\\n" "__M1S_SOUND_SCAN_" "$__m1s_sound_rc"\n'
+            '__M1S_SOUND_SCAN_0\n# __m1s_rc=$?\n# printf end\n'
+        )
+        self.assertEqual(
+            self.client.list_sounds(),
+            ["/data/musics/music-scene/door_bell_1.wav"],
         )
 
     def test_system_sound_directory_is_not_managed_upload_space(self):

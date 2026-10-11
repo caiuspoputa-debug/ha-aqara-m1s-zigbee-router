@@ -1,3 +1,19 @@
+## 0.37.8 TEST - Automatic sound inventory recovery
+
+- Use the existing Hub Connectivity coordinator to refresh sound buttons
+  when a Router returns online; retry failed enumeration on subsequent updates.
+- Keep scans in entry-owned background tasks, without blocking HA startup or
+  introducing helpers, extra sensors, manual refresh buttons or hub daemons.
+- Require a successful hub-side scan completion response before replacing
+  the inventory. Failed or partial scans preserve existing sound entities.
+- Subscribe to the existing sound-list signal and coalesce concurrent updates;
+  unsubscribe and cancel pending scans when the config entry unloads.
+- Preserve sound unique IDs, playback, group synchronization, volume, MQTT,
+  Coordinator-only behavior and network configuration from 0.37.7.
+- Read-only checks found 62 non-system WAV files on .221-.225 and 47 on .226.
+  This release does not restore missing .226 files or repair hub storage.
+- No live integration installation, hub write, service change or restart.
+
 ## 0.37.7 TEST - Common receiver recovery without reopening the source
 
 - Stage late receivers silently; remove independent history replay/catch-up
