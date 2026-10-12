@@ -1,3 +1,33 @@
+## 0.37.11 TEST - Group Stop pipe cleanup
+
+- Cancel the original PCM and stderr consumers before starting dedicated
+  discard readers. Drain both FFmpeg pipes while waiting for process exit.
+- Prevent unread, paused stdout from turning an ordinary Stop into a process
+  timeout and hard transport reset. Retain bounded terminate/kill fallback
+  for a genuinely unresponsive child.
+- Keep cancellation cleanup responsible for killing and reaping the child;
+  stopped PCM is discarded, never forwarded to hubs.
+- Reproduce the old failure with real subprocess pipe backpressure and test
+  the production Stop path, reader handoff, forced kill and cancellation.
+- Preserve all playback clocks, TCP burst settings, ALSA commands, group
+  recovery and individual-player code from 0.37.9. This is not a new fix for
+  acoustic desynchronization or a change to the Wi-Fi traffic mitigation.
+
+## 0.37.9 TEST - Less frequent audio TCP writes
+
+- Combine 14 clocked PCM periods into one 62,720-byte TCP write every 490 ms,
+  for the group and individual players. The 35 ms sample clock, PCM format,
+  gain processing, ALSA commands, prefill and shared group timeline are unchanged.
+- Release group bursts at common sequence boundaries, directly from the shared
+  history. Intentional batching is not counted as a slow receiver fault.
+- Flush a short tail at EOF; discard pending individual data on Stop, source
+  replacement, receiver recovery and source rebuffering.
+- Keep independent slow-receiver isolation, mute silence and common cohort
+  recovery. Expose the transport batch size in diagnostic attributes.
+- Controlled listening suggested rarer/larger Wi-Fi transfers were quieter.
+  This is an experimental mitigation, not a guarantee of noise removal or
+  unchanged acoustic synchronization. Validate both on real music after install.
+
 ## 0.37.8 TEST - Automatic sound inventory recovery
 
 - Use the existing Hub Connectivity coordinator to refresh sound buttons

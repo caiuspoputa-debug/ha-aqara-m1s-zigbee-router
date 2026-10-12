@@ -1,32 +1,6 @@
-M1S Integration 0.37.8 TEST - automatic sound inventory recovery
-Generated: 2026-10-11T10:04:17.755957+00:00
-Base ZIP SHA256: 9ee4fc1294e0b96a4acf252405fd0cdb0735163860dc0fa31e121809c3a30dc6
-
-EXECUTED CHECKS
-test_audio_link_guard.py: 11 passed
-test_coordinator_io.py: 20 passed
-test_coordinator_profile.py: 25 passed
-test_group_cohort_alignment.py: 26 passed
-test_group_sync_policy.py: 8 passed
-test_shared_mqtt.py: 7 passed
-test_sound_delete.py: 12 passed
-test_sound_inventory.py: 11 passed
-test_sound_priority.py: 3 passed
-test_sound_storage.py: 8 passed
-Total: 131 passed; no failures
-Packaged Python compiled; JSON/YAML parsed.
-Unchanged files byte-identical to supplied 0.37.7 ZIP.
-All client methods other than list_sounds AST-identical; sound playback unchanged.
-Windows Expand-Archive + extracted SHA256: passed
-
-READ-ONLY ROUTER CHECKS, 2026-10-11 Europe/Bucharest
-.221-.225: 62 non-system WAV files (28 scene, 34 custom).
-.226: 47 non-system WAV files (18 scene, 29 custom).
-New scan completion response verified through existing Telnet on all six routers.
-
-LIMITS
-Lifecycle tests use HA stand-ins, not a full HA deployment.
-No HA deployment/restart, hub write/reboot, service change or sound playback.
-Does not restore absent .226 files or repair UBIFS storage.
-Does not implement the separate Zigbee2MQTT/coordinator readiness gate.
-Scan marker is a response, not a persistent boot file or Zigbee-health proof.
+0.37.11 TEST: 152 local automated tests passed.
+Old Stop pipe stall reproduced; corrected production Stop verified with real processes.
+Only Stop lifecycle changed. All playback methods, constants and individual player unchanged.
+No Home Assistant deployment/restart or acoustic synchronization validation.
+Version-only correction: 152-test results retained from identical 0.37.10 runtime code.
+Full suite rerun under restricted permissions was interrupted; metadata and archive checked separately.

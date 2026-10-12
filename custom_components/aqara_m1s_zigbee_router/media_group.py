@@ -57,6 +57,8 @@ PCM_SAMPLE_BYTES = 4
 # Use exactly one ALSA period per transport chunk, matching the stable single player.
 CHUNK_SECONDS = 0.035
 CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
+# Batch only TCP writes; the shared sample clock still advances every ALSA period.
+GROUP_TRANSPORT_BATCH_CHUNKS = 14
 
 # Shared group jitter-buffer policy.  FFmpeg decodes freely into one bounded
 # HA-side queue; one common playout clock then feeds every receiver.  This is
@@ -304,6 +306,8 @@ class AqaraM1SMediaGroupManager:
         self._stream_intent_generation = 0
         self._last_superseded_intent_generation: int | None = None
         self._sequence = 0
+        self._transport_batch_origin = 0
+        self._transport_released_sequence = 0
         self._stream_started_monotonic: float | None = None
         self._playout_epoch_monotonic: float | None = None
         self._clock_rebase_count = 0
@@ -701,6 +705,10 @@ class AqaraM1SMediaGroupManager:
             "transport": "clocked_shared_pcm_timeline",
             "architecture": "google_home_style_coordinator_independent_receivers",
             "stream_sequence": self._sequence,
+            "tcp_batch_periods": GROUP_TRANSPORT_BATCH_CHUNKS,
+            "tcp_batch_ms": round(GROUP_TRANSPORT_BATCH_CHUNKS * CHUNK_SECONDS * 1000),
+            "tcp_batch_bytes": GROUP_TRANSPORT_BATCH_CHUNKS * CHUNK_BYTES,
+            "tcp_batch_pending_periods": max(0, self._sequence - self._transport_released_sequence),
             "stream_timestamp_seconds": timestamp,
             "sync_lead_seconds": SYNC_LEAD_SECONDS,
             "initial_preroll_seconds": INITIAL_PREROLL_SECONDS,
@@ -1307,6 +1315,8 @@ class AqaraM1SMediaGroupManager:
 
         self._sequence = 0
         self._pcm_history.clear()
+        self._transport_batch_origin = 0
+        self._transport_released_sequence = 0
         self._stream_started_monotonic = None
         self._last_pcm_monotonic = None
         self._gain_ramp_remaining = 0
@@ -1654,6 +1664,8 @@ class AqaraM1SMediaGroupManager:
         self._stream_intent_generation = self._intent_generation
         self._sequence = 0
         self._pcm_history.clear()
+        self._transport_batch_origin = 0
+        self._transport_released_sequence = 0
         self._rebuffer_events = 0
         self._silence_fill_events = 0
         self._source_rebuffering = False
@@ -1743,45 +1755,18 @@ class AqaraM1SMediaGroupManager:
             if task and task is not current:
                 await self._cancel_task(task)
 
+        # Release the original pipe consumers before assigning discard readers.
+        # A terminated process can still wait forever for a paused stdout pipe.
+        await asyncio.gather(*(
+            self._cancel_task(task)
+            for task in (broadcast_task, stderr_task)
+            if task is not None and task is not current
+        ))
         process = self.ffmpeg
         self.ffmpeg = None
         self._ffmpeg_nice_applied = False
-        if process is not None and process.returncode is None:
-            with suppress(ProcessLookupError):
-                process.terminate()
-            try:
-                await asyncio.wait_for(
-                    process.wait(), timeout=GROUP_FFMPEG_TERMINATE_TIMEOUT
-                )
-            except asyncio.TimeoutError:
-                _LOGGER.warning(
-                    "M1S group FFmpeg terminate timeout while stdout drains "
-                    "pid=%s reason=%s; killing process",
-                    process.pid,
-                    reason,
-                )
-            if process.returncode is None:
-                with suppress(ProcessLookupError):
-                    process.kill()
-                with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(
-                        process.wait(), timeout=GROUP_FFMPEG_KILL_TIMEOUT
-                    )
-                if process.returncode is None:
-                    _LOGGER.warning(
-                        "M1S group FFmpeg did not reap after kill pid=%s "
-                        "reason=%s broadcaster_done=%s",
-                        process.pid,
-                        reason,
-                        bool(broadcast_task and broadcast_task.done()),
-                    )
-        for task in (broadcast_task, stderr_task):
-            if task and task is not current:
-                if not task.done():
-                    with suppress(asyncio.TimeoutError, asyncio.CancelledError):
-                        await asyncio.wait_for(task, timeout=TASK_CANCEL_TIMEOUT)
-                if not task.done():
-                    await self._cancel_task(task)
+        if process is not None:
+            await self._stop_ffmpeg_process(process, reason=reason)
         if stop_members:
             await asyncio.gather(
                 *(
@@ -1797,6 +1782,66 @@ class AqaraM1SMediaGroupManager:
                 return_exceptions=True,
             )
         _LOGGER.info("M1S group stream stopped reason=%s", reason)
+
+    async def _stop_ffmpeg_process(
+        self, process: asyncio.subprocess.Process, *, reason: str
+    ) -> None:
+        """Discard stopped PCM/stderr while reaping; never forward it to hubs."""
+        async def discard(reader: asyncio.StreamReader) -> None:
+            while await reader.read(65536):
+                pass
+
+        drains = [
+            self.hass.async_create_background_task(
+                discard(reader), f"aqara_m1s_stopped_ffmpeg_{name}"
+            )
+            for name, reader in (("stdout", process.stdout), ("stderr", process.stderr))
+            if reader is not None
+        ]
+        try:
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.terminate()
+            try:
+                await asyncio.wait_for(
+                    process.wait(), timeout=GROUP_FFMPEG_TERMINATE_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "M1S group FFmpeg did not exit after terminate "
+                    "pid=%s reason=%s; killing process", process.pid, reason,
+                )
+                if process.returncode is None:
+                    with suppress(ProcessLookupError):
+                        process.kill()
+                await asyncio.wait_for(
+                    process.wait(), timeout=GROUP_FFMPEG_KILL_TIMEOUT
+                )
+            if drains:
+                await asyncio.wait_for(
+                    asyncio.gather(*drains), timeout=TASK_CANCEL_TIMEOUT
+                )
+        except BaseException:
+            # The outer Stop deadline must not leave an unreferenced child alive.
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+                with suppress(asyncio.TimeoutError, ProcessLookupError):
+                    await asyncio.wait_for(
+                        process.wait(), timeout=GROUP_FFMPEG_KILL_TIMEOUT
+                    )
+            if drains:
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(
+                        asyncio.gather(*drains, return_exceptions=True),
+                        timeout=TASK_CANCEL_TIMEOUT,
+                    )
+            raise
+        finally:
+            for task in drains:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*drains, return_exceptions=True)
 
     def _idle_member_state(self, member: GroupMember) -> str:
         if not member.selected:
@@ -2180,7 +2225,7 @@ class AqaraM1SMediaGroupManager:
         member_isolation_requested = False
         try:
             while member.generation == generation:
-                chunk: bytes | None = None
+                payload: bytes | None = None
                 sequence: int | None = None
                 overflow_reason: str | None = None
 
@@ -2193,7 +2238,7 @@ class AqaraM1SMediaGroupManager:
                         if self._pcm_history:
                             oldest = self._pcm_history[0][0]
                             newest = self._pcm_history[-1][0]
-                            lag_chunks = max(0, newest + 1 - cursor)
+                            lag_chunks = max(0, self._transport_released_sequence - cursor)
                             member.lag_peak_chunks = max(
                                 member.lag_peak_chunks, lag_chunks
                             )
@@ -2206,11 +2251,21 @@ class AqaraM1SMediaGroupManager:
                                 )
                                 break
 
-                            if cursor <= newest:
+                            end = min(
+                                cursor + GROUP_TRANSPORT_BATCH_CHUNKS,
+                                self._transport_released_sequence,
+                                newest + 1,
+                            )
+                            if cursor < end:
                                 index = cursor - oldest
-                                sequence, chunk = self._pcm_history[index]
-                                member.shared_cursor = cursor + 1
-                                if lag_chunks > 1:
+                                sequence = cursor
+                                payload = b"".join(
+                                    self._member_chunk(member, self._pcm_history[i][1])
+                                    for i in range(index, index + end - cursor)
+                                )
+                                member.shared_cursor = end
+                                self._fanout_condition.notify_all()
+                                if lag_chunks > GROUP_TRANSPORT_BATCH_CHUNKS:
                                     if member.lag_since_monotonic is None:
                                         member.lag_since_monotonic = time.monotonic()
                                 else:
@@ -2235,10 +2290,10 @@ class AqaraM1SMediaGroupManager:
                     self._schedule_isolate_member(member, reason=overflow_reason)
                     return
 
-                if chunk is None or sequence is None:
+                if payload is None or sequence is None:
                     continue
 
-                writer.write(self._member_chunk(member, chunk))
+                writer.write(payload)
                 try:
                     await asyncio.wait_for(
                         writer.drain(), timeout=WRITER_DRAIN_TIMEOUT
@@ -2424,6 +2479,8 @@ class AqaraM1SMediaGroupManager:
             for chunk in prime_pcm:
                 self._pcm_history.append((self._sequence, chunk))
                 self._sequence += 1
+            self._transport_batch_origin = self._sequence
+            self._transport_released_sequence = self._sequence
             for member in successful:
                 member.shared_cursor = self._sequence
                 self._start_member_writer(member, member.generation)
@@ -2451,10 +2508,37 @@ class AqaraM1SMediaGroupManager:
         """Publish one clocked frame once into the shared live fanout buffer."""
         async with self._fanout_condition:
             self._pcm_history.append((sequence, chunk))
+            if (sequence + 1 - self._transport_batch_origin) % GROUP_TRANSPORT_BATCH_CHUNKS:
+                return
+            self._transport_released_sequence = sequence + 1
             # Every writer wakes against the same sequence space.  No PCM is copied
             # into per-member HA queues, so a temporary slow consumer cannot create
             # a second logical timeline.
             self._fanout_condition.notify_all()
+
+    async def _flush_fanout_tail(self, generation: int) -> None:
+        """Release a short EOF burst without replaying data after Stop/replacement."""
+        async def drain_tail() -> None:
+            async with self._fanout_condition:
+                if generation != self._generation or not self.desired_playing:
+                    return
+                self._transport_released_sequence = self._sequence
+                self._fanout_condition.notify_all()
+                while (
+                    generation == self._generation and self.desired_playing
+                    and any(
+                        member.shared_cursor is not None
+                        and member.shared_cursor < self._sequence
+                        for member in self.ready_members
+                    )
+                ):
+                    # Cursors advance before write(); never hold up EOF for a slow hub.
+                    await self._fanout_condition.wait()
+
+        try:
+            await asyncio.wait_for(drain_tail(), timeout=WRITER_DRAIN_TIMEOUT)
+        except asyncio.TimeoutError:
+            pass
 
     @staticmethod
     def _member_payload(member: GroupMember, payload: bytes) -> bytes:
@@ -2771,6 +2855,7 @@ class AqaraM1SMediaGroupManager:
                 if producer_error is not None:
                     raise producer_error
                 if producer_done.is_set() and source_queue.empty():
+                    await self._flush_fanout_tail(generation)
                     break
 
                 now = time.monotonic()
@@ -2816,6 +2901,7 @@ class AqaraM1SMediaGroupManager:
                         last_real_pcm_monotonic = time.monotonic()
                     except asyncio.QueueEmpty:
                         if producer_done.is_set():
+                            await self._flush_fanout_tail(generation)
                             break
                         if (
                             time.monotonic() - last_real_pcm_monotonic
@@ -3353,7 +3439,7 @@ class AqaraM1SMediaGroupManager:
                     if member.shared_cursor is None:
                         continue
                     lag_seconds = max(
-                        0, self._sequence - member.shared_cursor
+                        0, self._transport_released_sequence - member.shared_cursor
                     ) * CHUNK_SECONDS
                     decision = decide_group_sync_recovery(
                         shared_lag_ms=int(lag_seconds * 1000)

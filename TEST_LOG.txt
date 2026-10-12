@@ -1,0 +1,17 @@
+Ignored M1S MQTT state for role coordinator on router entry
+M1S group FFmpeg did not exit after terminate pid=123 reason=user_stop; killing process
+M1S group common receiver alignment reason=returning_receiver:192.168.0.222 hosts=['192.168.0.221', '192.168.0.222'] action=common_prefill_keep_source cooldown=60.0s
+M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221', '192.168.0.222', '192.168.0.223'] action=common_prefill_keep_source cooldown=60.0s
+M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221'] action=common_prefill_keep_source cooldown=60.0s
+M1S group initial prefill failed member=Aqara M1S Zigbee Router@192.168.0.222 error=test network loss
+M1S group quarantining affected member member=Aqara M1S Zigbee Router@192.168.0.222 reason=initial prefill failed: test network loss retry_in=1.5s healthy_receivers=[] action=isolate_member_keep_group_clock
+M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221', '192.168.0.222'] action=common_prefill_keep_source cooldown=60.0s
+M1S group first consecutive TCP drain timeout tolerated member=Aqara M1S Zigbee Router@192.168.0.222 seq=100 timeout=1.25s action=keep_receiver
+M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221'] action=common_prefill_keep_source cooldown=60.0s
+M1S group first consecutive TCP drain timeout tolerated member=Aqara M1S Zigbee Router@192.168.0.222 seq=100 timeout=1.25s action=keep_receiver
+M1S group confirmed TCP backpressure member=Aqara M1S Zigbee Router@192.168.0.222 seq=114 consecutive=2 action=isolate_member_keep_group_clock
+Executing <Task finished name='Task-1229' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-09-30\referenced-chatgpt-conversation-this-is-an\work\integration-03710-clean-stop\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.796 seconds
+----------------------------------------------------------------------
+Ran 152 tests in 8.192s
+
+OK

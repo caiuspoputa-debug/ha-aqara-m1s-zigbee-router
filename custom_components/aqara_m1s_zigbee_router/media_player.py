@@ -71,6 +71,7 @@ PCM_CHUNK_BYTES = int(
     PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * PCM_CHUNK_SECONDS
 )
 PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
+SINGLE_TRANSPORT_BATCH_CHUNKS = 14
 # Single-player stable transport. Keep a bounded HA-side PCM jitter buffer so
 # short scheduler/network stalls do not starve aplay, while volume/mute is still
 # applied only when a chunk leaves the buffer. This keeps audible volume latency
@@ -666,6 +667,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "user_stop_remote_cleanup": "deferred_until_next_play",
             "single_stable_jitter_buffer": True,
             "single_pcm_pace_ms": int(PCM_CHUNK_SECONDS * 1000),
+            "single_tcp_batch_periods": SINGLE_TRANSPORT_BATCH_CHUNKS,
+            "single_tcp_batch_ms": round(SINGLE_TRANSPORT_BATCH_CHUNKS * PCM_CHUNK_SECONDS * 1000),
+            "single_tcp_batch_bytes": SINGLE_TRANSPORT_BATCH_CHUNKS * PCM_CHUNK_BYTES,
             "single_jitter_buffer_ms": int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
             "single_prebuffer_ms": int(SINGLE_PREBUFFER_SECONDS * 1000),
             "single_rebuffer_resume_ms": int(SINGLE_REBUFFER_RESUME_SECONDS * 1000),
@@ -1887,6 +1891,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         receiver_stopped_for_rebuffer = False
         health_task: asyncio.Task | None = None
         last_health_probe = 0.0
+        pending_pcm = bytearray()
 
         async def _produce_pcm() -> None:
             nonlocal last_source_progress_monotonic, producer_error
@@ -1957,6 +1962,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         async def _stop_receiver_for_source_rebuffer() -> None:
             """Clear the hub audio tail while FFmpeg reconnects its source."""
             nonlocal health_task, receiver_stopped_for_rebuffer
+            pending_pcm.clear()
             if receiver_stopped_for_rebuffer:
                 return
 
@@ -1994,6 +2000,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             nonlocal writer, tcp_recovery_events, tcp_recovery_window_started
             nonlocal consecutive_drain_timeouts
             expected_reason = self._expected_transport_stop(generation)
+            pending_pcm.clear()
             if expected_reason is not None:
                 _LOGGER.debug(
                     "Aqara media receiver fault ignored during expected teardown "
@@ -2073,9 +2080,14 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 cause,
             )
 
-        async def _write_chunk_to_hub(raw_chunk: bytes, *, stage: str) -> None:
+        async def _flush_pcm_batch(*, stage: str) -> None:
             nonlocal consecutive_drain_timeouts, last_tcp_drain_timed_out
-            pcm = self._apply_live_pcm_gain(raw_chunk)
+            if not pending_pcm:
+                return
+            pcm = bytes(pending_pcm)
+            pending_pcm.clear()
+            if self._expected_transport_stop(generation) is not None:
+                return
             drain_started = time.monotonic()
             try:
                 writer.write(pcm)
@@ -2137,6 +2149,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 )
                 return
 
+        async def _write_chunk_to_hub(raw_chunk: bytes, *, stage: str) -> None:
+            pending_pcm.extend(self._apply_live_pcm_gain(raw_chunk))
+            if len(pending_pcm) >= PCM_CHUNK_BYTES * SINGLE_TRANSPORT_BATCH_CHUNKS:
+                await _flush_pcm_batch(stage=stage)
+
         try:
             # Build a real jitter cushion before opening the playout clock. For
             # short files, start as soon as FFmpeg reaches EOF instead of waiting.
@@ -2182,6 +2199,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 # If FFmpeg is finished and every buffered frame was played,
                 # normal end-of-media has been reached.
                 if producer_done.is_set() and queue.empty():
+                    await _flush_pcm_batch(stage="end_of_media")
                     break
 
                 now = time.monotonic()
@@ -2377,6 +2395,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         last_real_pcm_monotonic = time.monotonic()
                     except asyncio.QueueEmpty:
                         if producer_done.is_set():
+                            await _flush_pcm_batch(stage="end_of_media")
                             break
                         if time.monotonic() - last_real_pcm_monotonic > SINGLE_SOURCE_STALL_TIMEOUT:
                             raise RuntimeError(

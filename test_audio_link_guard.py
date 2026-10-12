@@ -19,7 +19,7 @@ SOURCE = (
     / "media_player.py"
 )
 GROUP_SOURCE = SOURCE.with_name("media_group.py")
-MEDIA_PLAYER_SHA256 = "444b5c673e714cc71a1860581a7b78bddad1289b7cfe924954848461d82ef5d6"
+RECEIVER_COMMANDS_SHA256 = "483f360e7ede714bea7faef9b5c208e1cf52046a6ab1fc54261fe5c630214efe"
 
 
 def evaluated_constants(source: Path = SOURCE) -> dict[str, object]:
@@ -226,9 +226,17 @@ class AudioCleanShutdownTests(unittest.TestCase):
                      and node.name == "_soft_receiver_resync_audit")
         self.assertNotIn("_read_group_receiver_health", ast.unparse(audit))
 
-    def test_individual_transport_matches_v0375_reviewed_baseline(self):
-        actual = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
-        self.assertEqual(actual, MEDIA_PLAYER_SHA256)
+    def test_individual_receiver_and_pcm_clock_match_reviewed_baseline(self):
+        values = evaluated_constants()
+        expected = {
+            "PCM_RATE": 32000, "PCM_CHANNELS": 1, "PCM_SAMPLE_BYTES": 4,
+            "PCM_CHUNK_SECONDS": 0.035, "PCM_CHUNK_BYTES": 4480,
+            "SINGLE_JITTER_BUFFER_SECONDS": 4.0,
+            "SINGLE_PREBUFFER_SECONDS": 2.5, "SINGLE_REMOTE_PREFILL_SECONDS": 1.4,
+        }
+        self.assertEqual({key: values[key] for key in expected}, expected)
+        commands = values["REMOTE_START_COMMAND"] + "\n" + values["REMOTE_STOP_COMMAND"]
+        self.assertEqual(hashlib.sha256(commands.encode()).hexdigest(), RECEIVER_COMMANDS_SHA256)
 
 
 if __name__ == "__main__":

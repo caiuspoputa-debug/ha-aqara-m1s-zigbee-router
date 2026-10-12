@@ -1,8 +1,10 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.8 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.11 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.37.8 TEST` reface automat lista sunetelor daca Home Assistant porneste inaintea unui Router. Foloseste verificarea existenta de conectivitate si accepta lista numai dupa confirmarea citirii complete. Nu adauga helperi sau markeri permanenti pe hub. Redarea, sincronizarea de grup si volumul `0,01%` din `0.37.7` sunt pastrate. Citeste `SOUND_RECOVERY_RO.md` pentru corectie si limite; `GROUP_SYNC_RO.md` si `ONLY_COORDINATOR_RO.md` descriu comportamentul neschimbat al grupului si coordonatorului.
+Versiunea `0.37.11 TEST` corecteaza oprirea grupului: datele ramase pe iesirile FFmpeg sunt eliminate in timpul inchiderii procesului, pentru ca o conducta plina sa nu provoace un reset fortat inutil. Cititorii initiali sunt opriti inaintea celor de curatare, iar anularea opririi nu lasa procesul activ fara proprietar. Citeste `STOP_FIX_RO.md`.
+
+Trimiterea audio ramane exact ca in `0.37.9`: 14 perioade PCM, 62.720 octeti la 490 ms pentru grup si individuale. Ceasul comun de 35 ms, formatul, comenzile ALSA, preumplerea si volumul nu sunt schimbate. Versiunea aceasta nu rezolva desincronizarea acustica si nu garanteaza eliminarea zgomotului. Recuperarea sunetelor din `0.37.8` este pastrata.
 
 ## Cerințe
 

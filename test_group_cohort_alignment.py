@@ -391,7 +391,8 @@ class ManagerAlignmentTests(unittest.IsolatedAsyncioTestCase):
         member = self.add_member(222, ready=True)
         self.manager._schedule_isolate_member = Mock()
         member.writer.drain.side_effect = asyncio.TimeoutError
-        self.manager._pcm_history.extend((i, module.SILENCE_CHUNK) for i in range(100, 103))
+        self.manager._pcm_history.extend((i, module.SILENCE_CHUNK) for i in range(100, 128))
+        self.manager._transport_released_sequence = 128
         await asyncio.wait_for(self.manager._member_writer_loop(member, member.generation), timeout=1)
         self.assertEqual(member.consecutive_drain_timeouts, 2)
         self.manager._schedule_isolate_member.assert_called_once()
@@ -409,7 +410,8 @@ class ManagerAlignmentTests(unittest.IsolatedAsyncioTestCase):
                 raise asyncio.TimeoutError
             drained.set()
         member.writer.drain.side_effect = drain
-        self.manager._pcm_history.extend((i, module.SILENCE_CHUNK) for i in range(100, 103))
+        self.manager._pcm_history.extend((i, module.SILENCE_CHUNK) for i in range(100, 128))
+        self.manager._transport_released_sequence = 128
         member.writer_task = self.hass.async_create_background_task(
             self.manager._member_writer_loop(member, member.generation), "test_writer"
         )
