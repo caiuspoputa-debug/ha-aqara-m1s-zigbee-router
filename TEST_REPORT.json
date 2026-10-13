@@ -1,31 +1,50 @@
 {
-  "version": "0.37.11",
-  "base_version": "0.37.9",
-  "tests_run": 152,
+  "version": "0.37.12",
+  "base_version": "0.37.11",
+  "generated_at_utc": "2026-10-13T17:07:39.120305+00:00",
+  "tests_run": 155,
   "result": "PASS",
-  "validation_scope": "local automated tests; not deployed to HA",
-  "old_stop_failure_reproduced_with_real_pipe": true,
-  "new_stop_passes_real_subprocess_regressions": true,
+  "validation_scope": "local automated tests; active HA 0.37.11 source hashes checked read-only",
   "changed_runtime_files": [
+    "custom_components/aqara_m1s_zigbee_router/audio_batch.py",
     "custom_components/aqara_m1s_zigbee_router/manifest.json",
-    "custom_components/aqara_m1s_zigbee_router/media_group.py"
+    "custom_components/aqara_m1s_zigbee_router/media_group.py",
+    "custom_components/aqara_m1s_zigbee_router/media_player.py"
   ],
-  "existing_manager_methods_changed": [
-    "_stop_stream_locked"
-  ],
-  "new_manager_methods": [
-    "_stop_ffmpeg_process"
-  ],
-  "individual_player_byte_identical_to_0379": true,
-  "playback_transport_gain_and_clock_methods_unchanged": true,
-  "all_group_constants_unchanged": true,
-  "acoustic_synchronization_verified": false,
-  "source_sha256": {
-    "media_group.py": "cb34dae50b51127aba7e3b92ce31e1f7f354bfa782944183d162b3e15ade330e",
-    "media_player.py": "6e3e7f44254f9d0a64d9de50ac13083d9f715c6a0545c857342273312e18c57b",
-    "manifest.json": "b3fcb79d9bcb8da0a7de515cfa43fae1cd8fe72584bfa3140da08c3426f8c390"
+  "changed_functions": {
+    "media_group.py": [
+      "AqaraM1SMediaGroupManager._fanout_frame",
+      "AqaraM1SMediaGroupManager._member_writer_loop",
+      "AqaraM1SMediaGroupManager.attributes"
+    ],
+    "media_player.py": [
+      "AqaraM1SRadioPlayer._watch_ffmpeg",
+      "AqaraM1SRadioPlayer._watch_ffmpeg._write_chunk_to_hub",
+      "AqaraM1SRadioPlayer.extra_state_attributes"
+    ]
   },
-  "version_metadata_correction_from": "0.37.10",
-  "version_correction_validation": "All runtime files byte-identical except manifest version; ZIP integrity and metadata verified.",
-  "test_results_retained_from": "0.37.10, identical runtime code; full suite not rerun for metadata-only correction"
+  "pcm_clock_ms": 35,
+  "transport_average_ms": 300,
+  "transport_periods_cycle": [
+    9,
+    9,
+    8,
+    9,
+    8,
+    9,
+    8
+  ],
+  "transport_min_ms": 280,
+  "transport_max_ms": 315,
+  "transport_max_bytes": 40320,
+  "unrelated_runtime_files_byte_identical": true,
+  "buffers_prefill_gain_stop_and_receiver_commands_unchanged": true,
+  "acoustic_synchronization_verified": false,
+  "deployed_to_home_assistant": false,
+  "source_sha256": {
+    "audio_batch.py": "fb3a8d12d24aa239c95cc55792aacad190393adf1504207db6abd1a96154b925",
+    "manifest.json": "a90fc173308bc7f50515d459f82b2eb69d07ad6e157c2b629a6db9ea8ad2c599",
+    "media_group.py": "ead8f365bbbf9b390674b4b0bcf5cd47cba8f80154c99325a6dddd2dcfaf1114",
+    "media_player.py": "15fe84348bb44d497c4b2a29ff18593c41e3ee00fb7a3694f6d26b7e8f78afe5"
+  }
 }

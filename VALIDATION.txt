@@ -1,6 +1,8 @@
-0.37.11 TEST: 152 local automated tests passed.
-Old Stop pipe stall reproduced; corrected production Stop verified with real processes.
-Only Stop lifecycle changed. All playback methods, constants and individual player unchanged.
-No Home Assistant deployment/restart or acoustic synchronization validation.
-Version-only correction: 152-test results retained from identical 0.37.10 runtime code.
-Full suite rerun under restricted permissions was interrupted; metadata and archive checked separately.
+0.37.12 TEST: 155 local automated tests passed.
+Target 300 ms average on the existing 35 ms PCM clock: 280/315 ms batches.
+Ordered identical group payloads, individual payloads, mute, EOF, Stop and recovery verified.
+100000 batch boundaries checked: rounding error below one PCM period, no cumulative drift.
+Buffers, prefill, gain, Stop lifecycle and receiver commands unchanged from 0.37.11.
+All unrelated component files are byte-identical to 0.37.11.
+Active 0.37.11 source hashes on HA .250 were checked read-only before this build.
+No 0.37.12 deployment, acoustic synchronization or noise reduction validation.

@@ -28,6 +28,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dis
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .icy_metadata import watch_icy_metadata
+from .audio_batch import next_batch_boundary
 from .group_sync import (
     COHORT_ALIGNMENT_COOLDOWN_SECONDS,
     CohortAlignmentGate,
@@ -58,7 +59,9 @@ PCM_SAMPLE_BYTES = 4
 CHUNK_SECONDS = 0.035
 CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
 # Batch only TCP writes; the shared sample clock still advances every ALSA period.
-GROUP_TRANSPORT_BATCH_CHUNKS = 14
+GROUP_TRANSPORT_TARGET_MS = 300
+GROUP_TRANSPORT_PERIOD_MS = int(CHUNK_SECONDS * 1000)
+GROUP_TRANSPORT_BATCH_CHUNKS = (GROUP_TRANSPORT_TARGET_MS + GROUP_TRANSPORT_PERIOD_MS - 1) // GROUP_TRANSPORT_PERIOD_MS
 
 # Shared group jitter-buffer policy.  FFmpeg decodes freely into one bounded
 # HA-side queue; one common playout clock then feeds every receiver.  This is
@@ -706,7 +709,9 @@ class AqaraM1SMediaGroupManager:
             "architecture": "google_home_style_coordinator_independent_receivers",
             "stream_sequence": self._sequence,
             "tcp_batch_periods": GROUP_TRANSPORT_BATCH_CHUNKS,
-            "tcp_batch_ms": round(GROUP_TRANSPORT_BATCH_CHUNKS * CHUNK_SECONDS * 1000),
+            "tcp_batch_ms": GROUP_TRANSPORT_TARGET_MS,
+            "tcp_batch_min_ms": (GROUP_TRANSPORT_BATCH_CHUNKS - 1) * GROUP_TRANSPORT_PERIOD_MS,
+            "tcp_batch_max_ms": GROUP_TRANSPORT_BATCH_CHUNKS * GROUP_TRANSPORT_PERIOD_MS,
             "tcp_batch_bytes": GROUP_TRANSPORT_BATCH_CHUNKS * CHUNK_BYTES,
             "tcp_batch_pending_periods": max(0, self._sequence - self._transport_released_sequence),
             "stream_timestamp_seconds": timestamp,
@@ -2253,6 +2258,8 @@ class AqaraM1SMediaGroupManager:
 
                             end = min(
                                 cursor + GROUP_TRANSPORT_BATCH_CHUNKS,
+                                next_batch_boundary(cursor, self._transport_batch_origin,
+                                                    GROUP_TRANSPORT_PERIOD_MS, GROUP_TRANSPORT_TARGET_MS),
                                 self._transport_released_sequence,
                                 newest + 1,
                             )
@@ -2508,7 +2515,8 @@ class AqaraM1SMediaGroupManager:
         """Publish one clocked frame once into the shared live fanout buffer."""
         async with self._fanout_condition:
             self._pcm_history.append((sequence, chunk))
-            if (sequence + 1 - self._transport_batch_origin) % GROUP_TRANSPORT_BATCH_CHUNKS:
+            if sequence + 1 < next_batch_boundary(sequence, self._transport_batch_origin,
+                                                  GROUP_TRANSPORT_PERIOD_MS, GROUP_TRANSPORT_TARGET_MS):
                 return
             self._transport_released_sequence = sequence + 1
             # Every writer wakes against the same sequence space.  No PCM is copied

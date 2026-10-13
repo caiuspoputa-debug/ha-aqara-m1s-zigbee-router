@@ -1,10 +1,10 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.11 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.12 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.37.11 TEST` corecteaza oprirea grupului: datele ramase pe iesirile FFmpeg sunt eliminate in timpul inchiderii procesului, pentru ca o conducta plina sa nu provoace un reset fortat inutil. Cititorii initiali sunt opriti inaintea celor de curatare, iar anularea opririi nu lasa procesul activ fara proprietar. Citeste `STOP_FIX_RO.md`.
+Versiunea `0.37.12 TEST` seteaza trimiterea audio TCP la o medie de 300 ms pentru grup si individuale. Perioadele PCM intregi de 35 ms formeaza blocuri de 280/315 ms, cu 35.840/40.320 octeti. Ambele trasee folosesc acelasi calcul intreg al limitelor, fara alt cronometru si fara eroare de rotunjire cumulativa. Citeste `AUDIO_TRANSPORT_RO.md`.
 
-Trimiterea audio ramane exact ca in `0.37.9`: 14 perioade PCM, 62.720 octeti la 490 ms pentru grup si individuale. Ceasul comun de 35 ms, formatul, comenzile ALSA, preumplerea si volumul nu sunt schimbate. Versiunea aceasta nu rezolva desincronizarea acustica si nu garanteaza eliminarea zgomotului. Recuperarea sunetelor din `0.37.8` este pastrata.
+Ceasul comun de 35 ms, formatul, comenzile ALSA, preumplerea, bufferele si procesarea volumului raman ca in `0.37.11`; se schimba doar limitele trimiterilor TCP. Corectia Stop din `0.37.11` si recuperarea sunetelor din `0.37.8` sunt pastrate. Versiunea nu garanteaza sincronizarea acustica sau eliminarea zgomotului. Dupa instalare este necesara repornirea Home Assistant.
 
 ## Cerințe
 
@@ -132,12 +132,14 @@ Serviciile media/WAV refuză un coordonator configurat ca țintă. Serviciile su
 
 ## Validare și statut TEST
 
-Pentru `0.37.7`, rezultatele curente sunt în `VALIDATION.txt` și `TEST_REPORT.json`.
-Testele noi execută managerul asincron real cu conexiuni simulate: pierderi,
-reveniri, pornire comună și comenzi Stop/WAV concurente. Politica de pauză
-este verificată pe o cronologie simulată de șase ore. Testele vechi sunt păstrate.
-Acest build nu a accesat huburile sau HA. Nu este o probă acustică ori un test
-real peste noapte; versiunea rămâne TEST.
+Pentru `0.37.12`, cele 155 de teste locale sunt documentate in `VALIDATION.txt`,
+`TEST_REPORT.json` si `TEST_LOG.txt`. Testele transportului verifica aceiasi
+octeti in aceeasi ordine pentru sase membri, individuale, EOF, mute, Stop si
+recuperare, plus calculul limitelor pentru peste opt ore simulate fara deriva.
+Testele existente pentru managerul asincron, pierderi, reveniri, pornire comuna,
+Stop/WAV si protectiile Coordinatorului sunt pastrate. Fisierele active `0.37.11`
+de pe HA au fost comparate numai in citire; `0.37.12` nu a fost validata acustic.
+Nu este un test real peste noapte; versiunea ramane TEST.
 
 ### Istoric al bazei 0.37.5 (nu funcții active pe coordonatorul dedicat)
 

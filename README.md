@@ -1,10 +1,10 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.11 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.12 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.37.11 TEST` fixes group Stop cleanup: remaining FFmpeg stdout/stderr data is discarded while the process exits, preventing a full pipe from causing an unnecessary hard reset. Original consumers are canceled before discard readers take over, and cancellation cannot leave a live child unowned. See `STOP_FIX_RO.md` for validation and limits.
+Version `0.37.12 TEST` sets TCP audio batching to a 300 ms average for group and individual players. Whole 35 ms PCM periods produce 280/315 ms batches of 35,840/40,320 bytes. Both paths use the same integer boundary calculation, without adding a timer or accumulating rounding drift. See `AUDIO_TRANSPORT_RO.md`.
 
-Audio transmission remains exactly as in `0.37.9`: group and individual players send 14 PCM periods in one 62,720-byte TCP burst every 490 ms. The shared 35 ms audio clock, sample format, ALSA commands, prefill and volume processing are unchanged. This release does not fix acoustic desynchronization or guarantee noise removal. See `AUDIO_TRANSPORT_RO.md`. Automatic sound recovery from `0.37.8` is retained.
+The shared 35 ms audio clock, sample format, ALSA commands, prefill, buffers and volume processing are unchanged from `0.37.11`; only TCP batch boundaries change. The Stop cleanup fix from `0.37.11` and automatic sound recovery from `0.37.8` are retained. This release does not guarantee acoustic synchronization or noise removal. Restart Home Assistant after installation.
 
 ## Requirements
 
@@ -132,7 +132,7 @@ Sound and media services reject a configured Coordinator before doing any work. 
 
 ## Validation and TEST status
 
-For `0.37.7`, see `TEST_REPORT.json` and `VALIDATION.txt` for the exact executed checks. New tests exercise the actual async group manager with in-memory transports, network-loss scenarios, common prefill, priority/Stop races and a six-hour simulated cooldown timeline. Existing tests retain the Coordinator guards and Router behavior. No hub or Home Assistant was accessed by this build; simulation is not proof of acoustic synchronization or an overnight hardware test.
+For `0.37.12`, see `TEST_REPORT.json`, `TEST_LOG.txt` and `VALIDATION.txt` for the 155 local automated tests. Batching tests verify identical ordered payloads for six members, individual playback, EOF, mute, Stop and recovery, plus over eight hours of simulated boundary arithmetic without drift. Existing tests cover the async group manager, network-loss scenarios, common prefill, priority/Stop races and Coordinator guards. The active `0.37.11` files on Home Assistant were checked read-only before this build; `0.37.12` has not been acoustically validated. Simulation is not proof of synchronization or an overnight hardware test.
 
 The following is historical validation of the `0.37.5` base, not a new hardware test for this release:
 

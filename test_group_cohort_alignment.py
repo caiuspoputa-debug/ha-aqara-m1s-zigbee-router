@@ -20,6 +20,9 @@ SPEC = importlib.util.spec_from_file_location("m1s_cohort_policy", ROOT / "group
 POLICY = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = POLICY
 SPEC.loader.exec_module(POLICY)
+BATCH_SPEC = importlib.util.spec_from_file_location("m1s_audio_batch_policy", ROOT / "audio_batch.py")
+BATCH = importlib.util.module_from_spec(BATCH_SPEC)
+BATCH_SPEC.loader.exec_module(BATCH)
 
 # Keep the complete production manager and dataclass; replace only HA imports.
 tree = ast.parse((ROOT / "media_group.py").read_text(encoding="utf-8"))
@@ -46,6 +49,7 @@ module.__dict__.update({
     "ReceiverTimingGuard": POLICY.ReceiverTimingGuard,
     "COHORT_ALIGNMENT_COOLDOWN_SECONDS": POLICY.COHORT_ALIGNMENT_COOLDOWN_SECONDS,
     "decide_group_sync_recovery": POLICY.decide_group_sync_recovery,
+    "next_batch_boundary": BATCH.next_batch_boundary,
 })
 exec(compile(ast.Module(body=nodes, type_ignores=[]), str(ROOT / "media_group.py"), "exec"), module.__dict__)
 

@@ -34,6 +34,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .client import AqaraM1SClient
 from .media_group import AqaraM1SMediaGroup
 from .icy_metadata import watch_icy_metadata
+from .audio_batch import next_batch_boundary
 from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
@@ -71,7 +72,9 @@ PCM_CHUNK_BYTES = int(
     PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * PCM_CHUNK_SECONDS
 )
 PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
-SINGLE_TRANSPORT_BATCH_CHUNKS = 14
+SINGLE_TRANSPORT_TARGET_MS = 300
+SINGLE_TRANSPORT_PERIOD_MS = int(PCM_CHUNK_SECONDS * 1000)
+SINGLE_TRANSPORT_BATCH_CHUNKS = (SINGLE_TRANSPORT_TARGET_MS + SINGLE_TRANSPORT_PERIOD_MS - 1) // SINGLE_TRANSPORT_PERIOD_MS
 # Single-player stable transport. Keep a bounded HA-side PCM jitter buffer so
 # short scheduler/network stalls do not starve aplay, while volume/mute is still
 # applied only when a chunk leaves the buffer. This keeps audible volume latency
@@ -668,7 +671,9 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_stable_jitter_buffer": True,
             "single_pcm_pace_ms": int(PCM_CHUNK_SECONDS * 1000),
             "single_tcp_batch_periods": SINGLE_TRANSPORT_BATCH_CHUNKS,
-            "single_tcp_batch_ms": round(SINGLE_TRANSPORT_BATCH_CHUNKS * PCM_CHUNK_SECONDS * 1000),
+            "single_tcp_batch_ms": SINGLE_TRANSPORT_TARGET_MS,
+            "single_tcp_batch_min_ms": (SINGLE_TRANSPORT_BATCH_CHUNKS - 1) * SINGLE_TRANSPORT_PERIOD_MS,
+            "single_tcp_batch_max_ms": SINGLE_TRANSPORT_BATCH_CHUNKS * SINGLE_TRANSPORT_PERIOD_MS,
             "single_tcp_batch_bytes": SINGLE_TRANSPORT_BATCH_CHUNKS * PCM_CHUNK_BYTES,
             "single_jitter_buffer_ms": int(SINGLE_JITTER_BUFFER_SECONDS * 1000),
             "single_prebuffer_ms": int(SINGLE_PREBUFFER_SECONDS * 1000),
@@ -1892,6 +1897,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         health_task: asyncio.Task | None = None
         last_health_probe = 0.0
         pending_pcm = bytearray()
+        transport_periods = 0
 
         async def _produce_pcm() -> None:
             nonlocal last_source_progress_monotonic, producer_error
@@ -2150,8 +2156,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 return
 
         async def _write_chunk_to_hub(raw_chunk: bytes, *, stage: str) -> None:
+            nonlocal transport_periods
+            boundary = next_batch_boundary(transport_periods, 0,
+                                           SINGLE_TRANSPORT_PERIOD_MS, SINGLE_TRANSPORT_TARGET_MS)
             pending_pcm.extend(self._apply_live_pcm_gain(raw_chunk))
-            if len(pending_pcm) >= PCM_CHUNK_BYTES * SINGLE_TRANSPORT_BATCH_CHUNKS:
+            transport_periods += 1
+            if transport_periods >= boundary:
                 await _flush_pcm_batch(stage=stage)
 
         try:

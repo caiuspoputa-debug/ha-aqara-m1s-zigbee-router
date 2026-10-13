@@ -1,3 +1,16 @@
+## 0.37.12 TEST - Intermediate audio TCP batch target
+
+- Target 300 ms on average for group and individual audio TCP writes instead
+  of 490 ms. Use 8/9 whole PCM periods: 280/315 ms and 35,840/40,320 bytes.
+- Derive both paths' boundaries from the existing 35 ms PCM sequence using
+  integer arithmetic. No additional timer, resampling or cumulative rounding
+  drift. Group members retain common batch boundaries and byte order.
+- Preserve sample format, gain, prefill, buffers, recovery and the 0.37.11 Stop
+  fix. Expose target/min/max intervals and maximum batch bytes in diagnostics.
+- Pass 155 local automated tests, including EOF, mute, six receivers, socket
+  failures and over eight hours of simulated boundary arithmetic. Real acoustic
+  synchronization and noise reduction still require listening after deployment.
+
 ## 0.37.11 TEST - Group Stop pipe cleanup
 
 - Cancel the original PCM and stderr consumers before starting dedicated
