@@ -1,3 +1,16 @@
+## 0.37.13 TEST - Fixed 105 ms audio TCP batches
+
+- Set the group and individual TCP batch target to 105 ms: three whole PCM
+  periods, 13,440 bytes. Keep the existing 35 ms clock and common boundaries.
+- Correct the diagnostic minimum for exact whole-period targets; target, minimum
+  and maximum now all report 105 ms. Maximum batch periods/bytes are 3/13,440.
+- Change no buffers, gain, receiver commands, Stop, recovery or synchronization
+  methods. All other component files, including audio_batch.py, remain identical.
+- Pass 157 local tests, covering ordered six-member fanout, individual audio,
+  mute, EOF, recovery and 8.75 simulated hours of exact 105 ms boundaries.
+- Comparison build only: interruptions, noise and acoustic synchronization
+  must be checked on real playback. No automatic installation or HA restart.
+
 ## 0.37.12 TEST - Intermediate audio TCP batch target
 
 - Target 300 ms on average for group and individual audio TCP writes instead

@@ -59,7 +59,7 @@ PCM_SAMPLE_BYTES = 4
 CHUNK_SECONDS = 0.035
 CHUNK_BYTES = int(PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * CHUNK_SECONDS)
 # Batch only TCP writes; the shared sample clock still advances every ALSA period.
-GROUP_TRANSPORT_TARGET_MS = 300
+GROUP_TRANSPORT_TARGET_MS = 105
 GROUP_TRANSPORT_PERIOD_MS = int(CHUNK_SECONDS * 1000)
 GROUP_TRANSPORT_BATCH_CHUNKS = (GROUP_TRANSPORT_TARGET_MS + GROUP_TRANSPORT_PERIOD_MS - 1) // GROUP_TRANSPORT_PERIOD_MS
 
@@ -710,7 +710,7 @@ class AqaraM1SMediaGroupManager:
             "stream_sequence": self._sequence,
             "tcp_batch_periods": GROUP_TRANSPORT_BATCH_CHUNKS,
             "tcp_batch_ms": GROUP_TRANSPORT_TARGET_MS,
-            "tcp_batch_min_ms": (GROUP_TRANSPORT_BATCH_CHUNKS - 1) * GROUP_TRANSPORT_PERIOD_MS,
+            "tcp_batch_min_ms": (GROUP_TRANSPORT_TARGET_MS // GROUP_TRANSPORT_PERIOD_MS) * GROUP_TRANSPORT_PERIOD_MS,
             "tcp_batch_max_ms": GROUP_TRANSPORT_BATCH_CHUNKS * GROUP_TRANSPORT_PERIOD_MS,
             "tcp_batch_bytes": GROUP_TRANSPORT_BATCH_CHUNKS * CHUNK_BYTES,
             "tcp_batch_pending_periods": max(0, self._sequence - self._transport_released_sequence),

@@ -1,8 +1,8 @@
-0.37.12 TEST: 155 local automated tests passed.
-Target 300 ms average on the existing 35 ms PCM clock: 280/315 ms batches.
+0.37.13 TEST: 157 local automated tests passed.
+Fixed 105 ms batches on the existing 35 ms PCM clock: 3 periods / 13440 bytes.
 Ordered identical group payloads, individual payloads, mute, EOF, Stop and recovery verified.
-100000 batch boundaries checked: rounding error below one PCM period, no cumulative drift.
-Buffers, prefill, gain, Stop lifecycle and receiver commands unchanged from 0.37.11.
-All unrelated component files are byte-identical to 0.37.11.
-Active 0.37.11 source hashes on HA .250 were checked read-only before this build.
-No 0.37.12 deployment, acoustic synchronization or noise reduction validation.
+300000 fixed-105-ms boundaries checked: 8.75 simulated hours with exact period counts.
+The generic 300-ms rounding regression remains covered by 100000 boundaries.
+Buffers, prefill, gain, Stop lifecycle and receiver commands unchanged from 0.37.12.
+All unrelated component files are byte-identical to 0.37.12.
+No 0.37.13 deployment, acoustic synchronization or noise reduction validation.

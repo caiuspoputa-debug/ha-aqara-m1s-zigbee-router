@@ -93,16 +93,16 @@ class GroupBatchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_six_receive_identical_ordered_common_bursts(self):
         expected = await self.feed(60)
-        await settle(lambda: all(len(m.writer.writes) == 7 for m in self.members))
+        await settle(lambda: all(len(m.writer.writes) == 20 for m in self.members))
         for member in self.members:
             self.assertEqual(b"".join(member.writer.writes), expected)
-            self.assertEqual([len(b) for b in member.writer.writes], [4480*n for n in (9, 9, 8, 9, 8, 9, 8)])
+            self.assertEqual([len(b) for b in member.writer.writes], [13440] * 20)
             self.assertEqual(member.shared_cursor, 60)
         self.assertEqual(self.manager._sequence, 60)
         self.manager._schedule_isolate_member.assert_not_called()
 
     async def test_no_partial_write_before_common_boundary(self):
-        await self.feed(8)
+        await self.feed(2)
         await asyncio.sleep(0.01)
         self.assertTrue(all(m.writer.writes == [] for m in self.members))
         self.assertTrue(all(m.lag_since_monotonic is None for m in self.members))
@@ -115,17 +115,17 @@ class GroupBatchTests(unittest.IsolatedAsyncioTestCase):
         await settle(lambda: all(m.shared_cursor == 19 for m in self.members))
         for member in self.members:
             self.assertEqual(b"".join(member.writer.writes), expected)
-            self.assertEqual([len(b) for b in member.writer.writes], [40320, 40320, 4480])
+            self.assertEqual([len(b) for b in member.writer.writes], [13440] * 6 + [4480])
 
     async def test_muted_member_receives_same_length_zero_samples(self):
         self.members[0].muted_in_group = True
-        expected = await self.feed(9)
+        expected = await self.feed(3)
         await settle(lambda: all(m.writer.writes for m in self.members))
         self.assertEqual(self.members[0].writer.writes, [bytes(len(expected))])
         self.assertEqual(self.members[1].writer.writes, [expected])
 
     async def test_old_generation_and_stop_do_not_release_tail(self):
-        await self.feed(5)
+        await self.feed(2)
         await self.manager._flush_fanout_tail(self.manager._generation - 1)
         self.manager.desired_playing = False
         await self.manager._flush_fanout_tail(self.manager._generation)
@@ -135,7 +135,7 @@ class GroupBatchTests(unittest.IsolatedAsyncioTestCase):
         blocked = asyncio.Event()
         self.members[0].writer.drain.side_effect = blocked.wait
         expected = await self.feed(60)
-        await settle(lambda: all(len(m.writer.writes) == 7 for m in self.members[1:]))
+        await settle(lambda: all(len(m.writer.writes) == 20 for m in self.members[1:]))
         for member in self.members[1:]:
             self.assertEqual(b"".join(member.writer.writes), expected)
         self.assertEqual(self.manager._sequence, 60)
@@ -153,10 +153,10 @@ class GroupBatchTests(unittest.IsolatedAsyncioTestCase):
         for member in self.members:
             member.shared_cursor = 40
             self.manager._start_member_writer(member, member.generation)
-        await self.feed(8)
+        await self.feed(2)
         self.assertTrue(all(m.writer.writes == [] for m in self.members))
         await self.feed(1)
-        await settle(lambda: all(m.shared_cursor == 49 for m in self.members))
+        await settle(lambda: all(m.shared_cursor == 43 for m in self.members))
 
 
 class SingleBatchTests(unittest.IsolatedAsyncioTestCase):
@@ -171,20 +171,20 @@ class SingleBatchTests(unittest.IsolatedAsyncioTestCase):
         self.write, self.flush, self.pending = single_helpers(self.player, self.writer)
         self.chunk = bytes([123]) * 4480
 
-    async def test_first_nine_chunks_one_write_gain_still_per_period(self):
-        for _ in range(8):
+    async def test_first_three_chunks_one_write_gain_still_per_period(self):
+        for _ in range(2):
             await self.write(self.chunk, stage="playout")
         self.assertEqual(self.writer.writes, [])
         await self.write(self.chunk, stage="playout")
-        self.assertEqual(self.writer.writes, [self.chunk * 9])
-        self.assertEqual(self.player._apply_live_pcm_gain.call_count, 9)
+        self.assertEqual(self.writer.writes, [self.chunk * 3])
+        self.assertEqual(self.player._apply_live_pcm_gain.call_count, 3)
         self.assertEqual(self.pending, b"")
 
-    async def test_single_matches_group_three_hundred_ms_cycle(self):
+    async def test_single_matches_group_fixed_105_ms_cycle(self):
         for _ in range(60):
             await self.write(self.chunk, stage="playout")
         self.assertEqual([len(data) // 4480 for data in self.writer.writes],
-                         [9, 9, 8, 9, 8, 9, 8])
+                         [3] * 20)
         self.assertEqual(b"".join(self.writer.writes), self.chunk * 60)
         self.assertEqual(self.player._apply_live_pcm_gain.call_count, 60)
 
@@ -193,15 +193,15 @@ class SingleBatchTests(unittest.IsolatedAsyncioTestCase):
             await self.write(bytes([i]) * 4480, stage="playout")
         await self.flush(stage="end_of_media")
         await self.flush(stage="end_of_media")
-        self.assertEqual([len(data) for data in self.writer.writes], [40320, 40320, 4480])
+        self.assertEqual([len(data) for data in self.writer.writes], [13440] * 6 + [4480])
         self.assertEqual(b"".join(self.writer.writes),
                          b"".join(bytes([i]) * 4480 for i in range(19)))
 
     async def test_muted_gain_produces_only_zero(self):
         self.player._apply_live_pcm_gain.side_effect = lambda pcm: bytes(len(pcm))
-        for _ in range(9):
+        for _ in range(3):
             await self.write(self.chunk, stage="playout")
-        self.assertEqual(self.writer.writes, [bytes(40320)])
+        self.assertEqual(self.writer.writes, [bytes(13440)])
 
     async def test_expected_teardown_discards_pending_not_writes(self):
         await self.write(self.chunk, stage="playout")
@@ -212,7 +212,7 @@ class SingleBatchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_socket_failure_does_not_replay_old_batch_on_recovery(self):
         self.writer.closed = True
-        for _ in range(9):
+        for _ in range(3):
             await self.write(self.chunk, stage="playout")
         self.player.recover.assert_awaited_once()
         self.assertEqual(self.pending, b"")
@@ -222,14 +222,43 @@ class SingleBatchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_does_not_duplicate_already_written_bytes(self):
         self.writer.drain.side_effect = asyncio.TimeoutError
-        for _ in range(18):
+        for _ in range(6):
             await self.write(self.chunk, stage="playout")
-        self.assertEqual(self.writer.writes, [self.chunk * 9] * 2)
+        self.assertEqual(self.writer.writes, [self.chunk * 3] * 2)
         self.player.recover.assert_awaited_once()
         self.assertEqual(self.pending, b"")
 
 
 class TransportContractTests(unittest.TestCase):
+    def test_105_ms_boundaries_are_exact_for_over_eight_hours(self):
+        origin = 123456789
+        cursor = origin
+        for batch in range(1, 300001):
+            end = module.next_batch_boundary(cursor, origin, 35, 105)
+            self.assertEqual(end - cursor, 3)
+            self.assertEqual((end - origin) * 35, batch * 105)
+            cursor = end
+
+    def test_diagnostics_report_fixed_105_ms_for_both_paths(self):
+        group = module.AqaraM1SMediaGroupManager(FakeHass()).attributes()
+        self.assertEqual([group[key] for key in
+                          ("tcp_batch_ms", "tcp_batch_min_ms", "tcp_batch_max_ms")],
+                         [105, 105, 105])
+        self.assertEqual(group["tcp_batch_periods"], 3)
+        self.assertEqual(group["tcp_batch_bytes"], 13440)
+        values = evaluated_constants()
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+        expected = {"single_tcp_batch_ms": 105, "single_tcp_batch_min_ms": 105,
+                    "single_tcp_batch_max_ms": 105, "single_tcp_batch_periods": 3,
+                    "single_tcp_batch_bytes": 13440}
+        found = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Dict):
+                for key, expression in zip(node.keys, node.values):
+                    if isinstance(key, ast.Constant) and key.value in expected:
+                        found[key.value] = eval(compile(ast.Expression(expression), str(SOURCE), "eval"), values)
+        self.assertEqual(found, expected)
+
     def test_integer_boundaries_do_not_accumulate_rounding_drift(self):
         cursor = 0
         for batch in range(1, 100001):
@@ -254,8 +283,10 @@ class TransportContractTests(unittest.TestCase):
     def test_batch_fits_existing_watermarks_and_prefill(self):
         values = evaluated_constants()
         self.assertEqual(values["SINGLE_TRANSPORT_BATCH_CHUNKS"], module.GROUP_TRANSPORT_BATCH_CHUNKS)
-        self.assertLess(40320, values["SINGLE_WRITE_HIGH_WATER_BYTES"])
-        self.assertLess(0.315, values["SINGLE_REMOTE_PREFILL_SECONDS"])
+        self.assertEqual(values["SINGLE_TRANSPORT_TARGET_MS"], 105)
+        self.assertEqual(module.GROUP_TRANSPORT_BATCH_CHUNKS, 3)
+        self.assertLess(13440, values["SINGLE_WRITE_HIGH_WATER_BYTES"])
+        self.assertLess(0.105, values["SINGLE_REMOTE_PREFILL_SECONDS"])
         self.assertEqual(values["SINGLE_TRANSPORT_TARGET_MS"], module.GROUP_TRANSPORT_TARGET_MS)
         self.assertEqual(module.CHUNK_SECONDS, 0.035)
         self.assertFalse(module.ADAPTIVE_SYNC_ENABLED)

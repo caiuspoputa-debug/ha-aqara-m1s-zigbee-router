@@ -1,9 +1,9 @@
 # Verificare dupa instalare - 12 octombrie 2026
 
-Raport istoric pentru 0.37.9. Versiunea 0.37.12 este pregatita ca arhiva GitHub;
-aceste rezultate vechi nu sunt o validare a intervalului nou de 300 ms.
-Inaintea buildului au fost verificate numai versiunea si hashurile surselor
-0.37.11 active pe Home Assistant .250. Testele 0.37.12 sunt locale si automate,
+Raport istoric pentru 0.37.9. Versiunea 0.37.13 este pregatita ca arhiva GitHub;
+aceste rezultate vechi nu sunt o validare a intervalului nou de 105 ms.
+In verificarea din 14 octombrie a fost confirmata 0.37.12 activa la 300 ms;
+0.37.13 nu a fost instalata. Testele 0.37.13 sunt locale si automate,
 nu masuratori ale sincronizarii sau zgomotului pe huburile reale.
 
 - Integrarea 0.37.9 a fost instalata peste 0.37.8, cu copie de rezerva.

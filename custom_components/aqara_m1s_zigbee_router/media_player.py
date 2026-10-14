@@ -72,7 +72,7 @@ PCM_CHUNK_BYTES = int(
     PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES * PCM_CHUNK_SECONDS
 )
 PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
-SINGLE_TRANSPORT_TARGET_MS = 300
+SINGLE_TRANSPORT_TARGET_MS = 105
 SINGLE_TRANSPORT_PERIOD_MS = int(PCM_CHUNK_SECONDS * 1000)
 SINGLE_TRANSPORT_BATCH_CHUNKS = (SINGLE_TRANSPORT_TARGET_MS + SINGLE_TRANSPORT_PERIOD_MS - 1) // SINGLE_TRANSPORT_PERIOD_MS
 # Single-player stable transport. Keep a bounded HA-side PCM jitter buffer so
@@ -672,7 +672,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "single_pcm_pace_ms": int(PCM_CHUNK_SECONDS * 1000),
             "single_tcp_batch_periods": SINGLE_TRANSPORT_BATCH_CHUNKS,
             "single_tcp_batch_ms": SINGLE_TRANSPORT_TARGET_MS,
-            "single_tcp_batch_min_ms": (SINGLE_TRANSPORT_BATCH_CHUNKS - 1) * SINGLE_TRANSPORT_PERIOD_MS,
+            "single_tcp_batch_min_ms": (SINGLE_TRANSPORT_TARGET_MS // SINGLE_TRANSPORT_PERIOD_MS) * SINGLE_TRANSPORT_PERIOD_MS,
             "single_tcp_batch_max_ms": SINGLE_TRANSPORT_BATCH_CHUNKS * SINGLE_TRANSPORT_PERIOD_MS,
             "single_tcp_batch_bytes": SINGLE_TRANSPORT_BATCH_CHUNKS * PCM_CHUNK_BYTES,
             "single_jitter_buffer_ms": int(SINGLE_JITTER_BUFFER_SECONDS * 1000),

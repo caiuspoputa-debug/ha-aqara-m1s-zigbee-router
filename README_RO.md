@@ -1,10 +1,10 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.12 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.13 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.37.12 TEST` seteaza trimiterea audio TCP la o medie de 300 ms pentru grup si individuale. Perioadele PCM intregi de 35 ms formeaza blocuri de 280/315 ms, cu 35.840/40.320 octeti. Ambele trasee folosesc acelasi calcul intreg al limitelor, fara alt cronometru si fara eroare de rotunjire cumulativa. Citeste `AUDIO_TRANSPORT_RO.md`.
+Versiunea `0.37.13 TEST` seteaza trimiterea audio TCP la 105 ms fix pentru grup si individuale: trei perioade PCM intregi de 35 ms, cu 13.440 octeti pe bloc. Ambele trasee pastreaza calculul comun al limitelor, fara alt cronometru si fara eroare de rotunjire cumulativa. Citeste `AUDIO_TRANSPORT_RO.md`.
 
-Ceasul comun de 35 ms, formatul, comenzile ALSA, preumplerea, bufferele si procesarea volumului raman ca in `0.37.11`; se schimba doar limitele trimiterilor TCP. Corectia Stop din `0.37.11` si recuperarea sunetelor din `0.37.8` sunt pastrate. Versiunea nu garanteaza sincronizarea acustica sau eliminarea zgomotului. Dupa instalare este necesara repornirea Home Assistant.
+Ceasul comun de 35 ms, formatul, comenzile ALSA, preumplerea, bufferele si procesarea volumului raman ca in `0.37.12`; se schimba doar tinta trimiterilor si minimul diagnostic. Corectia Stop din `0.37.11` si recuperarea sunetelor din `0.37.8` sunt pastrate. Este o varianta de comparatie pentru intreruperile raportate, nu o rezolvare demonstrata sau o garantie de sincronizare ori eliminare a zgomotului. Dupa instalare este necesara repornirea Home Assistant.
 
 ## Cerințe
 
@@ -132,13 +132,13 @@ Serviciile media/WAV refuză un coordonator configurat ca țintă. Serviciile su
 
 ## Validare și statut TEST
 
-Pentru `0.37.12`, cele 155 de teste locale sunt documentate in `VALIDATION.txt`,
+Pentru `0.37.13`, cele 157 de teste locale sunt documentate in `VALIDATION.txt`,
 `TEST_REPORT.json` si `TEST_LOG.txt`. Testele transportului verifica aceiasi
 octeti in aceeasi ordine pentru sase membri, individuale, EOF, mute, Stop si
-recuperare, plus calculul limitelor pentru peste opt ore simulate fara deriva.
+recuperare, plus calculul exact al limitelor de 105 ms pentru 8,75 ore simulate.
 Testele existente pentru managerul asincron, pierderi, reveniri, pornire comuna,
-Stop/WAV si protectiile Coordinatorului sunt pastrate. Fisierele active `0.37.11`
-de pe HA au fost comparate numai in citire; `0.37.12` nu a fost validata acustic.
+Stop/WAV si protectiile Coordinatorului sunt pastrate. Acest build nu a instalat
+`0.37.13` pe HA si nu a efectuat o proba acustica.
 Nu este un test real peste noapte; versiunea ramane TEST.
 
 ### Istoric al bazei 0.37.5 (nu funcții active pe coordonatorul dedicat)
