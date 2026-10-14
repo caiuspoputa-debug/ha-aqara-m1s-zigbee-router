@@ -23,7 +23,7 @@ play_url:
 
 play_sound:
   name: Play Sound
-  description: Play an existing WAV under /data/musics directly on a configured Router, using the shared hub volume and sound priority.
+  description: Play a hub WAV after media yields audio. Optionally apply notification-only volume, restoring media volume before resuming.
   fields:
     host:
       name: Host
@@ -43,6 +43,17 @@ play_sound:
       required: true
       selector:
         text:
+
+    volume_percent:
+      name: Temporary sound volume
+      description: Optional 0-100 percent for this WAV only, applied after media stops. Does not change the main volume; hub mute still applies.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.01
+          unit_of_measurement: "%"
 
 run_command:
   name: Run Command

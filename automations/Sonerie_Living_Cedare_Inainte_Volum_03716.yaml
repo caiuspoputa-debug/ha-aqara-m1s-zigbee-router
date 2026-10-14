@@ -1,0 +1,97 @@
+alias: Sonerie living
+description: 'La click simplu pe Buton de sonerie, memoreaza starea ring light-ului hubului .226. Muzica
+  cedeaza iesirea audio inainte de aplicarea volumului temporar 50% pentru sonerie_2x. La finalul WAV-ului,
+  integrarea restabileste volumul curent al muzicii inainte de reluare. Ring light-ul alterneaza rosu-albastru-rosu-albastru
+  de doua ori, la 100%, cu pauze de o secunda. La final restaureaza lumina, culoarea si luminozitatea.
+  Necesita integrarea 0.37.16 sau mai noua. Ultima modificare: 15.10.2026, ora 00:57.'
+triggers:
+- trigger: mqtt
+  topic: zigbee2mqtt/Buton de sonerie/action
+  payload: single
+conditions: []
+actions:
+- variables:
+    lumina_initiala: "{{ states(\n  'light.aqara_m1s_zigbee_router_192_168_0_226_ring_light'\n) }}"
+    luminozitate_initiala: "{{ state_attr(\n  'light.aqara_m1s_zigbee_router_192_168_0_226_ring_light',\n\
+      \  'brightness'\n) | int(255) }}"
+    culoare_initiala: "{{ state_attr(\n  'light.aqara_m1s_zigbee_router_192_168_0_226_ring_light',\n \
+      \ 'rgb_color'\n) or [255, 255, 255] }}"
+- parallel:
+  - sequence:
+    - action: aqara_m1s_zigbee_router.play_sound
+      continue_on_error: true
+      data:
+        host: 192.168.0.226
+        path: '{{ state_attr(''button.living_mp_hub_zigbee_router_192_168_0_226_play_ch_sonerie_2x'',
+          ''file_path'') }}'
+        volume_percent: 50
+  - sequence:
+    - repeat:
+        count: 2
+        sequence:
+        - action: light.turn_on
+          continue_on_error: true
+          target:
+            entity_id: light.aqara_m1s_zigbee_router_192_168_0_226_ring_light
+          data:
+            brightness_pct: 100
+            rgb_color:
+            - 255
+            - 0
+            - 0
+        - delay: 00:00:01
+        - action: light.turn_on
+          continue_on_error: true
+          target:
+            entity_id: light.aqara_m1s_zigbee_router_192_168_0_226_ring_light
+          data:
+            brightness_pct: 100
+            rgb_color:
+            - 0
+            - 0
+            - 255
+        - delay: 00:00:01
+        - action: light.turn_on
+          continue_on_error: true
+          target:
+            entity_id: light.aqara_m1s_zigbee_router_192_168_0_226_ring_light
+          data:
+            brightness_pct: 100
+            rgb_color:
+            - 255
+            - 0
+            - 0
+        - delay: 00:00:01
+        - action: light.turn_on
+          continue_on_error: true
+          target:
+            entity_id: light.aqara_m1s_zigbee_router_192_168_0_226_ring_light
+          data:
+            brightness_pct: 100
+            rgb_color:
+            - 0
+            - 0
+            - 255
+        - delay: 00:00:01
+- choose:
+  - conditions:
+    - condition: template
+      value_template: '{{ lumina_initiala == ''on'' }}'
+    sequence:
+    - action: light.turn_on
+      continue_on_error: true
+      target:
+        entity_id: light.aqara_m1s_zigbee_router_192_168_0_226_ring_light
+      data:
+        brightness: '{{ luminozitate_initiala }}'
+        rgb_color:
+        - '{{ culoare_initiala[0] | int }}'
+        - '{{ culoare_initiala[1] | int }}'
+        - '{{ culoare_initiala[2] | int }}'
+  default:
+  - action: light.turn_off
+    continue_on_error: true
+    target:
+      entity_id: light.aqara_m1s_zigbee_router_192_168_0_226_ring_light
+mode: single
+max_exceeded: silent

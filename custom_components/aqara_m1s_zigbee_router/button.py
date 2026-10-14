@@ -158,7 +158,7 @@ class AqaraM1SSoundButton(CoordinatorEntity, ButtonEntity):
         self._attr_unique_id = sound_button_unique_id(entry.entry_id, path)
         self._attr_extra_state_attributes = {
             "file_path": path,
-            "playback_route": "ffmpeg_to_aplay",
+            "playback_route": "hub_local_aplay",
             "respects_playback_volume": True,
             "light_effect": False,
         }

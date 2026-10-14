@@ -1,4 +1,13 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.15 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.16 TEST
+
+In `0.37.16 TEST`, cererea soneriei include volumul temporar: muzica cedeaza,
+hubul confirma ALSA inchis, se aplica volumul WAV-ului, iar volumul normal
+revine inainte de reluarea muzicii. Foloseste `play_sound.volume_percent`,
+nu `number.set_value` inainte de sonerie. Exemplele Living si Dormitor sunt
+in `automations/`; detalii in `NOTIFICATION_VOLUME_RO.md`.
+Reglajul separat Fine Volume Trim este eliminat, inclusiv offsetul vechi.
+ID-urile volumului principal, precizia 0.01%, mute, ceasul comun de 35 ms
+si blocurile de 105 ms raman neschimbate.
 
 In `0.37.15 TEST`, WAV-ul este cerut explicit o singura data, corectand
 repetarea implicita de trei ori din Aplay-ul hubului. Huburile libere sar
@@ -86,7 +95,7 @@ Canalul Zigbee, PAN-ul, cheia de rețea și baza de date cu dispozitive rămân 
 - **Illuminance**, cu atributele `adc_raw`, `millivolts` și sursa specifică rolului.
 - **Media Player** pentru streamuri și redare locală.
 - **M1S Media Group** și **Include in M1S Media Group** pentru redare sincronizată pe huburile selectate.
-- **Hub Volume**, cu ID-ul unic al fostului Sound Playback Volume, **Fine Volume Trim** si selectia **Sound**. Numarul si sliderul media individual controleaza acelasi volum. Automatizarile vechi care schimbau volumul WAV schimba acum si radioul. La restart se restaureaza nivelul media playerului, nu vechea valoare separata WAV.
+- **Hub Volume**, cu ID-ul unic al fostului Sound Playback Volume, si selectia **Sound**. Numarul si sliderul media individual controleaza acelasi volum. Pentru volum temporar foloseste `play_sound.volume_percent`; automatizarile care modifica numarul comun modifica si radioul. Fine Volume Trim este eliminat automat la actualizare.
 - Câte un buton pentru fiecare sunet WAV detectat care nu este sunet de sistem.
 - Evenimente **Physical Button**: click, de la dublu până la zece clickuri, început HOLD, repetare și eliberare.
 - **Hub Connectivity**, **Hub Temperature**, **WiFi IP**, starea proceselor HomeKit, MQTT și Telnet.

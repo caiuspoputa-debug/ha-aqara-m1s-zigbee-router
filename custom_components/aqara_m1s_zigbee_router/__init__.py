@@ -319,11 +319,10 @@ async def async_setup_entry(
     if obsolete_coordinator_switch_id is not None:
         entity_registry.async_remove(obsolete_coordinator_switch_id)
 
-    # Remove the legacy absolute fine-volume Number entities from v0.5.0-v0.5.5.
-    # v0.5.9 reintroduces only an individual *trim* control with a new unique ID
-    # (*_radio_fine_trim), so the old entity must not be revived accidentally.
+    # Only the main hub volume remains; remove old fine-volume controls too.
     obsolete_number_unique_ids = (
         f"{entry.entry_id}_radio_fine_volume",
+        f"{entry.entry_id}_radio_fine_trim",
         "aqara_m1s_media_group_fine_volume",
     )
     for unique_id in obsolete_number_unique_ids:
@@ -440,6 +439,7 @@ async def async_setup_entry(
         await sound_player.async_play(
             path,
             hass.data[DOMAIN][DATA_PLAYBACK_VOLUME].get(selected_entry_id, 50),
+            volume_percent=call.data.get("volume_percent"),
         )
 
     async def run_command(

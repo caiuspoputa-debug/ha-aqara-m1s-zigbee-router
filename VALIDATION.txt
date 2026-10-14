@@ -1,12 +1,9 @@
-0.37.15 TEST: 211 local automated tests passed.
-WAV requests explicitly use one playback, overriding native Aplay default three.
-Idle/active/in-flight handovers verified; gain still acknowledged before WAV.
-Private serialized persistent audio channel; no replay of uncertain starts.
-Unscaled ordered PCM: existing 35 ms clock, 105 ms / 13440 byte batches.
-Verified priority, cancellation, Stop, failure recovery and volume aliases.
-Verified gain protocol, space checks, atomic asset hashes and Coordinator guard.
-Verified 0.37.14 native helper binary, PCM config and gain mapping reused unchanged.
-Common clock, batching, buffers, prefill, Stop and receiver commands unchanged.
-Read-only .224 inspection established the customized Aplay's default loop count.
-No deployment, HA restart, complete live handover, final WAV conversion test,
-end-to-end latency measurement or noise-reduction verification for this build.
+0.37.16 TEST: 237 local automated tests passed.
+Notification: media yields -> confirmed closed ALSA -> temporary gain -> WAV.
+Restore current canonical volume before individual resume/group release.
+Covers occupied ALSA, pending gain, mute, cancellation, replacement and recovery.
+Fine trim offset/entity removed; main volume IDs and 0.01% precision retained.
+Group code, buffers, prefill, 35 ms clock, 105 ms batching, Stop and hub assets
+are byte-identical to 0.37.15; radio transport methods unchanged.
+Updated doorbells require replacing old automation, not adding duplicates.
+No HA installation/restart, hub modification or live acoustic validation.

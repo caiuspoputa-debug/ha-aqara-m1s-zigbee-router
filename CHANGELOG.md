@@ -1,3 +1,19 @@
+## 0.37.16 TEST - Handover before notification volume
+
+- Add optional `play_sound.volume_percent`, without changing the shared slider.
+- Claim sound priority and stop media first; require a real closed-ALSA reply
+  before applying notification gain. A residual owned receiver is cleaned once;
+  busy or unconfirmed audio cannot receive the louder gain.
+- Restore current media gain before individual resume or group release, including
+  failed startup, cancellation, replacement and manual changes during playback.
+- Pending/coalesced media gain requests cannot overwrite the temporary WAV gain;
+  hub mute/unmute still applies. Receiver recovery re-confirms normal gain.
+- Remove Fine Volume Trim, its offset and the obsolete registered entity. Keep
+  main volume IDs and 0.01% precision. Correct the WAV route diagnostic.
+- Include migrated Living and Dormitor doorbells without global-volume writes.
+- Retain all group clock, PCM history, buffering, batching, Stop and receiver
+  commands byte-for-byte. No deployment or live acoustic validation for this build.
+
 ## 0.37.15 TEST - Single WAV playback and idle fast start
 
 - Explicitly pass `-x 1` to the hub's customized Aplay for stored and URL WAVs.

@@ -334,7 +334,7 @@ class TriggerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SetupTests(unittest.IsolatedAsyncioTestCase):
-    async def setup_integration(self, role="coordinator", offline=False):
+    async def setup_integration(self, role="coordinator", offline=False, old_fine_trim=False):
         item = entry(role)
         client = Mock(zigbee_role=role)
         client.host = item.data["host"]
@@ -363,6 +363,9 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         dr.async_entries_for_config_entry.return_value = [dev]
         entities = Mock()
         entities.async_get_entity_id.return_value = None
+        if old_fine_trim:
+            entities.async_get_entity_id.side_effect = lambda domain, platform, uid: (
+                "number.old_fine_trim" if uid == f"{item.entry_id}_radio_fine_trim" else None)
         er.async_get.return_value = entities
         er.async_entries_for_config_entry.return_value = [registry_entity("radio"), registry_entity("wifi_ip")]
         group = types.SimpleNamespace(register_member=Mock(), members={}, unregister_member=AsyncMock(), async_shutdown=AsyncMock())
@@ -418,6 +421,17 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         context.hass.config_entries.async_forward_entry_setups.assert_awaited_with(context.entry, integration.PLATFORMS)
         await context.handlers["play_sound"](types.SimpleNamespace(data={"host": "192.168.0.220", "path": "/data/musics/music-ch/test.wav"}))
         context.sound.async_play.assert_awaited_once()
+
+    async def test_sound_service_passes_temporary_volume_without_changing_radio_volume(self):
+        context = await self.setup_integration("router")
+        await context.handlers["play_sound"](types.SimpleNamespace(data={
+            "host": "192.168.0.220", "path": "/data/musics/music-ch/test.wav", "volume_percent": 50}))
+        self.assertEqual(context.sound.async_play.await_args.kwargs, {"volume_percent": 50})
+        context.constructors[4].return_value.async_set_volume_level.assert_not_called()
+
+    async def test_retired_fine_trim_is_removed_from_entity_registry(self):
+        context = await self.setup_integration("router", old_fine_trim=True)
+        context.entities.async_remove.assert_called_once_with("number.old_fine_trim")
 
     async def test_coordinator_unload_does_not_touch_router_group(self):
         context = await self.setup_integration()

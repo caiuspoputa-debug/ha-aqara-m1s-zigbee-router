@@ -185,9 +185,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_should_poll = False
     # Main native Home Assistant slider: 0-100% in uniform 0.01% steps.
-        # v0.5.9 adds a separate per-player Fine Volume Trim Number entity
-        # (-2.00..+1.00 percentage points in 0.01 steps) without changing this
-    # convenient coarse/main control.
     _attr_volume_step = 0.0001
     _attr_supported_features = (
         MediaPlayerEntityFeature.BROWSE_MEDIA
@@ -219,7 +216,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._attr_is_volume_muted = False
         # Absolute percentage-point trim applied after the main volume.
         # Example: 6.0% main + 0.27% trim = 6.27% effective gain.
-        self._fine_volume_trim_percent = 0.0
         self._attr_media_content_type = MediaType.MUSIC
         self._attr_media_title = None  # Preserve existing source/station resolution.
         self._icy_track_title: str | None = None
@@ -670,7 +666,6 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "last_media_type": self._resume_media_type,
             "last_media_title": self._attr_media_title,
             "volume_level": self._attr_volume_level,
-            "fine_volume_trim_percent": round(self._fine_volume_trim_percent, 2),
             "effective_volume_percent": round(self._effective_gain() * 100.0, 2),
             "is_volume_muted": self._attr_is_volume_muted,
             "resume_after_reconnect": self._resume_after_reconnect,
@@ -1434,7 +1429,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         member = manager.members.get(self.entry.entry_id) if manager is not None else None
         if member is not None and member.writer is not None and manager.muted:
             gain = 0.0
-        self.local_audio.request_gain(gain)
+        self.local_audio.request_gain(gain, sound_muted=bool(self._attr_is_volume_muted))
 
     @staticmethod
     def _normalize_volume(volume: float) -> float:
@@ -1467,36 +1462,10 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self.hass, radio_volume_signal(self.entry.entry_id)
         )
 
-    @property
-    def fine_volume_trim_percent(self) -> float:
-        """Return the per-player absolute fine trim in percentage points."""
-        return self._fine_volume_trim_percent
-
-    @staticmethod
-    def _normalize_fine_volume_trim_percent(value: float) -> float:
-        """Clamp/quantize fine trim to -2.00..+1.00 in 0.01% steps."""
-        value = max(-2.0, min(1.0, float(value)))
-        return round(round(value / 0.01) * 0.01, 2)
-
-    def set_fine_volume_trim_percent(self, value: float) -> None:
-        """Apply the fine trim through the shared local ALSA control."""
-        self._fine_volume_trim_percent = self._normalize_fine_volume_trim_percent(value)
-        self._request_hub_gain()
-        # The same local control updates WAV and media without restarting any
-        # decoder, socket or receiver.
-        if self.entity_id is not None:
-            self.async_write_ha_state()
-
     def _effective_gain(self) -> float:
         if self._attr_is_volume_muted:
             return 0.0
-        main_gain = max(0.0, min(1.0, float(self._attr_volume_level or 0.0)))
-        # Volume 0 is a hard silence. A positive trim must never make a player
-        # audible when the main Home Assistant volume is explicitly zero.
-        if main_gain <= 0.0:
-            return 0.0
-        trimmed_gain = main_gain + (self._fine_volume_trim_percent / 100.0)
-        return max(0.0, min(1.0, trimmed_gain))
+        return max(0.0, min(1.0, float(self._attr_volume_level or 0.0)))
 
     def _reset_live_gain(self) -> None:
         target = self._effective_gain()

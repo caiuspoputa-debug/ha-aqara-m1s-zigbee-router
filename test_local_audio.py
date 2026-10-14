@@ -120,6 +120,7 @@ class LocalControllerTests(unittest.IsolatedAsyncioTestCase):
             types.SimpleNamespace(host="test", zigbee_role="router"))
         self.controller._provision = Mock()
         self.controller._ensure_gain = Mock(side_effect=lambda level: self.calls.append(level) or level)
+        self.controller._run = Mock(return_value="M1S_AUDIO_IDLE\n")
 
     async def asyncTearDown(self):
         await self.controller.async_shutdown()
@@ -144,6 +145,63 @@ class LocalControllerTests(unittest.IsolatedAsyncioTestCase):
         await self.controller._gain_task
         self.assertEqual(self.calls[-1], 0)
         self.controller._provision.assert_called_once()
+
+    async def test_temporary_sound_gain_does_not_change_canonical_media_volume(self):
+        await self.controller.async_prepare(0.01)
+        await self.controller.async_prepare_sound(0.5)
+        self.assertEqual(self.controller.desired_gain, 0.01)
+        self.assertEqual(self.calls[-1], audio.gain_to_level(0.5))
+        self.controller.request_gain(0.02)
+        await self.controller._gain_task
+        self.assertEqual(self.calls[-1], audio.gain_to_level(0.5))
+        await self.controller.async_restore_media(0.02)
+        self.assertEqual(self.calls[-1], audio.gain_to_level(0.02))
+        self.assertIsNone(self.controller._sound_gain)
+
+    async def test_pending_slider_update_cannot_overwrite_sound_gain(self):
+        await self.controller.async_prepare(0.01)
+        self.controller.request_gain(0.02)
+        await self.controller.async_prepare_sound(0.5)
+        await self.controller._gain_task
+        self.assertEqual(self.calls[-1], audio.gain_to_level(0.5))
+        self.assertEqual(self.controller.desired_gain, 0.02)
+
+    async def test_notification_gain_waits_for_closed_alsa_not_just_a_stop_request(self):
+        await self.controller.async_prepare(0.01)
+        self.calls.clear()
+        self.controller._run.return_value = "M1S_AUDIO_BUSY\n"
+        with self.assertRaises(audio.LocalAudioBusy):
+            await self.controller.async_prepare_sound(0.5)
+        self.assertEqual(self.calls, [])
+        self.assertIsNone(self.controller._sound_gain)
+        self.assertEqual(self.controller.desired_gain, 0.01)
+
+    async def test_missing_idle_acknowledgement_cannot_raise_volume(self):
+        self.controller._run.return_value = "# printf 'M1S_AUDIO_IDLE\\n'\n"
+        with self.assertRaises(RuntimeError):
+            await self.controller.async_prepare_sound(0.5)
+        self.controller._ensure_gain.assert_not_called()
+
+    async def test_hub_mute_and_unmute_affect_temporary_gain_without_transport_restart(self):
+        await self.controller.async_prepare(0.01)
+        await self.controller.async_prepare_sound(0.5)
+        self.controller.request_gain(0, sound_muted=True)
+        await self.controller._gain_task
+        self.assertEqual(self.calls[-1], 0)
+        self.controller.request_gain(0.01, sound_muted=False)
+        await self.controller._gain_task
+        self.assertEqual(self.calls[-1], audio.gain_to_level(0.5))
+
+    async def test_failed_restore_clears_override_so_recovery_cannot_reuse_loud_gain(self):
+        await self.controller.async_prepare_sound(0.5)
+        self.controller._ensure_gain.side_effect = OSError("offline")
+        with self.assertRaises(OSError):
+            await self.controller.async_restore_media(0.01)
+        self.assertIsNone(self.controller._sound_gain)
+        self.assertEqual(self.controller.desired_gain, 0.01)
+        self.controller._ensure_gain.side_effect = lambda level: level
+        await self.controller.async_prepare(0.01)
+        self.assertEqual(self.controller.applied_level, audio.gain_to_level(0.01))
 
     async def test_failed_volume_is_not_treated_as_applied(self):
         self.controller._ensure_gain.side_effect = RuntimeError("offline")
@@ -220,6 +278,7 @@ class LocalControllerTests(unittest.IsolatedAsyncioTestCase):
             await self.controller.async_stop_sound("; reboot")
 
     def test_audio_channel_is_reused_and_disconnect_does_not_close_uart(self):
+        self.controller._run = audio.AqaraM1SLocalAudio._run.__get__(self.controller)
         isolated = types.SimpleNamespace(disconnect=Mock(), close=Mock())
         self.controller._isolated = Mock(return_value=isolated)
         self.controller._command = Mock(return_value="reply")
@@ -232,6 +291,7 @@ class LocalControllerTests(unittest.IsolatedAsyncioTestCase):
         isolated.close.assert_not_called()
 
     def test_failed_command_is_not_replayed_and_next_call_reconnects(self):
+        self.controller._run = audio.AqaraM1SLocalAudio._run.__get__(self.controller)
         first = types.SimpleNamespace(disconnect=Mock())
         second = types.SimpleNamespace(disconnect=Mock())
         self.controller._isolated = Mock(side_effect=[first, second])

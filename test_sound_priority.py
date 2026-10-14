@@ -29,6 +29,7 @@ class SoundPriorityTests(unittest.IsolatedAsyncioTestCase):
         self.token = "a" * 32
         self.hass = types.SimpleNamespace(async_create_task=asyncio.create_task)
         self.radio = types.SimpleNamespace(
+            _attr_is_volume_muted=False,
             _effective_gain=Mock(return_value=0.0134),
             async_cleanup_priority_receiver=AsyncMock(),
             async_suspend_for_priority_sound=AsyncMock(side_effect=lambda: self.events.append("suspend") or True),
@@ -38,6 +39,8 @@ class SoundPriorityTests(unittest.IsolatedAsyncioTestCase):
             async_release_sound=AsyncMock(side_effect=lambda entry: self.events.append("release")))
         self.audio = types.SimpleNamespace(
             async_prepare=AsyncMock(side_effect=lambda gain: self.events.append("prepare")),
+            async_prepare_sound=AsyncMock(side_effect=lambda gain, **kwargs: self.events.append(f"sound-gain:{gain}")),
+            async_restore_media=AsyncMock(side_effect=lambda gain: self.events.append(f"media-gain:{gain}")),
             async_start_sound=AsyncMock(side_effect=lambda path: self.events.append("start") or self.token),
             async_start_url=AsyncMock(side_effect=lambda url: self.events.append("start-url") or self.token),
             async_sound_status=AsyncMock(return_value=("done", 0)),
@@ -86,6 +89,14 @@ class SoundPriorityTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await self.player.async_play("/data/musics/test.wav")
         self.group.async_release_sound.assert_awaited_once()
+
+    async def test_failed_group_handover_releases_claim_without_raising_gain(self):
+        self.group.async_claim_sound.side_effect = OSError("handover failed")
+        with self.assertRaises(OSError):
+            await self.player.async_play("/data/musics/test.wav", volume_percent=50)
+        self.audio.async_prepare_sound.assert_not_awaited()
+        self.group.async_release_sound.assert_awaited_once_with("entry")
+        self.assertFalse(self.player._interruption_active)
 
     async def test_invalid_path_is_rejected_before_interrupting_music(self):
         with self.assertRaises(ValueError):
@@ -226,6 +237,124 @@ class SoundPriorityTests(unittest.IsolatedAsyncioTestCase):
             await self.player.async_play("/data/musics/test.wav")
         self.audio.async_start_sound.assert_not_awaited()
         self.group.async_release_sound.assert_awaited_once()
+
+    async def test_temporary_gain_follows_handover_and_is_restored_before_resume(self):
+        for group_active in (False, True):
+            with self.subTest(group_active=group_active):
+                self.events.clear()
+                self.group.async_claim_sound.side_effect = lambda entry: self.events.append("claim") or group_active
+                await self.player.async_play("/data/musics/test.wav", volume_percent=50)
+                await self.player._watch_task
+                self.assertEqual(self.events, ["claim", "suspend", "sound-gain:0.5", "start",
+                    "cleanup", "media-gain:0.0134", "resume:True", "release"])
+                self.assertFalse(self.player._temporary_volume_active)
+        self.audio.async_prepare.assert_not_awaited()
+
+    async def test_waiting_for_radio_to_yield_never_applies_notification_gain(self):
+        entered, yielded = asyncio.Event(), asyncio.Event()
+
+        async def suspend():
+            entered.set()
+            await yielded.wait()
+            self.events.append("suspend")
+            return True
+
+        self.radio.async_suspend_for_priority_sound.side_effect = suspend
+        task = asyncio.create_task(self.player.async_play("/data/musics/test.wav", volume_percent=50))
+        await entered.wait()
+        self.audio.async_prepare_sound.assert_not_awaited()
+        yielded.set()
+        await task
+        await self.player._watch_task
+        self.assertLess(self.events.index("suspend"), self.events.index("sound-gain:0.5"))
+
+    async def test_manual_media_change_during_wav_is_the_value_restored(self):
+        self.audio.async_sound_status.return_value = ("running", None)
+        await self.player.async_play("/data/musics/test.wav", volume_percent=50)
+        self.radio._effective_gain.return_value = 0.02
+        await self.player.async_stop()
+        self.audio.async_restore_media.assert_awaited_once_with(0.02)
+        self.assertLess(self.events.index("media-gain:0.02"), self.events.index("resume:True"))
+
+    async def test_failed_start_restores_normal_gain_before_releasing_priority(self):
+        self.audio.async_start_sound.side_effect = RuntimeError("failed start")
+        with self.assertRaises(RuntimeError):
+            await self.player.async_play("/data/musics/test.wav", volume_percent=50)
+        self.audio.async_restore_media.assert_awaited_once_with(0.0134)
+        self.assertLess(self.events.index("media-gain:0.0134"), self.events.index("resume:True"))
+
+    async def test_busy_audio_is_cleaned_before_retrying_notification_gain(self):
+        self.audio.async_prepare_sound.side_effect = [sound.LocalAudioBusy("still playing"), None]
+        await self.player.async_play("/data/musics/test.wav", volume_percent=50)
+        await self.player._watch_task
+        self.radio.async_cleanup_priority_receiver.assert_awaited_once()
+        self.assertEqual(self.audio.async_prepare_sound.await_count, 2)
+        self.audio.async_start_sound.assert_awaited_once()
+
+    async def test_audio_still_busy_after_cleanup_never_starts_wav(self):
+        self.audio.async_prepare_sound.side_effect = sound.LocalAudioBusy("still playing")
+        with self.assertRaises(sound.LocalAudioBusy):
+            await self.player.async_play("/data/musics/test.wav", volume_percent=50)
+        self.assertEqual(self.audio.async_prepare_sound.await_count, 2)
+        self.audio.async_start_sound.assert_not_awaited()
+        self.audio.async_restore_media.assert_awaited_once_with(0.0134)
+
+    async def test_replacement_without_override_restores_shared_gain_without_resuming(self):
+        self.audio.async_sound_status.return_value = ("running", None)
+        await self.player.async_play("/data/musics/first.wav", volume_percent=50)
+        await self.player.async_play("/data/musics/second.wav")
+        self.audio.async_restore_media.assert_awaited_once_with(0.0134)
+        self.radio.async_resume_after_priority_sound.assert_not_awaited()
+        self.assertFalse(self.player._temporary_volume_active)
+        await self.player.async_stop()
+
+    async def test_replacing_temporary_sound_keeps_focus_and_restores_only_at_end(self):
+        self.audio.async_sound_status.return_value = ("running", None)
+        await self.player.async_play("/data/musics/first.wav", volume_percent=50)
+        await self.player.async_play("/data/musics/second.wav", volume_percent=10)
+        self.audio.async_restore_media.assert_not_awaited()
+        self.group.async_claim_sound.assert_awaited_once()
+        await self.player.async_stop()
+        self.audio.async_restore_media.assert_awaited_once_with(0.0134)
+
+    async def test_invalid_notification_volume_cannot_interrupt_music(self):
+        for value in (-1, 101, float("nan"), float("inf"), True, "bad"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                await self.player.async_play("/data/musics/test.wav", volume_percent=value)
+        self.group.async_claim_sound.assert_not_awaited()
+        self.audio.async_prepare_sound.assert_not_awaited()
+
+    async def test_zero_notification_gain_and_hub_mute_are_explicit(self):
+        self.radio._attr_is_volume_muted = True
+        await self.player.async_play("/data/musics/test.wav", volume_percent=0)
+        await self.player._watch_task
+        self.audio.async_prepare_sound.assert_awaited_once_with(0.0, muted=True)
+
+    async def test_restore_error_still_releases_focus_for_gain_checked_receiver_restart(self):
+        self.audio.async_restore_media.side_effect = OSError("offline")
+        await self.player.async_play("/data/musics/test.wav", volume_percent=50)
+        await self.player._watch_task
+        self.assertFalse(self.player._temporary_volume_active)
+        self.radio.async_resume_after_priority_sound.assert_awaited_once_with(True)
+        self.group.async_release_sound.assert_awaited_once()
+
+    async def test_cancelled_temporary_wav_restores_gain_before_resume(self):
+        entered, finish = asyncio.Event(), asyncio.Event()
+
+        async def delayed_start(path):
+            entered.set()
+            await finish.wait()
+            return self.token
+
+        self.audio.async_start_sound.side_effect = delayed_start
+        task = asyncio.create_task(self.player.async_play("/data/musics/test.wav", volume_percent=50))
+        await entered.wait()
+        task.cancel()
+        finish.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertLess(self.events.index("stop"), self.events.index("media-gain:0.0134"))
+        self.assertLess(self.events.index("media-gain:0.0134"), self.events.index("resume:True"))
 
 
 if __name__ == "__main__":

@@ -84,12 +84,19 @@ class AqaraM1SLocalAudio:
         self._control_lock = threading.RLock()
         self._control_client = None
         self.desired_gain = 0.05
+        self._sound_gain: float | None = None
+        self._sound_muted = False
         self.applied_level: int | None = None
         self.last_error: str | None = None
 
     @property
     def apply_pending(self) -> bool:
-        return gain_to_level(self.desired_gain) != self.applied_level
+        return gain_to_level(self._target_gain()) != self.applied_level
+
+    def _target_gain(self) -> float:
+        if self._sound_gain is not None and self._sound_muted:
+            return 0.0
+        return self.desired_gain if self._sound_gain is None else self._sound_gain
 
     def _isolated(self):
         return type(self.client)(host=self.client.host, port=self.client.port,
@@ -179,6 +186,31 @@ class AqaraM1SLocalAudio:
     async def async_prepare(self, gain: float) -> None:
         gain_to_level(float(gain))
         self.desired_gain = max(0.0, min(1.0, float(gain)))
+        await self._async_prepare_gain()
+
+    async def async_prepare_sound(self, gain: float, *, muted: bool = False) -> None:
+        """Hold a notification-only gain after the media receiver has stopped."""
+        gain_to_level(float(gain))
+        output = await self.hass.async_add_executor_job(
+            self._run,
+            "if grep -q '^closed$' /proc/asound/card0/pcm0p/sub0/status; then "
+            "printf 'M1S_AUDIO_IDLE\\n'; else printf 'M1S_AUDIO_BUSY\\n'; fi")
+        if "M1S_AUDIO_BUSY" in output.splitlines():
+            raise LocalAudioBusy("Hub audio has not yielded; sound volume was not applied")
+        if "M1S_AUDIO_IDLE" not in output.splitlines():
+            raise RuntimeError("Cannot confirm media released hub audio")
+        self._sound_gain = max(0.0, min(1.0, float(gain)))
+        self._sound_muted = muted
+        await self._async_prepare_gain()
+
+    async def async_restore_media(self, gain: float) -> None:
+        """Clear the temporary gain and acknowledge media gain before resuming."""
+        gain_to_level(float(gain))
+        self.desired_gain = max(0.0, min(1.0, float(gain)))
+        self._sound_gain = None
+        await self._async_prepare_gain()
+
+    async def _async_prepare_gain(self) -> None:
         async with self._lock:
             if self._closed:
                 raise RuntimeError("Local audio controller is closed")
@@ -187,17 +219,19 @@ class AqaraM1SLocalAudio:
                     await self.hass.async_add_executor_job(self._provision)
                     self._ready = True
                 self.applied_level = await self.hass.async_add_executor_job(
-                    self._ensure_gain, gain_to_level(self.desired_gain))
+                    self._ensure_gain, gain_to_level(self._target_gain()))
                 self.last_error = None
             except Exception as exc:
                 self.last_error = str(exc)
                 self._ready = False
                 raise
 
-    def request_gain(self, gain: float) -> None:
+    def request_gain(self, gain: float, *, sound_muted: bool | None = None) -> None:
         if not math.isfinite(gain):
             raise ValueError("Volume must be finite")
         self.desired_gain = max(0.0, min(1.0, float(gain)))
+        if sound_muted is not None:
+            self._sound_muted = sound_muted
         if self._closed or not self._ready:
             return
         if self._gain_task is None or self._gain_task.done():
@@ -208,7 +242,7 @@ class AqaraM1SLocalAudio:
             await asyncio.sleep(0.03)
             async with self._lock:
                 while not self._closed:
-                    level = gain_to_level(self.desired_gain)
+                    level = gain_to_level(self._target_gain())
                     if level == self.applied_level:
                         break
                     self.applied_level = await self.hass.async_add_executor_job(self._ensure_gain, level)

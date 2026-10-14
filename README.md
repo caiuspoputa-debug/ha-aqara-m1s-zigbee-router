@@ -1,4 +1,12 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.15 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.16 TEST
+
+Version `0.37.16 TEST` adds an atomic notification-volume request: media yields,
+the hub confirms ALSA is closed, temporary WAV volume is applied, and normal
+media volume is restored before resume/rejoin. Use `play_sound` with optional
+`volume_percent`, not an early shared `number.set_value`. Updated Living and
+Dormitor examples are in `automations/`; see `NOTIFICATION_VOLUME_RO.md`.
+The separate Fine Volume Trim entity and offset are removed. Main volume IDs,
+0.01% precision, mute, 35 ms common clock and 105 ms batches are retained.
 
 Version `0.37.15 TEST` requests one WAV playback explicitly, correcting the
 hub Aplay's implicit triple playback. Idle hubs skip unnecessary receiver
@@ -85,7 +93,7 @@ The Zigbee channel, PAN, network key and device database remain Zigbee2MQTT sett
 - **Illuminance**, including `adc_raw`, `millivolts` and the role-specific source as attributes.
 - **Media Player** for streams and local playback.
 - **M1S Media Group** and **Include in M1S Media Group** for synchronized playback across selected hubs.
-- **Hub Volume** (the former Sound Playback Volume unique ID), **Fine Volume Trim** and **Sound** selection. The number and individual media-player slider now control the same volume; old automations setting WAV volume also change radio volume. The restored media-player level is authoritative, not the former WAV value.
+- **Hub Volume** (the former Sound Playback Volume unique ID) and **Sound** selection. The number and individual media-player slider control the same volume. For temporary doorbell volume use `play_sound.volume_percent`; setting the shared number first still changes the radio. Fine Volume Trim is retired and removed on upgrade.
 - One button for every discovered non-system WAV sound.
 - **Physical Button** events: click, double through ten clicks, hold start, repeat and release.
 - **Hub Connectivity**, **Hub Temperature**, **WiFi IP**, HomeKit, MQTT and Telnet process state.

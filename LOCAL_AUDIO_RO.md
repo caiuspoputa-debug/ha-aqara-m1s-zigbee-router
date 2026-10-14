@@ -1,4 +1,7 @@
-# Audio local - 0.37.15 TEST
+# Audio local - 0.37.16 TEST
+
+Volumul temporar al soneriei este aplicat numai dupa cedarea iesirii audio.
+Detalii si automatizari actualizate: `NOTIFICATION_VOLUME_RO.md`.
 
 Volumul si configuratia ALSA sunt pastrate din 0.37.14. Modificarile pentru
 redare unica si pornire pe hub liber sunt in WAV_FAST_START_RO.md. Folderul
@@ -24,9 +27,8 @@ Prototip bazat pe 0.37.13, pregatit pentru GitHub. Nu este instalat automat.
   Automatizarile care setau doar volumul WAV vor schimba acum si radioul.
 - La restart, volumul restaurat al media playerului este valoarea comuna.
   Vechea valoare separata WAV (de exemplu 50%) nu o suprascrie.
-- Fine Volume Trim ramane -2.00..+1.00 puncte procentuale si se aplica local
-  pentru ambele tipuri de sunet. Volumul principal zero ramane liniste,
-  chiar cu trim pozitiv. Mute nu opreste fluxul PCM.
+- Fine Volume Trim si offsetul sau sunt eliminate. Ramane volumul principal,
+  cu aceleasi ID-uri si precizie 0.01%. Mute nu opreste fluxul PCM.
 
 ## Grup si prioritate
 

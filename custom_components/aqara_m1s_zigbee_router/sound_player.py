@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 import logging
+import math
 import time
 from typing import Any
 
@@ -33,12 +34,13 @@ class AqaraM1SSoundPlayer:
         self._token: str | None = None
         self._interruption_active = False
         self._resume_radio = False
+        self._temporary_volume_active = False
 
     async def _begin_priority_locked(self) -> None:
         if self._interruption_active:
             return
-        had_group = await self.group_manager.async_claim_sound(self.entry_id)
         self._interruption_active = True
+        had_group = await self.group_manager.async_claim_sound(self.entry_id)
         self._resume_radio = await self.radio_player.async_suspend_for_priority_sound()
         if had_group or getattr(self.radio_player, "_priority_sound_had_transport", self._resume_radio):
             await asyncio.sleep(0.25)
@@ -50,17 +52,33 @@ class AqaraM1SSoundPlayer:
         self._resume_radio = False
         self._interruption_active = False
         try:
+            if self._temporary_volume_active:
+                self._temporary_volume_active = False
+                try:
+                    await self.local_audio.async_restore_media(self.radio_player._effective_gain())
+                except Exception as exc:
+                    # Receiver starts re-confirm normal gain before opening ALSA;
+                    # their existing recovery handles an offline hub safely.
+                    _LOGGER.warning("M1S media gain restore failed host=%s: %s", self.client.host, exc)
             await self.radio_player.async_resume_after_priority_sound(resume_radio)
         finally:
             await self.group_manager.async_release_sound(self.entry_id)
 
-    async def async_play(self, path: str, volume: float | None = None) -> None:
-        # The legacy argument is retained for callers; the shared media volume,
-        # mute and existing fine trim are authoritative for local WAVs too.
+    async def async_play(self, path: str, volume: float | None = None, *,
+                         volume_percent: float | None = None) -> None:
+        # Keep legacy button calls on the shared volume. An explicit service
+        # override belongs only to this notification, never to the radio slider.
         source = safe_sound_path(path)
-        await self._play_local(source)
+        if volume_percent is not None:
+            if isinstance(volume_percent, bool):
+                raise ValueError("Notification volume must be between 0 and 100 percent")
+            volume_percent = float(volume_percent)
+            if not math.isfinite(volume_percent) or not 0 <= volume_percent <= 100:
+                raise ValueError("Notification volume must be between 0 and 100 percent")
+        await self._play_local(source, volume_percent=volume_percent)
 
-    async def _play_local(self, source: str, *, url: bool = False) -> None:
+    async def _play_local(self, source: str, *, url: bool = False,
+                          volume_percent: float | None = None) -> None:
         if self.client.zigbee_role == "coordinator":
             raise RuntimeError("Dedicated coordinator does not expose audio")
         if self.local_audio is None:
@@ -78,7 +96,23 @@ class AqaraM1SSoundPlayer:
                 now = time.perf_counter()
                 timings["priority_handover"] = round((now - phase) * 1000)
                 phase = now
-                await self.local_audio.async_prepare(self.radio_player._effective_gain())
+                if volume_percent is not None:
+                    self._temporary_volume_active = True
+                    try:
+                        await self.local_audio.async_prepare_sound(
+                            volume_percent / 100,
+                            muted=bool(self.radio_player._attr_is_volume_muted))
+                    except LocalAudioBusy:
+                        await self.radio_player.async_cleanup_priority_receiver()
+                        await asyncio.sleep(0.25)
+                        await self.local_audio.async_prepare_sound(
+                            volume_percent / 100,
+                            muted=bool(self.radio_player._attr_is_volume_muted))
+                elif self._temporary_volume_active:
+                    self._temporary_volume_active = False
+                    await self.local_audio.async_restore_media(self.radio_player._effective_gain())
+                else:
+                    await self.local_audio.async_prepare(self.radio_player._effective_gain())
                 now = time.perf_counter()
                 timings["volume_prepare"] = round((now - phase) * 1000)
                 phase = now
