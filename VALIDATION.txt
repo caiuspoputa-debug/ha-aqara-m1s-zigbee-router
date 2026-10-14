@@ -1,10 +1,12 @@
-0.37.14 TEST: 196 local automated tests passed.
-Direct stored WAVs; one hub-local ALSA software volume for WAV/media/group.
+0.37.15 TEST: 211 local automated tests passed.
+WAV requests explicitly use one playback, overriding native Aplay default three.
+Idle/active/in-flight handovers verified; gain still acknowledged before WAV.
+Private serialized persistent audio channel; no replay of uncertain starts.
 Unscaled ordered PCM: existing 35 ms clock, 105 ms / 13440 byte batches.
 Verified priority, cancellation, Stop, failure recovery and volume aliases.
 Verified gain protocol, space checks, atomic asset hashes and Coordinator guard.
-Native helper compiled for static MIPS32 little-endian with warnings as errors.
-Common clock, batching, buffers, prefill and Stop methods unchanged from 0.37.13.
-Receiver ALSA route changed; no proof of acoustic synchronization from tests.
+Verified 0.37.14 native helper binary, PCM config and gain mapping reused unchanged.
+Common clock, batching, buffers, prefill, Stop and receiver commands unchanged.
+Read-only .224 inspection established the customized Aplay's default loop count.
 No deployment, HA restart, complete live handover, final WAV conversion test,
 end-to-end latency measurement or noise-reduction verification for this build.

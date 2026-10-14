@@ -30,6 +30,10 @@ start|start-url)
         fi
         rm -f "$owner"
     fi
+    if ! grep -q '^closed$' /proc/asound/card0/pcm0p/sub0/status 2>/dev/null; then
+        printf 'M1S_AUDIO_BUSY\n'
+        exit 6
+    fi
     printf 'PENDING\n' > "$state"
     (
         trap '' HUP
@@ -57,7 +61,7 @@ start|start-url)
             [ ! -f "$stopfile" ] || exit 143
             source=$cache
         fi
-        ALSA_CONFIG_PATH="$root/alsa.conf" aplay -D m1s_media "$source" \
+        ALSA_CONFIG_PATH="$root/alsa.conf" aplay -D m1s_media -x 1 "$source" \
             </dev/null > /tmp/m1s_local_sound_$token.log 2>&1 &
         pid=$!
         record RUNNING

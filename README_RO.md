@@ -1,4 +1,13 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.14 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.15 TEST
+
+In `0.37.15 TEST`, WAV-ul este cerut explicit o singura data, corectand
+repetarea implicita de trei ori din Aplay-ul hubului. Huburile libere sar
+peste opririle inutile si pauza fixa; cele cu player activ sau pornire in
+curs pastreaza predarea sigura. Conexiunea Telnet audio este reutilizata,
+fara repetarea automata a unei comenzi de pornire cu rezultat necunoscut.
+Volumul local ramane confirmat inainte de fiecare WAV. Citeste
+`WAV_FAST_START_RO.md`; descrierea audio de mai jos este baza 0.37.14 pastrata.
+Acest build nu a instalat sau repornit HA.
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 

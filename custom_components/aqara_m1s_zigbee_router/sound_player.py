@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .client import AqaraM1SClient
-from .local_audio import safe_sound_path, safe_sound_url
+from .local_audio import LocalAudioBusy, safe_sound_path, safe_sound_url
 
 _LOGGER = logging.getLogger(__name__)
 SOUND_STATUS_INTERVAL = 0.5
@@ -37,10 +37,11 @@ class AqaraM1SSoundPlayer:
     async def _begin_priority_locked(self) -> None:
         if self._interruption_active:
             return
-        await self.group_manager.async_claim_sound(self.entry_id)
+        had_group = await self.group_manager.async_claim_sound(self.entry_id)
         self._interruption_active = True
         self._resume_radio = await self.radio_player.async_suspend_for_priority_sound()
-        await asyncio.sleep(0.25)
+        if had_group or getattr(self.radio_player, "_priority_sound_had_transport", self._resume_radio):
+            await asyncio.sleep(0.25)
 
     async def _finish_priority(self) -> None:
         if not self._interruption_active:
@@ -67,11 +68,33 @@ class AqaraM1SSoundPlayer:
         started = time.perf_counter()
         async with self._lock:
             try:
+                phase = time.perf_counter()
+                timings = {"lock_wait": round((phase - started) * 1000)}
                 await self._stop_locked(restore_previous=False)
+                now = time.perf_counter()
+                timings["previous_wav_stop"] = round((now - phase) * 1000)
+                phase = now
                 await self._begin_priority_locked()
+                now = time.perf_counter()
+                timings["priority_handover"] = round((now - phase) * 1000)
+                phase = now
                 await self.local_audio.async_prepare(self.radio_player._effective_gain())
+                now = time.perf_counter()
+                timings["volume_prepare"] = round((now - phase) * 1000)
+                phase = now
                 start_method = self.local_audio.async_start_url if url else self.local_audio.async_start_sound
-                start_task = self.hass.async_create_task(start_method(source))
+
+                async def start_owned_sound():
+                    try:
+                        return await start_method(source)
+                    except LocalAudioBusy:
+                        # Only an explicit pre-start rejection permits a retry.
+                        # A missing acknowledgement never causes replay.
+                        await self.radio_player.async_cleanup_priority_receiver()
+                        await asyncio.sleep(0.25)
+                        return await start_method(source)
+
+                start_task = self.hass.async_create_task(start_owned_sound())
                 try:
                     token = await asyncio.shield(start_task)
                 except asyncio.CancelledError:
@@ -84,9 +107,10 @@ class AqaraM1SSoundPlayer:
                     raise
                 self._token = token
                 self._watch_task = self.hass.async_create_task(self._watch(token))
+                timings["hub_start"] = round((time.perf_counter() - phase) * 1000)
                 _LOGGER.info(
-                    "M1S local WAV accepted host=%s request_to_accept_ms=%s mode=hub_alsa_no_audio_transfer",
-                    self.client.host, round((time.perf_counter() - started) * 1000))
+                    "M1S local WAV accepted host=%s request_to_accept_ms=%s phases_ms=%s mode=hub_alsa_no_audio_transfer",
+                    self.client.host, round((time.perf_counter() - started) * 1000), timings)
             except BaseException:
                 await self._finish_priority()
                 raise

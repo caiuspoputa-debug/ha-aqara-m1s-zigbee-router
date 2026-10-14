@@ -1,4 +1,9 @@
-# Audio local - 0.37.14 TEST
+# Audio local - 0.37.15 TEST
+
+Volumul si configuratia ALSA sunt pastrate din 0.37.14. Modificarile pentru
+redare unica si pornire pe hub liber sunt in WAV_FAST_START_RO.md. Folderul
+`/data/m1s_audio_03714` ramane numele versiunii interne a motorului audio;
+scriptul WAV este actualizat dupa verificarea SHA256, nu lasat la versiunea veche.
 
 Prototip bazat pe 0.37.13, pregatit pentru GitHub. Nu este instalat automat.
 

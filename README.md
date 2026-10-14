@@ -1,4 +1,12 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.14 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.15 TEST
+
+Version `0.37.15 TEST` requests one WAV playback explicitly, correcting the
+hub Aplay's implicit triple playback. Idle hubs skip unnecessary receiver
+stops and the fixed handover pause; active or in-flight players retain safe
+preemption. The private audio Telnet channel is reused, with no automatic
+replay of uncertain start commands. Local volume remains confirmed before
+every WAV. See `WAV_FAST_START_RO.md`; the following audio overview is the
+retained `0.37.14` base. This build was not deployed or restarted on HA.
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 

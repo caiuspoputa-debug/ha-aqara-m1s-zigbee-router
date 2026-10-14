@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 import re
 import secrets
 import shlex
+import threading
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -68,6 +69,10 @@ def _gain_reply(output: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+class LocalAudioBusy(RuntimeError):
+    """The hub rejected playback before starting any audio process."""
+
+
 class AqaraM1SLocalAudio:
     def __init__(self, hass: Any, client: Any) -> None:
         self.hass = hass
@@ -76,6 +81,8 @@ class AqaraM1SLocalAudio:
         self._ready = False
         self._closed = False
         self._gain_task: asyncio.Task | None = None
+        self._control_lock = threading.RLock()
+        self._control_client = None
         self.desired_gain = 0.05
         self.applied_level: int | None = None
         self.last_error: str | None = None
@@ -96,11 +103,24 @@ class AqaraM1SLocalAudio:
             return client._run_command_locked(command, timeout=timeout)
 
     def _run(self, command: str) -> str:
-        isolated = self._isolated()
-        try:
-            return self._command(isolated, command)
-        finally:
-            isolated.disconnect()
+        # A private persistent channel avoids a fresh Telnet login for each
+        # gain/start/status command. Never replay an uncertain playback command.
+        with self._control_lock:
+            if self._closed:
+                raise RuntimeError("Local audio controller is closed")
+            if self._control_client is None:
+                self._control_client = self._isolated()
+            try:
+                return self._command(self._control_client, command)
+            except Exception:
+                self._disconnect_control()
+                raise
+
+    def _disconnect_control(self) -> None:
+        with self._control_lock:
+            client, self._control_client = self._control_client, None
+            if client is not None:
+                client.disconnect()
 
     def _provision(self) -> None:
         if self.client.zigbee_role == "coordinator":
@@ -212,8 +232,12 @@ class AqaraM1SLocalAudio:
         try:
             output = await self.hass.async_add_executor_job(
                 self._run, f"{REMOTE_SOUND} {action} {token} {shlex.quote(source)}")
+            if "M1S_AUDIO_BUSY" in output.splitlines():
+                raise LocalAudioBusy("Hub audio is occupied; WAV was not started")
             if f"M1S_SOUND_STARTED:{token}" not in output.splitlines():
                 raise RuntimeError("Hub rejected local WAV playback")
+        except LocalAudioBusy:
+            raise
         except Exception:
             with suppress(Exception):
                 await self.async_stop_sound(token)
@@ -254,3 +278,4 @@ class AqaraM1SLocalAudio:
         if self._gain_task is not None:
             with suppress(asyncio.CancelledError):
                 await self._gain_task
+        await self.hass.async_add_executor_job(self._disconnect_control)

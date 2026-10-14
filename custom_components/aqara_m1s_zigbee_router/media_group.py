@@ -452,13 +452,15 @@ class AqaraM1SMediaGroupManager:
         )
         self._signal_update()
 
-    async def async_claim_sound(self, entry_id: str) -> None:
+    async def async_claim_sound(self, entry_id: str) -> bool:
         """Give an integration sound absolute priority on exactly one hub."""
         member = self.members.get(entry_id)
         had_group_session = bool(
             member
             and (
                 member.writer is not None
+                or (member.prepare_task is not None and not member.prepare_task.done())
+                or member.detaching
                 or (self.desired_playing and member.state in ("playing_group", "waiting_for_sync"))
             )
         )
@@ -469,6 +471,7 @@ class AqaraM1SMediaGroupManager:
             new_state="playing_sound",
         )
         self._signal_update()
+        return had_group_session
 
     async def async_release_sound(self, entry_id: str) -> None:
         """Release a priority sound and let the previous owner resume/rejoin."""

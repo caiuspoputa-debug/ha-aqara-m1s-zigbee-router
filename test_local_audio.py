@@ -98,6 +98,8 @@ class GainProtocolTests(unittest.TestCase):
         self.assertIn("$token", source)
         self.assertIn("aplay -D m1s_media", source)
         self.assertNotIn("nc -l", source)
+        self.assertIn('aplay -D m1s_media -x 1 "$source"', source)
+        self.assertLess(source.index("M1S_AUDIO_BUSY"), source.index("printf 'PENDING"))
 
     def test_sound_script_has_valid_posix_shell_syntax(self):
         result = subprocess.run(shell_command("-n", shell_path(ROOT / "hub_audio/sound.sh")),
@@ -216,6 +218,40 @@ class LocalControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.controller.async_sound_status("a" * 32), ("done", 0))
         with self.assertRaises(ValueError):
             await self.controller.async_stop_sound("; reboot")
+
+    def test_audio_channel_is_reused_and_disconnect_does_not_close_uart(self):
+        isolated = types.SimpleNamespace(disconnect=Mock(), close=Mock())
+        self.controller._isolated = Mock(return_value=isolated)
+        self.controller._command = Mock(return_value="reply")
+        self.assertEqual(self.controller._run("get gain"), "reply")
+        self.assertEqual(self.controller._run("start owned job"), "reply")
+        self.controller._isolated.assert_called_once()
+        isolated.disconnect.assert_not_called()
+        self.controller._disconnect_control()
+        isolated.disconnect.assert_called_once()
+        isolated.close.assert_not_called()
+
+    def test_failed_command_is_not_replayed_and_next_call_reconnects(self):
+        first = types.SimpleNamespace(disconnect=Mock())
+        second = types.SimpleNamespace(disconnect=Mock())
+        self.controller._isolated = Mock(side_effect=[first, second])
+        self.controller._command = Mock(side_effect=[TimeoutError("lost ack"), "reply"])
+        with self.assertRaises(TimeoutError):
+            self.controller._run("start once")
+        self.assertEqual(self.controller._command.call_count, 1)
+        first.disconnect.assert_called_once()
+        self.assertEqual(self.controller._run("get status"), "reply")
+        self.assertEqual(self.controller._isolated.call_count, 2)
+
+    async def test_explicit_busy_reply_is_pre_start_not_an_ambiguous_ack(self):
+        self.controller._run = Mock(return_value="M1S_AUDIO_BUSY\n")
+        self.controller.async_stop_sound = AsyncMock()
+        self.controller.async_cleanup_sound = AsyncMock()
+        with self.assertRaises(audio.LocalAudioBusy):
+            await self.controller.async_start_sound("/data/musics/test.wav")
+        self.controller._run.assert_called_once()
+        self.controller.async_stop_sound.assert_not_awaited()
+        self.controller.async_cleanup_sound.assert_not_awaited()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# Publicare 0.37.14 TEST
+# Publicare 0.37.15 TEST
 
 Aceasta este integrarea Aqara M1S, nu App-ul Zigbee2MQTT ZoH.
 Repository-ul din manifest:
@@ -8,12 +8,19 @@ Repository-ul din manifest:
    `hacs.json`, `README.md` si `custom_components/`, fara folder suplimentar.
 2. Commit-ul trebuie sa includa toate fisierele componentei, inclusiv
    `local_audio.py` si intregul folder `hub_audio/`, cu executabilul `volume_ctl`.
-3. Creeaza tag-ul si release-ul `v0.37.14` din acel commit. Manifestul trebuie
-   sa aiba `version: 0.37.14`. Este o versiune TEST; recomanda un pre-release.
+3. Creeaza tag-ul si release-ul `v0.37.15` din acel commit. Manifestul trebuie
+   sa aiba `version: 0.37.15`. Este o versiune TEST; recomanda un pre-release.
 4. Ataseaza arhiva si SHA256 la release. Nu doar ZIP-ul: codul si manifestul
    trebuie sa existe impreuna in commit-ul tag-ului citit de HACS.
 
 ## Descriere release
+
+Corecteaza WAV-ul repetat de trei ori: Aplay primeste explicit o singura
+redare. Huburile libere evita opririle/pauza inutile, iar conexiunea Telnet
+audio este reutilizata. Prioritatea fata de muzica ramane; pornirile in curs
+sunt invalidate si asteptate. Volumul este confirmat inainte de fiecare WAV.
+Un raspuns BUSY explicit permite o singura incercare dupa curatare; o
+confirmare pierduta nu permite repetarea comenzii. Detalii: WAV_FAST_START_RO.md.
 
 WAV-urile memorate se redau direct pe hub, fara transfer audio prin HA.
 WAV, radio/media individual si receiverul de grup folosesc acelasi volum

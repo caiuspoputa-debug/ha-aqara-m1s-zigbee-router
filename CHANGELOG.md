@@ -1,3 +1,22 @@
+## 0.37.15 TEST - Single WAV playback and idle fast start
+
+- Explicitly pass `-x 1` to the hub's customized Aplay for stored and URL WAVs.
+  Its binary defaults to three playbacks with two-second sleeps between them.
+- Keep audio ownership and generation invalidation, but skip the individual
+  remote Stop and fixed settle delay when no transport/start is active.
+- An in-flight group preparation still requires remote cleanup and settle.
+- Check ALSA availability before starting any WAV; on an explicit pre-start
+  BUSY response, clean only the integration radio receiver and try once more.
+  Never replay on a timeout or uncertain acknowledgement.
+- Reuse one private serialized Telnet audio channel; disconnect on errors,
+  reconnect on the next command, and never close the Zigbee UART relay.
+- Preserve per-WAV volume acknowledgement, shared gain, trim, mute, group
+  timing, 105 ms batching and all existing PCM buffers/prefill.
+- Log separate lock/previous-WAV/priority/volume/start timings to diagnose
+  request acceptance. These do not measure acoustic onset.
+- Local tests cover idle/active/in-flight priority, gain failure, BUSY fallback
+  and persistent-channel failures. No deployment or live latency claim.
+
 ## 0.37.14 TEST - Direct WAVs and shared hub-local volume
 
 - Play stored WAVs directly on the Router through ALSA, without transfer to

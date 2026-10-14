@@ -260,6 +260,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._shutting_down = False
         self._group_manager = None
         self._priority_sound_suspended = False
+        self._priority_sound_had_transport = False
         self._group_suspended = False
         self._group_resume_requested = False
         # Intentional transport teardowns (group/sound/STOP/shutdown) are not
@@ -464,6 +465,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """Temporarily stop this player's transport without forgetting its source."""
         if self._shutting_down:
             return False
+        start_in_flight = self._lock.locked()
         self._expected_transport_stop_reason = "priority_sound"
         generation = self._next_play_generation("priority_sound_preempt")
         self._priority_sound_suspended = True
@@ -481,10 +483,25 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # The generation bump above makes that start stale; taking this lock waits
         # for it to abort/clean up before the priority sound transport begins.
         async with self._lock:
-            await self._stop_locked(update_state=True, reason="priority_sound")
+            had_transport = bool(
+                start_in_flight or self._ffmpeg is not None
+                or self._stream_writer is not None
+                or (self._watch_task is not None and not self._watch_task.done())
+            )
+            self._priority_sound_had_transport = had_transport
+            await self._stop_locked(update_state=True, reason="priority_sound",
+                                    remote_cleanup=had_transport)
         # Keep remembered media/intent intact only when something was actually
         # playing or starting. _finish_priority() clears the suspend flag either way.
         return should_resume
+
+    async def async_cleanup_priority_receiver(self) -> None:
+        """Clean a residual owned radio receiver only after a hub BUSY reply."""
+        async with self._lock:
+            if not self._priority_sound_suspended or self._shutting_down:
+                raise RuntimeError("Priority audio ownership was released")
+            self._priority_sound_had_transport = True
+            await self._stop_locked(update_state=True, reason="priority_sound")
 
     async def async_resume_after_priority_sound(self, should_resume: bool) -> None:
         """Resume media that was temporarily displaced by an integration sound."""
