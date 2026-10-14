@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from array import array
 import logging
 import os
 import shutil
 import socket
-import sys
 import time
 from urllib.parse import quote, urlsplit, urlunsplit
 from contextlib import suppress
@@ -39,6 +37,7 @@ from .const import (
     DATA_CLIENTS,
     DATA_COORDINATORS,
     DATA_RADIO_PLAYERS,
+    DATA_PLAYBACK_VOLUME,
     DATA_MEDIA_GROUP,
     DOMAIN,
     radio_volume_signal,
@@ -52,7 +51,7 @@ REMOTE_FIFO = "/tmp/aqara_m1s_radio_fifo"
 REMOTE_NC_PID = "/tmp/aqara_m1s_radio_nc.pid"
 REMOTE_APLAY_PID = "/tmp/aqara_m1s_radio_aplay.pid"
 REMOTE_BUILD_MARKER = "/tmp/aqara_m1s_radio_build"
-SINGLE_BUILD_ID = "0.10.15-clean-shutdown"
+SINGLE_BUILD_ID = "0.37.14"
 
 WATCHDOG_RESTART_DELAY = 5.0
 WATCHDOG_FAST_RESTART_DELAY = 0.25
@@ -75,10 +74,8 @@ PCM_SILENCE_CHUNK = b"\x00" * PCM_CHUNK_BYTES
 SINGLE_TRANSPORT_TARGET_MS = 105
 SINGLE_TRANSPORT_PERIOD_MS = int(PCM_CHUNK_SECONDS * 1000)
 SINGLE_TRANSPORT_BATCH_CHUNKS = (SINGLE_TRANSPORT_TARGET_MS + SINGLE_TRANSPORT_PERIOD_MS - 1) // SINGLE_TRANSPORT_PERIOD_MS
-# Single-player stable transport. Keep a bounded HA-side PCM jitter buffer so
-# short scheduler/network stalls do not starve aplay, while volume/mute is still
-# applied only when a chunk leaves the buffer. This keeps audible volume latency
-# below a few seconds without returning to the old 5-6 s volume lag.
+# Keep the established jitter buffer and clock. Local ALSA gain acts after
+# transport buffering, so volume changes do not wait for queued HA-side PCM.
 SINGLE_JITTER_BUFFER_SECONDS = 4.00
 SINGLE_PREBUFFER_SECONDS = 2.50
 SINGLE_REBUFFER_RESUME_SECONDS = 2.00
@@ -153,15 +150,15 @@ REMOTE_START_BODY_COMMAND = (
     + f'nc -l -p {RADIO_PORT} </dev/null > {REMOTE_FIFO} '
       '2>/tmp/aqara_m1s_radio_nc.log & '
     + f'echo $! > {REMOTE_NC_PID}; '
-    + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} '
+    + f'ALSA_CONFIG_PATH=/data/m1s_audio_03714/alsa.conf aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} '
       f'--buffer-time={APLAY_BUFFER_TIME_US} '
       f'--period-time={APLAY_PERIOD_TIME_US} '
+      '-D m1s_media '
       f'{REMOTE_FIFO} </dev/null '
       '>/tmp/aqara_m1s_radio_aplay.log 2>&1 & '
     + f'echo $! > {REMOTE_APLAY_PID}; '
-    + f'APID=$(cat {REMOTE_APLAY_PID}); '
-      f'renice {APLAY_NICE_TARGET} -p "$APID" '
-      '>/tmp/aqara_m1s_radio_aplay_renice.log 2>&1 || true'
+    + f'renice {APLAY_NICE_TARGET} -p "$(cat {REMOTE_APLAY_PID})" '
+      '>/dev/null 2>&1 || true'
 )
 
 REMOTE_START_COMMAND = REMOTE_STOP_COMMAND + '; ' + REMOTE_START_BODY_COMMAND
@@ -209,11 +206,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         entry: ConfigEntry,
         client: AqaraM1SClient,
         coordinator,
+        local_audio=None,
     ) -> None:
         super().__init__(coordinator)
         self.hass = hass
         self.entry = entry
         self.client = client
+        self.local_audio = local_audio
         self._attr_unique_id = f"{entry.entry_id}_radio"
         self._attr_state = MediaPlayerState.IDLE
         self._attr_volume_level = 0.05
@@ -625,6 +624,13 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
         self._reset_live_gain()
 
+        self._update_shared_volume_level(self._attr_volume_level)
+        if self.local_audio is not None and self.coordinator.last_update_success:
+            try:
+                await self.local_audio.async_prepare(self._effective_gain())
+            except Exception as exc:
+                _LOGGER.warning("M1S local audio preload failed host=%s: %s", self.client.host, exc)
+
         if self._group_manager is not None:
             self._group_manager.mark_individual_intent(
                 self.entry.entry_id, self._resume_after_reconnect
@@ -658,10 +664,14 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "play_intent_generation": self._play_generation,
             "last_superseded_generation": self._last_superseded_generation,
             "single_request_policy": "latest_request_wins",
-            "volume_apply_mode": "live_pcm_software_gain",
+            "volume_apply_mode": "hub_alsa_softvol",
+            "local_volume_error": self.local_audio.last_error if self.local_audio is not None else None,
+            "local_volume_level": self.local_audio.applied_level if self.local_audio is not None else None,
+            "local_volume_apply_pending": self.local_audio.apply_pending if self.local_audio is not None else True,
+            "wav_volume_shared": True,
             "volume_stream_restart": False,
             "volume_step_percent": 0.01,
-            "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
+            "gain_ramp_ms": 35,
             "pcm_writer_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "writer_close_timeout_seconds": WRITER_CLOSE_TIMEOUT,
             "ffmpeg_reap_mode": "watcher_owned_detach_drain",
@@ -865,6 +875,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             self._stream_writer = None
         await self._close_writer_bounded(writer, reason=f"tcp_recovery:{reason}")
 
+        if self.local_audio is None:
+            raise RuntimeError("Local hub audio is not configured")
+        await self.local_audio.async_prepare(self._effective_gain())
+        if not self._generation_is_current(generation):
+            raise RuntimeError("Local audio preparation superseded by a newer intent")
         await self.hass.async_add_executor_job(
             self.client.run_command, REMOTE_START_COMMAND
         )
@@ -1380,16 +1395,35 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         await self.async_media_stop()
 
     async def async_set_volume_level(self, volume: float) -> None:
-        """Apply individual-player volume live to the running PCM stream."""
+        """Update the shared hub volume; PCM and decoder stay untouched."""
+        self._update_shared_volume_level(volume)
+        self._request_hub_gain()
+
+    def _update_shared_volume_level(self, volume: float) -> None:
         self._attr_volume_level = self._normalize_volume(float(volume))
-        self.async_write_ha_state()
+        self.hass.data.setdefault(DOMAIN, {}).setdefault(DATA_PLAYBACK_VOLUME, {})[
+            self.entry.entry_id] = self._attr_volume_level * 100
+        if self.entity_id is not None:
+            self.async_write_ha_state()
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)
         )
 
+    def _request_hub_gain(self) -> None:
+        if self.local_audio is None:
+            return
+        gain = self._effective_gain()
+        manager = self._group_manager
+        member = manager.members.get(self.entry.entry_id) if manager is not None else None
+        if member is not None and member.writer is not None and manager.muted:
+            gain = 0.0
+        self.local_audio.request_gain(gain)
+
     @staticmethod
     def _normalize_volume(volume: float) -> float:
         """Quantize individual volume in 0.01 percentage-point steps."""
+        if not -float("inf") < volume < float("inf"):
+            raise ValueError("Volume must be finite")
         volume = max(0.0, min(1.0, volume))
         quantized = round(volume / 0.0001) * 0.0001
         return max(0.0, min(1.0, round(quantized, 4)))
@@ -1405,11 +1439,12 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         await self.async_set_volume_level(current - 0.0001)
 
     async def async_mute_volume(self, mute: bool) -> None:
-        """Apply mute live through the same PCM gain path."""
+        """Apply mute through the shared local ALSA control."""
         self._attr_is_volume_muted = bool(mute)
         manager = self.hass.data.get(DOMAIN, {}).get(DATA_MEDIA_GROUP)
         if manager is not None:
             manager.set_member_muted(self.entry.entry_id, self._attr_is_volume_muted)
+        self._request_hub_gain()
         self.async_write_ha_state()
         async_dispatcher_send(
             self.hass, radio_volume_signal(self.entry.entry_id)
@@ -1427,11 +1462,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         return round(round(value / 0.01) * 0.01, 2)
 
     def set_fine_volume_trim_percent(self, value: float) -> None:
-        """Apply a fine absolute percentage-point trim to live PCM gain."""
+        """Apply the fine trim through the shared local ALSA control."""
         self._fine_volume_trim_percent = self._normalize_fine_volume_trim_percent(value)
-        # _apply_live_pcm_gain() samples _effective_gain() for every 20 ms PCM
-        # chunk, so no FFmpeg/TCP/aplay restart is needed. If the media-player
-        # entity is already registered, refresh its diagnostic attributes too.
+        self._request_hub_gain()
+        # The same local control updates WAV and media without restarting any
+        # decoder, socket or receiver.
         if self.entity_id is not None:
             self.async_write_ha_state()
 
@@ -1454,57 +1489,8 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._gain_ramp_remaining = 0
 
     def _apply_live_pcm_gain(self, chunk: bytes) -> bytes:
-        """Scale one S32_LE PCM chunk with a short anti-click transition."""
-        target = self._effective_gain()
-        if target != self._gain_target:
-            self._gain_ramp_start = self._gain_current
-            self._gain_target = target
-            self._gain_ramp_remaining = GAIN_RAMP_SAMPLES
-
-        if self._gain_ramp_remaining <= 0:
-            self._gain_current = target
-            if target <= 0.0:
-                return PCM_SILENCE_CHUNK
-            if target >= 1.0:
-                return chunk
-
-        samples = array("i")
-        samples.frombytes(chunk)
-        if samples.itemsize != PCM_SAMPLE_BYTES:
-            raise RuntimeError(
-                f"Unsupported native int size for S32_LE PCM: {samples.itemsize}"
-            )
-        if sys.byteorder != "little":
-            samples.byteswap()
-
-        if self._gain_ramp_remaining > 0:
-            start_gain = self._gain_ramp_start
-            change = self._gain_target - start_gain
-            remaining = self._gain_ramp_remaining
-            total = GAIN_RAMP_SAMPLES
-            elapsed = total - remaining
-            for index, sample in enumerate(samples):
-                if remaining > 0:
-                    progress = min(1.0, (elapsed + index + 1) / total)
-                    gain = start_gain + (change * progress)
-                    remaining -= 1
-                else:
-                    gain = self._gain_target
-                samples[index] = int(sample * gain)
-            self._gain_ramp_remaining = remaining
-            if remaining <= 0:
-                self._gain_current = self._gain_target
-            else:
-                progress = min(1.0, (total - remaining) / total)
-                self._gain_current = start_gain + (change * progress)
-        else:
-            gain = self._gain_current
-            for index, sample in enumerate(samples):
-                samples[index] = int(sample * gain)
-
-        if sys.byteorder != "little":
-            samples.byteswap()
-        return samples.tobytes()
+        """Keep the transport bit-identical; gain is applied by ALSA on the hub."""
+        return chunk
 
     def _handle_coordinator_update(self) -> None:
         """Resume the remembered media after a real hub reconnect."""
@@ -1711,6 +1697,11 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "Aqara media receiver start entity=%s host=%s generation=%s port=%s",
             self.entity_id, self.client.host, generation, RADIO_PORT
         )
+        if self.local_audio is None:
+            raise RuntimeError("Local hub audio is not configured")
+        await self.local_audio.async_prepare(self._effective_gain())
+        if not self._generation_is_current(generation):
+            return
         await self.hass.async_add_executor_job(
             self.client.run_command,
             REMOTE_START_BODY_COMMAND if receiver_pre_stopped else REMOTE_START_COMMAND,

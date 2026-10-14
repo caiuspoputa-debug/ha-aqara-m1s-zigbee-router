@@ -1,3 +1,21 @@
+## 0.37.14 TEST - Direct WAVs and shared hub-local volume
+
+- Play stored WAVs directly on the Router through ALSA, without transfer to
+  Home Assistant, FFmpeg processing or per-volume WAV copies.
+- Apply one dedicated local ALSA software control to WAV, individual media
+  and group receivers. Keep radio decoding in HA, with unscaled PCM transport.
+- Retain the WAV-volume number unique ID as an alias of media volume.
+  Restore the media level, not the former independent WAV level. Existing WAV
+  volume automations now affect radio too; Fine Volume Trim remains available.
+- Provision versioned assets with space checks, SHA256 verification, atomic
+  replacement and no Coordinator installation or firmware changes.
+- Retain priority, playback-intent checks, recovery, Stop, the common 35 ms
+  clock, 105 ms batching and existing buffers/prefill.
+- Add local tests for owned-job Stop, replacement, cancellation, failures,
+  gain coalescing, unchanged payloads, volume aliases and Coordinator guards.
+- Prototype: full live handover, WAV conversion, acoustic group synchronization
+  and end-to-end latency still need verification. No deployment or HA restart.
+
 ## 0.37.13 TEST - Fixed 105 ms audio TCP batches
 
 - Set the group and individual TCP batch target to 105 ms: three whole PCM

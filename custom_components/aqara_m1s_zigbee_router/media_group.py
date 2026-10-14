@@ -196,15 +196,15 @@ GROUP_START_COMMAND = (
     + f'nc -l -p {GROUP_PORT} </dev/null > {GROUP_FIFO} '
       '2>/tmp/aqara_m1s_group_nc.log & '
     + f'echo $! > {GROUP_NC_PID}; '
-    + f'aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} '
+    + f'ALSA_CONFIG_PATH=/data/m1s_audio_03714/alsa.conf aplay -t raw -f S32_LE -c 1 -r {PCM_RATE} '
       f'--buffer-time={APLAY_BUFFER_TIME_US} '
       f'--period-time={APLAY_PERIOD_TIME_US} '
+      '-D m1s_media '
       f'{GROUP_FIFO} </dev/null '
       '>/tmp/aqara_m1s_group_aplay.log 2>&1 & '
     + f'echo $! > {GROUP_APLAY_PID}; '
-    + f'APID=$(cat {GROUP_APLAY_PID}); '
-      f'renice {APLAY_NICE_TARGET} -p "$APID" '
-      '>/tmp/aqara_m1s_group_aplay_renice.log 2>&1 || true; '
+    + f'renice {APLAY_NICE_TARGET} -p "$(cat {GROUP_APLAY_PID})" '
+      '>/dev/null 2>&1 || true; '
     + f'echo group > {GROUP_OWNER}'
 )
 
@@ -243,6 +243,8 @@ class GroupMember:
     individual_suspended: bool = False
     resume_individual: bool = False
     muted_in_group: bool = False
+    local_audio: Any = None
+    local_volume_revision: int = -1
     adaptive_rate: float = 1.0
     adaptive_target_rate: float = 1.0
     adaptive_delay_ema: float | None = None
@@ -337,6 +339,7 @@ class AqaraM1SMediaGroupManager:
         self._source_rebuffering = False
         self._applied_volume = self.volume
         self._applied_muted = self.muted
+        self._local_volume_revision = 0
         self._gain_current = self._effective_gain()
         self._gain_target = self._gain_current
         self._gain_ramp_start = self._gain_current
@@ -357,7 +360,8 @@ class AqaraM1SMediaGroupManager:
         self._cohort_realigning = False
         self._last_timing_samples: dict[str, float] = {}
 
-    def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any) -> None:
+    def register_member(self, entry_id: str, name: str, client: Any, coordinator: Any,
+                        local_audio: Any = None) -> None:
         existing = self.members.get(entry_id)
         selected = existing.selected if existing else True
         muted_in_group = existing.muted_in_group if existing else False
@@ -369,6 +373,7 @@ class AqaraM1SMediaGroupManager:
             coordinator=coordinator,
             selected=selected,
             muted_in_group=muted_in_group,
+            local_audio=local_audio,
             state="waiting" if selected else "excluded",
             was_online=online,
             online_since_monotonic=time.monotonic() if online else None,
@@ -967,13 +972,22 @@ class AqaraM1SMediaGroupManager:
             "writer_high_water_ms": int(WRITER_HIGH_WATER_BYTES / (PCM_RATE * PCM_CHANNELS * PCM_SAMPLE_BYTES) * 1000),
             "writer_drain_timeout_seconds": WRITER_DRAIN_TIMEOUT,
             "periodic_receiver_resync_enabled": PERIODIC_RECEIVER_RESYNC_ENABLED,
-            "volume_apply_mode": "live_pcm_software_gain",
+            "volume_apply_mode": "hub_alsa_softvol",
+            "volume_transport_scaling": False,
             "volume_stream_restart": False,
-            "volume_apply_pending": False,
+            "volume_apply_pending": any(
+                getattr(member.local_audio, "apply_pending", False) for member in self.active_members),
+            "member_local_volume_levels": {
+                member.diagnostic_name: getattr(member.local_audio, "applied_level", None)
+                for member in self.members.values()},
+            "member_local_volume_errors": {
+                member.diagnostic_name: getattr(member.local_audio, "last_error", None)
+                for member in self.members.values()
+                if getattr(member.local_audio, "last_error", None)},
             "applied_volume_level": self._applied_volume,
             "applied_is_volume_muted": self._applied_muted,
             "volume_step_percent": 0.01,
-            "gain_ramp_ms": int(GAIN_RAMP_SECONDS * 1000),
+            "gain_ramp_ms": 35,
             "ffmpeg_nice_target": FFMPEG_NICE_TARGET,
             "ffmpeg_nice_applied": self._ffmpeg_nice_applied,
             "aplay_nice_target": APLAY_NICE_TARGET,
@@ -1384,23 +1398,25 @@ class AqaraM1SMediaGroupManager:
             await self._stop_stream_locked(stop_members=True, reason="shutdown")
 
     async def async_set_volume(self, volume: float) -> None:
-        """Apply group volume inside the running PCM broadcaster.
-
-        The shared FFmpeg process and every hub receiver remain untouched.
-        Only the software gain used for the next 35 ms PCM chunk changes, so
-        slider movement cannot interrupt or resynchronise the stream.
-        """
+        """Set selected hubs' shared volumes without touching the group clock."""
         normalized = self.normalize_volume(volume)
         self.volume = normalized
         self._applied_volume = normalized
+        self._local_volume_revision += 1
+        for member in self.members.values():
+            if member.selected and member.entry_id not in self.individual_intent:
+                self._sync_member_volume(member)
+                self._request_member_gain(member)
         async_dispatcher_send(self.hass, media_group_volume_signal())
         self._signal_update()
 
     async def async_set_muted(self, muted: bool) -> None:
-        """Mute or unmute through live PCM gain without restarting audio."""
+        """Mute or unmute the local ALSA controls without restarting audio."""
         normalized = bool(muted)
         self.muted = normalized
         self._applied_muted = normalized
+        for member in self.active_members:
+            self._request_member_gain(member)
         self._signal_update()
 
     def set_member_muted(self, entry_id: str, muted: bool) -> None:
@@ -1412,11 +1428,33 @@ class AqaraM1SMediaGroupManager:
         if member.muted_in_group == normalized:
             return
         member.muted_in_group = normalized
+        if member.writer is not None:
+            self._request_member_gain(member)
         self._signal_update()
+
+    def _sync_member_volume(self, member: GroupMember) -> None:
+        if member.local_volume_revision == self._local_volume_revision:
+            return
+        player = self.hass.data.get(DOMAIN, {}).get(DATA_RADIO_PLAYERS, {}).get(member.entry_id)
+        if player is not None:
+            player._update_shared_volume_level(self.volume)
+        member.local_volume_revision = self._local_volume_revision
+
+    def _member_local_gain(self, member: GroupMember) -> float:
+        if self.muted or member.muted_in_group:
+            return 0.0
+        player = self.hass.data.get(DOMAIN, {}).get(DATA_RADIO_PLAYERS, {}).get(member.entry_id)
+        return player._effective_gain() if player is not None else self._effective_gain()
+
+    def _request_member_gain(self, member: GroupMember) -> None:
+        if member.local_audio is not None:
+            member.local_audio.request_gain(self._member_local_gain(member))
 
     @staticmethod
     def normalize_volume(volume: float) -> float:
         """Quantize group volume in uniform 0.01 percentage-point steps."""
+        if not -float("inf") < volume < float("inf"):
+            raise ValueError("Volume must be finite")
         volume = max(0.0, min(1.0, float(volume)))
         quantized = round(volume / 0.0001) * 0.0001
         return max(0.0, min(1.0, round(quantized, 4)))
@@ -1434,57 +1472,8 @@ class AqaraM1SMediaGroupManager:
         self._gain_ramp_remaining = 0
 
     def _apply_live_pcm_gain(self, chunk: bytes) -> bytes:
-        """Scale one common S32_LE chunk with a 40 ms anti-click ramp."""
-        target = self._effective_gain()
-        if target != self._gain_target:
-            self._gain_ramp_start = self._gain_current
-            self._gain_target = target
-            self._gain_ramp_remaining = GAIN_RAMP_SAMPLES
-
-        if self._gain_ramp_remaining <= 0:
-            self._gain_current = target
-            if target <= 0.0:
-                return SILENCE_CHUNK
-            if target >= 1.0:
-                return chunk
-
-        samples = array("i")
-        samples.frombytes(chunk)
-        if samples.itemsize != PCM_SAMPLE_BYTES:
-            raise RuntimeError(
-                f"Unsupported native int size for S32_LE PCM: {samples.itemsize}"
-            )
-        if sys.byteorder != "little":
-            samples.byteswap()
-
-        if self._gain_ramp_remaining > 0:
-            start_gain = self._gain_ramp_start
-            change = self._gain_target - start_gain
-            remaining = self._gain_ramp_remaining
-            total = GAIN_RAMP_SAMPLES
-            elapsed = total - remaining
-            for index, sample in enumerate(samples):
-                if remaining > 0:
-                    progress = min(1.0, (elapsed + index + 1) / total)
-                    gain = start_gain + (change * progress)
-                    remaining -= 1
-                else:
-                    gain = self._gain_target
-                samples[index] = int(sample * gain)
-            self._gain_ramp_remaining = remaining
-            if remaining <= 0:
-                self._gain_current = self._gain_target
-            else:
-                progress = min(1.0, (total - remaining) / total)
-                self._gain_current = start_gain + (change * progress)
-        else:
-            gain = self._gain_current
-            for index, sample in enumerate(samples):
-                samples[index] = int(sample * gain)
-
-        if sys.byteorder != "little":
-            samples.byteswap()
-        return samples.tobytes()
+        """Send unchanged PCM; each hub applies its own shared local gain."""
+        return chunk
 
     async def _restart_stream_locked(self, reason: str) -> None:
         """Restart the shared SOURCE timeline, never because one member is slow.
@@ -1989,6 +1978,12 @@ class AqaraM1SMediaGroupManager:
         generation = member.generation
         writer: asyncio.StreamWriter | None = None
         try:
+            if member.local_audio is None:
+                raise RuntimeError("Local hub audio is not configured")
+            self._sync_member_volume(member)
+            await member.local_audio.async_prepare(self._member_local_gain(member))
+            if member.generation != generation or not self._eligible(member):
+                raise asyncio.CancelledError
             await asyncio.wait_for(
                 self.hass.async_add_executor_job(
                     member.client.run_command, GROUP_START_COMMAND
@@ -2550,8 +2545,8 @@ class AqaraM1SMediaGroupManager:
 
     @staticmethod
     def _member_payload(member: GroupMember, payload: bytes) -> bytes:
-        # Prefill/catch-up bursts intentionally stay bit-identical across members.
-        return b"\x00" * len(payload) if member.muted_in_group else payload
+        # Mute is local too; every receiver retains the exact common PCM sequence.
+        return payload
 
     @staticmethod
     def _reset_member_adaptive_sync(member: GroupMember) -> None:
@@ -2742,7 +2737,7 @@ class AqaraM1SMediaGroupManager:
 
     def _member_chunk(self, member: GroupMember, chunk: bytes) -> bytes:
         if not ADAPTIVE_SYNC_ENABLED:
-            return SILENCE_CHUNK if member.muted_in_group else chunk
+            return chunk
         return self._adaptive_resample_member_chunk(member, chunk)
 
     async def _broadcast_loop(

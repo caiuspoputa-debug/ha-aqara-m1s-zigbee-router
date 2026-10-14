@@ -26,6 +26,7 @@ from .const import (
     DATA_COORDINATOR_MQTT,
     DATA_COORDINATORS,
     DATA_PLAYBACK_VOLUME,
+    DATA_LOCAL_AUDIO,
     DATA_RADIO_PLAYERS,
     DATA_MEDIA_GROUP,
     DATA_SOUND_PLAYERS,
@@ -51,6 +52,7 @@ from .coordinator_profile import COORDINATOR_PLATFORMS, obsolete_coordinator_ent
 from .media_group import AqaraM1SMediaGroupManager
 from .media_player import AqaraM1SRadioPlayer
 from .sound_player import AqaraM1SSoundPlayer
+from .local_audio import AqaraM1SLocalAudio
 from .sound_upload import destination_for_filename, read_uploaded_sound
 
 PLATFORMS = [
@@ -190,6 +192,7 @@ async def async_setup_entry(
         {},
     )
     hass.data[DOMAIN].setdefault(DATA_COORDINATOR_MQTT, {})
+    hass.data[DOMAIN].setdefault(DATA_LOCAL_AUDIO, {})
     hass.data[DOMAIN].setdefault(
         DATA_PLAYBACK_VOLUME,
         {},
@@ -215,8 +218,10 @@ async def async_setup_entry(
     if not coordinator_only:
         coordinator_mqtt = M1SHubMQTTIO(hass, client, coordinator)
         hass.data[DOMAIN][DATA_COORDINATOR_MQTT][entry.entry_id] = coordinator_mqtt
-        hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][entry.entry_id] = 50
-        radio_player = AqaraM1SRadioPlayer(hass, entry, client, coordinator)
+        hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][entry.entry_id] = 5.0
+        local_audio = AqaraM1SLocalAudio(hass, client)
+        hass.data[DOMAIN][DATA_LOCAL_AUDIO][entry.entry_id] = local_audio
+        radio_player = AqaraM1SRadioPlayer(hass, entry, client, coordinator, local_audio)
         hass.data[DOMAIN][DATA_RADIO_PLAYERS][entry.entry_id] = radio_player
         group_manager = hass.data[DOMAIN][DATA_MEDIA_GROUP]
         group_manager.register_member(
@@ -224,10 +229,11 @@ async def async_setup_entry(
             entry.data.get("name", f"Aqara M1S {host}"),
             client,
             coordinator,
+            local_audio,
         )
         radio_player.set_group_manager(group_manager)
         hass.data[DOMAIN][DATA_SOUND_PLAYERS][entry.entry_id] = AqaraM1SSoundPlayer(
-            hass, client, entry.entry_id, radio_player, group_manager
+            hass, client, entry.entry_id, radio_player, group_manager, local_audio
         )
 
     device_registry = dr.async_get(hass)
@@ -417,19 +423,10 @@ async def async_setup_entry(
         _require_media_router(selected_client)
         url = call.data["url"]
         sound_player = hass.data[DOMAIN][DATA_SOUND_PLAYERS].get(selected_entry_id)
-        if sound_player is not None:
+        if sound_player is not None and sound_player.client.host == selected_client.host:
             await sound_player.async_play_url(url)
             return
-        # Fallback for an ad-hoc host that is not a configured integration entry.
-        command = (
-            f'wget -q "{url}" '
-            "-O /tmp/ha_audio.wav "
-            "&& (aplay -x 1 /tmp/ha_audio.wav & "
-            "APID=$!; renice -3 -p \"$APID\" "
-            ">/tmp/aqara_m1s_play_url_aplay_renice.log 2>&1 || true; "
-            "wait \"$APID\")"
-        )
-        await hass.async_add_executor_job(selected_client.run_command, command)
+        raise HomeAssistantError("Configure this hub in the integration before local audio playback")
 
     async def play_sound(
         call: ServiceCall,
@@ -438,6 +435,8 @@ async def async_setup_entry(
         _require_media_router(selected_client)
         path = call.data["path"]
         sound_player = hass.data[DOMAIN][DATA_SOUND_PLAYERS][selected_entry_id]
+        if sound_player.client.host != selected_client.host:
+            raise HomeAssistantError("Configure this hub in the integration before local audio playback")
         await sound_player.async_play(
             path,
             hass.data[DOMAIN][DATA_PLAYBACK_VOLUME].get(selected_entry_id, 50),
@@ -590,6 +589,10 @@ async def async_unload_entry(
     )
     if sound_player:
         await sound_player.async_stop()
+
+    local_audio = hass.data[DOMAIN].get(DATA_LOCAL_AUDIO, {}).pop(entry.entry_id, None)
+    if local_audio is not None:
+        await local_audio.async_shutdown()
 
     telnet_client = hass.data[DOMAIN][DATA_CLIENTS].pop(
         entry.entry_id,

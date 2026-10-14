@@ -368,7 +368,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         group = types.SimpleNamespace(register_member=Mock(), members={}, unregister_member=AsyncMock(), async_shutdown=AsyncMock())
         mqtt = types.SimpleNamespace(async_start=AsyncMock(), async_stop=AsyncMock())
         radio = Mock()
-        sound = types.SimpleNamespace(async_play=AsyncMock(), async_stop=AsyncMock())
+        sound = types.SimpleNamespace(client=client, async_play=AsyncMock(), async_stop=AsyncMock())
         patches = [patch.object(integration, "AqaraM1SClient", return_value=client),
                    patch.object(integration, "AqaraM1SRouterCoordinator", return_value=coord),
                    patch.object(integration, "AqaraM1SMediaGroupManager", return_value=group),

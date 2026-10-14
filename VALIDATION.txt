@@ -1,8 +1,10 @@
-0.37.13 TEST: 157 local automated tests passed.
-Fixed 105 ms batches on the existing 35 ms PCM clock: 3 periods / 13440 bytes.
-Ordered identical group payloads, individual payloads, mute, EOF, Stop and recovery verified.
-300000 fixed-105-ms boundaries checked: 8.75 simulated hours with exact period counts.
-The generic 300-ms rounding regression remains covered by 100000 boundaries.
-Buffers, prefill, gain, Stop lifecycle and receiver commands unchanged from 0.37.12.
-All unrelated component files are byte-identical to 0.37.12.
-No 0.37.13 deployment, acoustic synchronization or noise reduction validation.
+0.37.14 TEST: 196 local automated tests passed.
+Direct stored WAVs; one hub-local ALSA software volume for WAV/media/group.
+Unscaled ordered PCM: existing 35 ms clock, 105 ms / 13440 byte batches.
+Verified priority, cancellation, Stop, failure recovery and volume aliases.
+Verified gain protocol, space checks, atomic asset hashes and Coordinator guard.
+Native helper compiled for static MIPS32 little-endian with warnings as errors.
+Common clock, batching, buffers, prefill and Stop methods unchanged from 0.37.13.
+Receiver ALSA route changed; no proof of acoustic synchronization from tests.
+No deployment, HA restart, complete live handover, final WAV conversion test,
+end-to-end latency measurement or noise-reduction verification for this build.

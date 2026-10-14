@@ -1,6 +1,6 @@
 play_url:
   name: Play URL
-  description: Download a WAV URL to /tmp and play it on the Aqara M1S.
+  description: Download a WAV URL to hub RAM and play locally with the shared hub volume and sound priority. The Router must be configured in this integration.
   fields:
     host:
       name: Host
@@ -23,7 +23,7 @@ play_url:
 
 play_sound:
   name: Play Sound
-  description: Play a WAV file already present on the Aqara M1S filesystem.
+  description: Play an existing WAV under /data/musics directly on a configured Router, using the shared hub volume and sound priority.
   fields:
     host:
       name: Host

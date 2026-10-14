@@ -6,6 +6,7 @@ from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -14,6 +15,7 @@ from .const import (
     DATA_PLAYBACK_VOLUME,
     DATA_RADIO_PLAYERS,
     DOMAIN,
+    radio_volume_signal,
 )
 from .device import device_info
 
@@ -55,13 +57,13 @@ class AqaraM1SSoundPlaybackVolume(
     RestoreEntity,
     NumberEntity,
 ):
-    """Volume used by local Aqara WAV/sound playback commands."""
+    """Compatibility entity for the same volume used by WAV and all hub media."""
 
-    _attr_name = "Sound Playback Volume"
+    _attr_name = "Hub Volume"
     _attr_icon = "mdi:volume-high"
-    _attr_native_min_value = 1
+    _attr_native_min_value = 0
     _attr_native_max_value = 100
-    _attr_native_step = 1
+    _attr_native_step = 0.01
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_mode = NumberMode.SLIDER
     _attr_should_poll = False
@@ -79,35 +81,23 @@ class AqaraM1SSoundPlaybackVolume(
         self.client = client
 
         self._attr_unique_id = f"{entry.entry_id}_sound_playback_volume"
-        self._attr_native_value = 50
+        self.radio_player = hass.data[DOMAIN][DATA_RADIO_PLAYERS][entry.entry_id]
         self._attr_device_info = device_info(entry)
+
+    @property
+    def native_value(self) -> float:
+        return round(float(self.radio_player._attr_volume_level or 0.0) * 100, 2)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-
-        restored = await self.async_get_last_state()
-        value = None
-        if restored is not None:
-            try:
-                value = int(float(restored.state))
-            except (TypeError, ValueError):
-                value = None
-        if value is None:
-            value = 50
-
-        value = max(1, min(100, value))
-        self._attr_native_value = value
-        self.hass.data.setdefault(DOMAIN, {})
-        self.hass.data[DOMAIN].setdefault(DATA_PLAYBACK_VOLUME, {})
-        self.hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][self.entry.entry_id] = value
+        # The media entity restores the authoritative value. The old independent
+        # WAV default (50%) must never overwrite a previously quiet radio volume.
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass, radio_volume_signal(self.entry.entry_id), self.async_write_ha_state))
         self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
-        safe_value = max(1, min(100, int(round(value))))
-        self._attr_native_value = safe_value
-        self.hass.data.setdefault(DOMAIN, {})
-        self.hass.data[DOMAIN].setdefault(DATA_PLAYBACK_VOLUME, {})
-        self.hass.data[DOMAIN][DATA_PLAYBACK_VOLUME][self.entry.entry_id] = safe_value
+        await self.radio_player.async_set_volume_level(float(value) / 100)
         self.async_write_ha_state()
 
 

@@ -10,8 +10,13 @@ M1S group first consecutive TCP drain timeout tolerated member=Aqara M1S Zigbee 
 M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221'] action=common_prefill_keep_source cooldown=60.0s
 M1S group first consecutive TCP drain timeout tolerated member=Aqara M1S Zigbee Router@192.168.0.222 seq=100 timeout=1.25s action=keep_receiver
 M1S group confirmed TCP backpressure member=Aqara M1S Zigbee Router@192.168.0.222 seq=102 consecutive=2 action=isolate_member_keep_group_clock
-Executing <Task finished name='Task-1653' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-09-30\referenced-chatgpt-conversation-this-is-an\work\integration-03713-audio-105ms\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.516 seconds
+Executing <Task finished name='Task-1732' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-09-30\referenced-chatgpt-conversation-this-is-an\work\integration-03714-local-audio\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.500 seconds
+Executing <Task finished name='Task-1754' coro=<Tests.test_paho_accept_and_reject() done, defined at C:\Users\Dell\Documents\Codex\2026-09-30\referenced-chatgpt-conversation-this-is-an\work\integration-03714-local-audio\test_shared_mqtt.py:59> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.109 seconds
+M1S local WAV session disappeared host=test
+M1S local WAV status failed host=test: offline
+M1S audio resume failed after local WAV host=test: offline
+M1S WAV URL download timed out host=test
 ----------------------------------------------------------------------
-Ran 157 tests in 14.968s
+Ran 196 tests in 11.667s
 
 OK

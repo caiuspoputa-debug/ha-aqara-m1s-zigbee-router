@@ -1,96 +1,45 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-import os
-import shlex
-import shutil
-import time
 from contextlib import suppress
+import logging
+import time
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 
 from .client import AqaraM1SClient
-from .const import DATA_COORDINATOR_MQTT, DOMAIN
+from .local_audio import safe_sound_path, safe_sound_url
 
 _LOGGER = logging.getLogger(__name__)
-
-# IMPORTANT: This transport block intentionally matches the known-good v0.6.0
-# sound pipeline. Audio priority is handled only by the HA-side arbiter around it.
-SOURCE_PORT = 12347
-SINK_PORT = 12348
-REMOTE_FIFO = "/tmp/aqara_m1s_sound_fifo"
-REMOTE_SOURCE_PID = "/tmp/aqara_m1s_sound_source_nc.pid"
-REMOTE_SINK_PID = "/tmp/aqara_m1s_sound_sink_nc.pid"
-REMOTE_APLAY_PID = "/tmp/aqara_m1s_sound_aplay.pid"
-FFMPEG_NICE_TARGET = -5
-APLAY_NICE_TARGET = -3
-SOUND_SETTLE_DELAY = 0.35
-SOUND_END_CUSHION_SECONDS = 0.5
-
-REMOTE_STOP_COMMAND = (
-    f"for f in {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID}; do "
-        '[ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; '
-    "done; "
-    f"rm -f {REMOTE_SOURCE_PID} {REMOTE_SINK_PID} {REMOTE_APLAY_PID} {REMOTE_FIFO}"
-)
-
-
-def remote_start_command(path: str) -> str:
-    """Build the original known-good hub-side one-shot source/sink pipeline."""
-    source = shlex.quote(path)
-    return (
-        REMOTE_STOP_COMMAND
-        + f"; mkfifo {REMOTE_FIFO}; "
-        + f"nc -l -p {SINK_PORT} < /dev/null > {REMOTE_FIFO} "
-          "2>/tmp/aqara_m1s_sound_sink_nc.log & "
-        + f"echo $! > {REMOTE_SINK_PID}; "
-        + f"aplay -t raw -f S32_LE -c 1 -r 32000 {REMOTE_FIFO} </dev/null "
-          ">/tmp/aqara_m1s_sound_aplay.log 2>&1 & "
-        + f"echo $! > {REMOTE_APLAY_PID}; "
-        + f"APID=$(cat {REMOTE_APLAY_PID}); "
-          f"renice {APLAY_NICE_TARGET} -p \"$APID\" "
-          ">/tmp/aqara_m1s_sound_aplay_renice.log 2>&1 || true; "
-        + f"cat {source} | nc -l -p {SOURCE_PORT} "
-          ">/dev/null 2>/tmp/aqara_m1s_sound_source_nc.log & "
-        + f"echo $! > {REMOTE_SOURCE_PID}"
-    )
+SOUND_STATUS_INTERVAL = 0.5
+SOUND_STATUS_FAILURE_LIMIT = 3
+SOUND_DOWNLOAD_TIMEOUT = 30
 
 
 class AqaraM1SSoundPlayer:
-    """Play one hub WAV, with HA-side priority but the original sound transport."""
+    """Play stored WAVs locally while retaining the existing HA priority arbiter."""
 
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        client: AqaraM1SClient,
-        entry_id: str,
-        radio_player: Any,
-        group_manager: Any,
-    ) -> None:
+    def __init__(self, hass: HomeAssistant, client: AqaraM1SClient, entry_id: str,
+                 radio_player: Any, group_manager: Any, local_audio: Any = None) -> None:
         self.hass = hass
         self.client = client
         self.entry_id = entry_id
         self.radio_player = radio_player
         self.group_manager = group_manager
+        self.local_audio = local_audio
         self._lock = asyncio.Lock()
-        self._ffmpeg: asyncio.subprocess.Process | None = None
         self._watch_task: asyncio.Task | None = None
+        self._token: str | None = None
         self._interruption_active = False
         self._resume_radio = False
-        self._active_timing_start: float | None = None
-        self._active_timing: dict[str, int] | None = None
-        self._remote_sound_mqtt = False
 
     async def _begin_priority_locked(self) -> None:
-        """Release group/individual ownership before starting the proven sound path."""
         if self._interruption_active:
             return
         await self.group_manager.async_claim_sound(self.entry_id)
-        self._resume_radio = await self.radio_player.async_suspend_for_priority_sound()
         self._interruption_active = True
-        # Only a short ALSA settle delay. Do not manipulate hub sound transport here.
+        self._resume_radio = await self.radio_player.async_suspend_for_priority_sound()
         await asyncio.sleep(0.25)
 
     async def _finish_priority(self) -> None:
@@ -100,320 +49,114 @@ class AqaraM1SSoundPlayer:
         self._resume_radio = False
         self._interruption_active = False
         try:
-            # Always release the radio-player priority gate. The boolean controls
-            # whether remembered single media should resume; the sound transport
-            # itself remains exactly the known-good v0.6.0/v0.6.3 pipeline.
             await self.radio_player.async_resume_after_priority_sound(resume_radio)
         finally:
             await self.group_manager.async_release_sound(self.entry_id)
 
-    async def async_play(self, path: str, volume: int) -> None:
-        """Play exactly one WAV using the known-good v0.6.0 transport."""
-        request_started = time.perf_counter()
-        timing: dict[str, int] = {}
-        safe_volume = max(0, min(100, int(volume))) / 100.0
-        _LOGGER.info(
-            "Aqara M1S sound timing request entity=%s host=%s path=%s volume=%s",
-            self.entry_id,
-            self.client.host,
-            path,
-            volume,
-        )
+    async def async_play(self, path: str, volume: float | None = None) -> None:
+        # The legacy argument is retained for callers; the shared media volume,
+        # mute and existing fine trim are authoritative for local WAVs too.
+        source = safe_sound_path(path)
+        await self._play_local(source)
+
+    async def _play_local(self, source: str, *, url: bool = False) -> None:
+        if self.client.zigbee_role == "coordinator":
+            raise RuntimeError("Dedicated coordinator does not expose audio")
+        if self.local_audio is None:
+            raise RuntimeError("Local hub audio is not configured")
+        started = time.perf_counter()
         async with self._lock:
-            timing["button_to_lock_ms"] = self._elapsed_ms(request_started)
-
-            stage_started = time.perf_counter()
-            await self._stop_locked(restore_previous=False, remote_stop=False)
-            timing["existing_sound_stop_ms"] = self._elapsed_ms(stage_started)
-
-            stage_started = time.perf_counter()
-            await self._begin_priority_locked()
-            timing["arbitration_ms"] = self._elapsed_ms(stage_started)
             try:
-                # Keep this sequence identical to v0.6.0 after focus arbitration.
-                stage_started = time.perf_counter()
-                hub_mqtt = self._hub_mqtt()
-                if self.client.zigbee_role == "coordinator":
-                    if hub_mqtt is None:
-                        raise RuntimeError("Coordinator MQTT IO is not configured")
-                    await hub_mqtt.async_prepare_sound(path)
-                    self._remote_sound_mqtt = True
-                elif (
-                    hub_mqtt is not None
-                    and hub_mqtt.available
-                    and hub_mqtt.sound_supported
-                ):
-                    try:
-                        await hub_mqtt.async_prepare_sound(path)
-                        self._remote_sound_mqtt = True
-                    except Exception as err:
-                        self._remote_sound_mqtt = False
-                        _LOGGER.warning(
-                            "Router MQTT WAV prepare failed on %s; using Telnet fallback: %s",
-                            self.client.host,
-                            err,
-                        )
-                        await self.hass.async_add_executor_job(
-                            self.client.run_command,
-                            remote_start_command(path),
-                        )
-                else:
-                    self._remote_sound_mqtt = False
-                    await self.hass.async_add_executor_job(
-                        self.client.run_command,
-                        remote_start_command(path),
-                    )
-                timing["remote_sound_start_ms"] = self._elapsed_ms(stage_started)
-
-                stage_started = time.perf_counter()
-                await asyncio.sleep(SOUND_SETTLE_DELAY)
-                timing["settle_ms"] = self._elapsed_ms(stage_started)
-
-                ffmpeg = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-                input_url = f"tcp://{self.client.host}:{SOURCE_PORT}?tcp_nodelay=1"
-                output_url = f"tcp://{self.client.host}:{SINK_PORT}?tcp_nodelay=1"
-                args = [
-                    ffmpeg,
-                    "-nostdin",
-                    "-hide_banner",
-                    "-loglevel",
-                    "warning",
-                    "-progress",
-                    "pipe:2",
-                    "-re",
-                    "-i",
-                    input_url,
-                    "-vn",
-                    "-ac",
-                    "1",
-                    "-ar",
-                    "32000",
-                    "-filter:a",
-                    f"volume={safe_volume:.4f}",
-                    "-c:a",
-                    "pcm_s32le",
-                    "-f",
-                    "s32le",
-                    output_url,
-                ]
-
+                await self._stop_locked(restore_previous=False)
+                await self._begin_priority_locked()
+                await self.local_audio.async_prepare(self.radio_player._effective_gain())
+                start_method = self.local_audio.async_start_url if url else self.local_audio.async_start_sound
+                start_task = self.hass.async_create_task(start_method(source))
                 try:
-                    stage_started = time.perf_counter()
-                    process = await asyncio.create_subprocess_exec(
-                        *args,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    timing["ffmpeg_spawn_ms"] = self._elapsed_ms(stage_started)
-                except FileNotFoundError as err:
-                    await self._remote_stop()
-                    await self._finish_priority()
-                    raise RuntimeError("FFmpeg was not found on Home Assistant") from err
-
-                self._ffmpeg = process
-                self._active_timing_start = request_started
-                self._active_timing = timing
-                self._try_set_ffmpeg_priority(process.pid)
-                timing["button_to_ffmpeg_spawn_ms"] = self._elapsed_ms(request_started)
+                    token = await asyncio.shield(start_task)
+                except asyncio.CancelledError:
+                    # A remote command may already have started playback. Settle
+                    # it and stop only its token before releasing audio ownership.
+                    with suppress(Exception):
+                        cancelled_token = await start_task
+                        await self.local_audio.async_stop_sound(cancelled_token)
+                        await self.local_audio.async_cleanup_sound(cancelled_token)
+                    raise
+                self._token = token
+                self._watch_task = self.hass.async_create_task(self._watch(token))
                 _LOGGER.info(
-                    "Aqara M1S sound timing start entity=%s host=%s "
-                    "button_to_lock_ms=%s existing_sound_stop_ms=%s arbitration_ms=%s "
-                    "remote_sound_start_ms=%s settle_ms=%s ffmpeg_spawn_ms=%s "
-                    "button_to_ffmpeg_spawn_ms=%s",
-                    self.entry_id,
-                    self.client.host,
-                    timing.get("button_to_lock_ms"),
-                    timing.get("existing_sound_stop_ms"),
-                    timing.get("arbitration_ms"),
-                    timing.get("remote_sound_start_ms"),
-                    timing.get("settle_ms"),
-                    timing.get("ffmpeg_spawn_ms"),
-                    timing.get("button_to_ffmpeg_spawn_ms"),
-                )
-                self._watch_task = self.hass.async_create_task(self._watch(process))
-            except Exception:
-                if self._ffmpeg is None:
-                    self._active_timing_start = None
-                    self._active_timing = None
-                    await self._remote_stop()
-                    await self._finish_priority()
+                    "M1S local WAV accepted host=%s request_to_accept_ms=%s mode=hub_alsa_no_audio_transfer",
+                    self.client.host, round((time.perf_counter() - started) * 1000))
+            except BaseException:
+                await self._finish_priority()
                 raise
 
     async def async_play_url(self, url: str) -> None:
-        """Play URL with the same focus policy; does not alter normal WAV transport."""
-        async with self._lock:
-            await self._stop_locked(restore_previous=False)
-            await self._begin_priority_locked()
-        quoted = shlex.quote(url)
-        command = (
-            f"wget -q {quoted} -O /tmp/ha_audio.wav "
-            "&& (aplay -x 1 /tmp/ha_audio.wav & "
-            "APID=$!; renice -3 -p \"$APID\" "
-            ">/tmp/aqara_m1s_play_url_aplay_renice.log 2>&1 || true; "
-            "wait \"$APID\")"
-        )
-        try:
-            await self.hass.async_add_executor_job(self.client.run_command, command)
-        finally:
-            async with self._lock:
-                await self._finish_priority()
+        """Download an explicit WAV URL to hub RAM with the same priority policy."""
+        await self._play_local(safe_sound_url(url), url=True)
 
-    @staticmethod
-    def _try_set_ffmpeg_priority(pid: int) -> bool:
+    async def _watch(self, token: str) -> None:
+        failures = 0
+        started = time.monotonic()
         try:
-            os.setpriority(os.PRIO_PROCESS, pid, FFMPEG_NICE_TARGET)
-            return os.getpriority(os.PRIO_PROCESS, pid) <= FFMPEG_NICE_TARGET
-        except (AttributeError, OSError, PermissionError) as err:
-            _LOGGER.debug(
-                "Could not apply sound FFmpeg nice=%s to pid=%s: %s",
-                FFMPEG_NICE_TARGET,
-                pid,
-                err,
-            )
-            return False
-
-    @staticmethod
-    def _elapsed_ms(started: float) -> int:
-        return round((time.perf_counter() - started) * 1000)
-
-    async def _watch(self, process: asyncio.subprocess.Process) -> None:
-        stderr_tail: list[str] = []
-        first_pcm_logged = False
-        try:
-            if process.stderr is not None:
-                while True:
-                    line = await process.stderr.readline()
-                    if not line:
-                        break
-                    text = line.decode(errors="ignore").strip()
-                    if text:
-                        stderr_tail.append(text)
-                        stderr_tail = stderr_tail[-40:]
-                    if not first_pcm_logged and self._ffmpeg is process:
-                        first_pcm_logged = self._maybe_log_first_pcm_write(text)
-            await process.wait()
+            while self._token == token:
+                await asyncio.sleep(SOUND_STATUS_INTERVAL)
+                try:
+                    state, returncode = await self.local_audio.async_sound_status(token)
+                    failures = 0
+                except Exception as exc:
+                    failures += 1
+                    if failures < SOUND_STATUS_FAILURE_LIMIT:
+                        continue
+                    _LOGGER.warning("M1S local WAV status failed host=%s: %s", self.client.host, exc)
+                    with suppress(Exception):
+                        await self.local_audio.async_stop_sound(token)
+                    break
+                if state == "done":
+                    if returncode != 0:
+                        _LOGGER.warning("M1S local WAV failed host=%s exit=%s", self.client.host, returncode)
+                    break
+                if state == "missing":
+                    _LOGGER.warning("M1S local WAV session disappeared host=%s", self.client.host)
+                    break
+                if state == "downloading" and time.monotonic() - started > SOUND_DOWNLOAD_TIMEOUT:
+                    with suppress(Exception):
+                        await self.local_audio.async_stop_sound(token)
+                    _LOGGER.warning("M1S WAV URL download timed out host=%s", self.client.host)
+                    break
         except asyncio.CancelledError:
             return
-
-        if self._ffmpeg is not process:
-            return
-
-        timing_start = self._active_timing_start
-        timing = self._active_timing
-        self._ffmpeg = None
-        self._watch_task = None
-        self._active_timing_start = None
-        self._active_timing = None
-        if process.returncode not in (0, -15):
-            _LOGGER.warning(
-                "Aqara M1S priority sound FFmpeg exited with code %s: %s",
-                process.returncode,
-                "\n".join(stderr_tail)[-1000:],
-            )
-        elif process.returncode == 0:
-            await asyncio.sleep(SOUND_END_CUSHION_SECONDS)
-        if timing_start is not None and timing is not None:
-            _LOGGER.info(
-                "Aqara M1S sound timing complete entity=%s host=%s "
-                "button_to_lock_ms=%s existing_sound_stop_ms=%s arbitration_ms=%s "
-                "remote_sound_start_ms=%s settle_ms=%s ffmpeg_spawn_ms=%s "
-                "first_pcm_write_ms=%s total_ms=%s returncode=%s",
-                self.entry_id,
-                self.client.host,
-                timing.get("button_to_lock_ms"),
-                timing.get("existing_sound_stop_ms"),
-                timing.get("arbitration_ms"),
-                timing.get("remote_sound_start_ms"),
-                timing.get("settle_ms"),
-                timing.get("ffmpeg_spawn_ms"),
-                timing.get("first_pcm_write_ms"),
-                self._elapsed_ms(timing_start),
-                process.returncode,
-            )
-        await self._remote_stop()
+        except Exception as exc:
+            _LOGGER.warning("M1S local WAV watcher failed host=%s: %s", self.client.host, exc)
+            with suppress(Exception):
+                await self.local_audio.async_stop_sound(token)
         async with self._lock:
-            await self._finish_priority()
-
-    def _maybe_log_first_pcm_write(self, text: str) -> bool:
-        if not text.startswith("out_time_ms="):
-            return False
-        try:
-            out_time_ms = int(text.split("=", 1)[1])
-        except ValueError:
-            return False
-        if out_time_ms <= 0 or self._active_timing_start is None:
-            return False
-        timing = self._active_timing
-        first_pcm_write_ms = self._elapsed_ms(self._active_timing_start)
-        if timing is not None:
-            timing["first_pcm_write_ms"] = first_pcm_write_ms
-        _LOGGER.info(
-            "Aqara M1S sound timing first PCM write entity=%s host=%s "
-            "first_pcm_write_ms=%s ffmpeg_out_time_ms=%s",
-            self.entry_id,
-            self.client.host,
-            first_pcm_write_ms,
-            out_time_ms,
-        )
-        return True
+            if self._token != token:
+                return
+            self._token = None
+            self._watch_task = None
+            with suppress(Exception):
+                await self.local_audio.async_cleanup_sound(token)
+            try:
+                await self._finish_priority()
+            except Exception as exc:
+                _LOGGER.warning("M1S audio resume failed after local WAV host=%s: %s", self.client.host, exc)
 
     async def async_stop(self) -> None:
         async with self._lock:
             await self._stop_locked(restore_previous=True)
 
-    async def _stop_locked(
-        self, *, restore_previous: bool, remote_stop: bool = True
-    ) -> None:
-        process = self._ffmpeg
-        self._ffmpeg = None
-        watch_task = self._watch_task
-        self._watch_task = None
-        self._active_timing_start = None
-        self._active_timing = None
-        if watch_task and watch_task is not asyncio.current_task():
-            watch_task.cancel()
+    async def _stop_locked(self, *, restore_previous: bool) -> None:
+        token, self._token = self._token, None
+        watch, self._watch_task = self._watch_task, None
+        if watch is not None and watch is not asyncio.current_task():
+            watch.cancel()
             with suppress(asyncio.CancelledError):
-                await watch_task
-        if process is not None and process.returncode is None:
-            process.terminate()
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(process.wait(), timeout=2)
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
-        if remote_stop:
-            await self._remote_stop()
-        if restore_previous:
-            await self._finish_priority()
-
-    async def _remote_stop(self) -> None:
-        hub_mqtt = self._hub_mqtt()
-        used_mqtt = self._remote_sound_mqtt
-        self._remote_sound_mqtt = False
+                await watch
         try:
-            if self.client.zigbee_role == "coordinator":
-                if hub_mqtt is None:
-                    raise RuntimeError("Coordinator MQTT IO is not configured")
-                await hub_mqtt.async_stop_sound()
-                return
-            if used_mqtt and hub_mqtt is not None:
-                try:
-                    await hub_mqtt.async_stop_sound()
-                    return
-                except Exception as err:
-                    _LOGGER.warning(
-                        "Router MQTT WAV stop failed on %s; using Telnet fallback: %s",
-                        self.client.host,
-                        err,
-                    )
-            await self.hass.async_add_executor_job(
-                self.client.run_command,
-                REMOTE_STOP_COMMAND,
-            )
-        except Exception as err:
-            _LOGGER.debug("Could not stop Aqara sound pipeline: %s", err)
-
-    def _hub_mqtt(self):
-        return self.hass.data.get(DOMAIN, {}).get(DATA_COORDINATOR_MQTT, {}).get(
-            self.entry_id
-        )
+            if token is not None:
+                await self.local_audio.async_stop_sound(token)
+                await self.local_audio.async_cleanup_sound(token)
+        finally:
+            if restore_previous:
+                await self._finish_priority()

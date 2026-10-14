@@ -1,17 +1,17 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.13 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.14 TEST
 
 Local Home Assistant integration for identical Aqara M1S Gen 1 / JN5189 hubs prepared either as Zigbee Routers or as a Zigbee-on-Host Coordinator. The runtime role is detected from the hub and stored in the Home Assistant config entry; it is never selected from the IP address.
 
-Version `0.37.13 TEST` sets TCP audio batching to a fixed 105 ms for group and individual players: three whole 35 ms PCM periods, or 13,440 bytes per batch. Both paths retain the existing common boundary calculation, without adding a timer or accumulating rounding drift. See `AUDIO_TRANSPORT_RO.md`.
+Version `0.37.14 TEST` plays stored WAVs directly on each Router and applies one local ALSA software volume to WAVs, individual media and group receivers. Stored audio no longer passes through Home Assistant or FFmpeg. Radio/media still uses FFmpeg for decoding, but no longer for volume or HA-side gain processing. See `LOCAL_AUDIO_RO.md` for migration, requirements and the remaining live-test checklist.
 
-The shared 35 ms audio clock, sample format, ALSA commands, prefill, buffers and volume processing are unchanged from `0.37.12`; only the batch target and its diagnostic minimum change. The Stop cleanup fix from `0.37.11` and automatic sound recovery from `0.37.8` are retained. This is a comparison build for reported interruptions, not a proven fix or a guarantee of synchronization or noise removal. Restart Home Assistant after installation.
+The existing 35 ms clock, 105 ms transport batches, PCM history, prefill, buffers, Stop fix and priority policy are retained. Receiver commands now select the local ALSA volume route. This package is a prototype: the full new integration and multiroom acoustic synchronization have not been verified live. It was not installed on Home Assistant by this build. Installation requires a Home Assistant restart.
 
 ## Requirements
 
 - Home Assistant `2024.1.0` or newer.
 - Local network access from Home Assistant to the hub.
 - Telnet enabled on the hub; default connection is port `23`, user `admin`, blank password.
-- A compatible Router setup; fast stored-WAV commands require Router MQTT IO `1.1.1`. Routers without that capability automatically retain the established Telnet WAV path.
+- A compatible MIPS32 little-endian Router with `aplay`, ALSA `plug`/`softvol`, `/dev/snd/controlC0`, `base64`, `sha256sum`, and at least 8 MiB free on `/data` after audio-helper installation. Initial helper transfer can take longer; later WAV playback sends only control commands. There is no automatic unattenuated fallback if gain setup fails.
 - An already converted Coordinator runtime with the existing static-IP/Wi-Fi managers; the Only Coordinator `1.0.0` profile is recommended. This integration does not install that profile or change hub services.
 - An MQTT broker reachable through its LAN address for Router physical-button events, shared MQTT configuration and IO. The Coordinator's auxiliary MQTT agent is not used.
 - Zigbee2MQTT with the `zoh` adapter when the hub is used as Coordinator.
@@ -33,7 +33,7 @@ The internal domain remains `aqara_m1s_zigbee_router`. Retained diagnostics and 
 | Zigbee transport | Existing JN5189 Router runtime | Zigbee-on-Host through `tcp://HUB_IP:1886` |
 | Ring Light | Persistent MQTT to A5; legacy fallback only before upgrade activation | Not exposed |
 | Illuminance | Retained MQTT state; serialized A6 sample every 30 seconds | Not exposed |
-| Stored WAV | MQTT prepare/stop with agent `1.1.1`; automatic Telnet fallback | Not exposed; legacy sound services are blocked |
+| Stored WAV | Direct local playback through the shared ALSA volume; Telnet control only | Not exposed; legacy sound services are blocked |
 | Media / group membership | Existing individual and group playback | No player or group member is created |
 | Join another coordinator | Available with explicit confirmation | Hidden and blocked |
 | Coordinator ON/OFF | Not applicable | Deliberately absent |
@@ -49,7 +49,7 @@ The explicit Router rejoin action remains available. The integration pauses the 
 - A retained message declaring role `coordinator` is ignored by a Router, and vice versa.
 - If the configured agent is unavailable, only Ring Light, illuminance and MQTT diagnostics become unavailable; the integration does not fall back to legacy UART over the agent.
 - Overall Router availability keeps the existing lightweight LAN probe. An MQTT broker problem therefore does not automatically remove a player from the media group or change audio synchronization.
-- The Router agent handles only local WAV receiver preparation and stop. Radio, media play/pause, volume, mute, FFmpeg, PCM transport and group synchronization are not moved into the agent.
+- The Router agent retains its IO responsibilities. This version does not use its legacy WAV receiver preparation: local WAV and gain commands use an isolated Telnet connection. Radio decoding and the group clock remain in Home Assistant.
 
 ## Dedicated Coordinator
 
@@ -71,13 +71,13 @@ serial:
 
 The Zigbee channel, PAN, network key and device database remain Zigbee2MQTT settings; this integration does not replace them.
 
-## Router entities (unchanged)
+## Router entities
 
 - **Ring Light** with RGB color and brightness.
 - **Illuminance**, including `adc_raw`, `millivolts` and the role-specific source as attributes.
 - **Media Player** for streams and local playback.
 - **M1S Media Group** and **Include in M1S Media Group** for synchronized playback across selected hubs.
-- **Sound Playback Volume**, **Fine Volume Trim** and **Sound** selection.
+- **Hub Volume** (the former Sound Playback Volume unique ID), **Fine Volume Trim** and **Sound** selection. The number and individual media-player slider now control the same volume; old automations setting WAV volume also change radio volume. The restored media-player level is authoritative, not the former WAV value.
 - One button for every discovered non-system WAV sound.
 - **Physical Button** events: click, double through ten clicks, hold start, repeat and release.
 - **Hub Connectivity**, **Hub Temperature**, **WiFi IP**, HomeKit, MQTT and Telnet process state.
@@ -108,13 +108,13 @@ The username and password must use printable ASCII and may contain at most 80 ch
 - Installation, startup and migration never delete sounds automatically.
 - A successful upload or deletion reloads the integration and rebuilds the sound entities.
 
-For a stored WAV on a Router, the confirmed priority sequence is preserved exactly: current individual/group playback is suspended, the WAV runs through the existing TCP/FFmpeg/aplay path, and the remembered playback is restored after completion. Router MQTT can prepare or stop this pipeline; it does not transport radio/group audio or alter synchronization. The dedicated Coordinator has no WAV or media pipeline.
+For a stored WAV on a Router, the existing priority arbiter suspends individual/group audio only on that hub, starts `aplay` on the existing file with the shared local gain, and restores playback only if current intent still permits it. The dedicated Coordinator has no WAV or media pipeline. No WAV copies are made. The prior handover rules are retained and regression-tested, but the complete new handover still needs a live check.
 
 If an individual source stops delivering PCM, the entity now reports `buffering`, stops its remote receiver and rebuilds it only after real PCM returns. A playout rebase records the lag, latest TCP drain duration and the most likely cause (`tcp_drain_timeout`, `tcp_drain_slow` or `ha_scheduler_or_other_await`). The orderly unload protection still stops the individual hub receiver before closing the local writer and adds no active watchdog on the hub.
 
 The media group keeps one shared PCM history and one common playout clock. One 1.25-second TCP timeout is tolerated; confirmed faults quarantine only the affected hub. A returning hub waits silently, without historical PCM replay, for a common receiver prefill. Requests settle for three seconds and are coalesced, with at least 60 seconds between automatic barriers while healthy audio remains. The receiver-only barrier can briefly interrupt the group, but keeps FFmpeg and the source URL open. It skips excluded, offline, individual and priority-sound hubs. Failed receivers do not block the available cohort. Retry history resets after 30 seconds of admitted playback. A cached timing audit requests the same barrier only after three fresh, plausible relative ALSA queue-change samples; stale, slow and impossible samples are rejected. No per-hub resampling or blind timer-driven reset is enabled. Acoustic alignment still needs listening/hardware validation. The existing manual resync service remains available. Restored playback retains its bounded initial-cohort wait, and group Stop releases suspended individual players.
 
-After FFmpeg completes a WAV normally, the integration keeps the path open for 500 ms before remote stop and playback restoration. This cushion was 400 ms in `0.36.0`; it does not apply to manual Stop, FFmpeg errors, radio or media-group playback.
+Local WAV completion is detected from the hub player exit status, polled every 500 ms. It no longer uses the old FFmpeg EOF cushion. Replacement and Stop target only the owned playback token and process identity. Explicit `play_url` WAVs download to hub RAM, not `/data`; stored WAVs require no download.
 
 For Routers, the individual Media Player and the shared M1S Media Group, volume controls, radio playback, metadata updates and the existing Aqara sound buttons are retained from the confirmed base.
 
@@ -132,7 +132,7 @@ Sound and media services reject a configured Coordinator before doing any work. 
 
 ## Validation and TEST status
 
-For `0.37.13`, see `TEST_REPORT.json`, `TEST_LOG.txt` and `VALIDATION.txt` for the 157 local automated tests. Batching tests verify identical ordered payloads for six members, individual playback, EOF, mute, Stop and recovery, plus 8.75 hours of simulated fixed-105-ms boundary arithmetic without drift. Existing tests cover the async group manager, network-loss scenarios, common prefill, priority/Stop races and Coordinator guards. No `0.37.13` installation or acoustic test was performed by this build. Simulation is not proof of synchronization or an overnight hardware test.
+See `TEST_REPORT.json`, `TEST_LOG.txt` and `VALIDATION.txt` for this version's actual automated results. Tests cover ordered transport, common-clock recovery, priority and cancellation, volume aliases, local gain acknowledgement, space checks and Coordinator isolation. Earlier listening on one hub confirmed local volume changes, but did not validate this final package, its WAV conversion wrapper, latency, or multiroom acoustic synchronization. Simulation is not proof of an overnight hardware test.
 
 The following is historical validation of the `0.37.5` base, not a new hardware test for this release:
 
@@ -157,4 +157,4 @@ The base release recorded Router agent `1.1.1` installation on `.200-.209` and `
 
 ## Rollback
 
-If Router MQTT IO does not behave correctly, run the Router kit rollback, restore integration `0.35.0`, and restart Home Assistant. The Coordinator kit retains its own rollback. Replacing the integration does not alter firmware, Zigbee network data or sound files.
+For this audio prototype, restore the backed-up `0.37.13` component and restart Home Assistant. The older receiver paths do not select the versioned local ALSA configuration; unused helper files may remain under `/data/m1s_audio_03714`. This build changes no firmware, Zigbee data or original WAV files. Router MQTT and Coordinator kit rollbacks remain separate procedures.

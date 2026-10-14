@@ -19,7 +19,7 @@ SOURCE = (
     / "media_player.py"
 )
 GROUP_SOURCE = SOURCE.with_name("media_group.py")
-RECEIVER_COMMANDS_SHA256 = "483f360e7ede714bea7faef9b5c208e1cf52046a6ab1fc54261fe5c630214efe"
+RECEIVER_COMMANDS_SHA256 = "ef2261bf9bbc5b686f763579bf9d6b4649e86a58f03d93bb2d6b5489a00a9967"
 
 
 def evaluated_constants(source: Path = SOURCE) -> dict[str, object]:

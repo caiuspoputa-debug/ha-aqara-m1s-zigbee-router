@@ -45,6 +45,7 @@ sys.modules[module.__name__] = module
 module.__dict__.update({
     "MediaType": types.SimpleNamespace(MUSIC="music"),
     "DOMAIN": "aqara_m1s_zigbee_router",
+    "DATA_RADIO_PLAYERS": "radio_players",
     "CohortAlignmentGate": POLICY.CohortAlignmentGate,
     "ReceiverTimingGuard": POLICY.ReceiverTimingGuard,
     "COHORT_ALIGNMENT_COOLDOWN_SECONDS": POLICY.COHORT_ALIGNMENT_COOLDOWN_SECONDS,
@@ -179,6 +180,7 @@ class ManagerAlignmentTests(unittest.IsolatedAsyncioTestCase):
             coordinator=types.SimpleNamespace(last_update_success=True),
             writer=FakeWriter(), generation=1, ready_for_fanout=ready,
             shared_cursor=100 if ready else None,
+            local_audio=types.SimpleNamespace(async_prepare=AsyncMock(), request_gain=Mock()),
         )
         self.manager.members[member.entry_id] = member
         return member

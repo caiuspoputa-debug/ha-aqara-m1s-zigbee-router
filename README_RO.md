@@ -1,17 +1,17 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.13 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.14 TEST
 
 Integrare locală Home Assistant pentru huburi identice Aqara M1S Gen 1 / JN5189 pregătite fie ca Routere Zigbee, fie drept Coordinator Zigbee-on-Host. Rolul activ este detectat din runtime-ul hubului și salvat în intrarea Home Assistant; nu este stabilit niciodată după adresa IP.
 
-Versiunea `0.37.13 TEST` seteaza trimiterea audio TCP la 105 ms fix pentru grup si individuale: trei perioade PCM intregi de 35 ms, cu 13.440 octeti pe bloc. Ambele trasee pastreaza calculul comun al limitelor, fara alt cronometru si fara eroare de rotunjire cumulativa. Citeste `AUDIO_TRANSPORT_RO.md`.
+Versiunea `0.37.14 TEST` reda WAV-urile direct de pe Router si aplica acelasi volum ALSA local pentru WAV, radio/media individual si receiverele grupului. WAV-ul nu mai trece prin Home Assistant sau FFmpeg. Pentru radio/media, FFmpeg ramane decodorul, nu reglajul de volum. Citeste `LOCAL_AUDIO_RO.md` pentru migrare, cerinte si verificarea live ramasa.
 
-Ceasul comun de 35 ms, formatul, comenzile ALSA, preumplerea, bufferele si procesarea volumului raman ca in `0.37.12`; se schimba doar tinta trimiterilor si minimul diagnostic. Corectia Stop din `0.37.11` si recuperarea sunetelor din `0.37.8` sunt pastrate. Este o varianta de comparatie pentru intreruperile raportate, nu o rezolvare demonstrata sau o garantie de sincronizare ori eliminare a zgomotului. Dupa instalare este necesara repornirea Home Assistant.
+Ceasul comun de 35 ms, blocurile de 105 ms, istoria PCM, preumplerea, bufferele, corectia Stop si regulile de prioritate sunt pastrate. Comenzile receiverelor selecteaza acum ruta ALSA cu volum local. Pachetul este un prototip: integrarea completa si sincronizarea acustica de grup nu sunt inca verificate live. Acest build nu a instalat nimic pe HA. Dupa instalare este necesara repornirea Home Assistant.
 
 ## Cerințe
 
 - Home Assistant `2024.1.0` sau mai nou.
 - Acces prin rețeaua locală de la Home Assistant la hub.
 - Telnet activ pe hub; conexiunea implicită folosește portul `23`, utilizatorul `admin` și parolă goală.
-- Un setup Router compatibil; pentru comenzile WAV rapide prin MQTT este necesar Router MQTT IO `1.1.1`. Routerele fără această capabilitate păstrează automat traseul WAV Telnet existent.
+- Router MIPS32 little-endian compatibil, cu `aplay`, ALSA `plug`/`softvol`, `/dev/snd/controlC0`, `base64`, `sha256sum` si cel putin 8 MiB liberi pe `/data` dupa instalarea utilitarelor audio. Transferul initial dureaza mai mult; apoi redarea WAV trimite numai comenzi. Daca reglajul local esueaza, nu se porneste automat o ruta fara atenuare.
 - Un coordonator deja convertit, cu managerii existenți pentru IP static/Wi-Fi; este recomandat profilul Only Coordinator `1.0.0`. Integrarea nu instalează profilul și nu schimbă serviciile de pe hub.
 - Un broker MQTT accesibil prin adresa sa LAN pentru butonul fizic, configurarea comună și IO-ul routerelor. Agentul MQTT auxiliar al coordonatorului nu este folosit.
 - Zigbee2MQTT cu adaptorul `zoh` atunci când hubul este folosit drept Coordinator.
@@ -33,7 +33,7 @@ Domeniul intern rămâne `aqara_m1s_zigbee_router`. Diagnosticele păstrate și 
 | Transport Zigbee | Runtime-ul existent JN5189 Router | Zigbee-on-Host prin `tcp://IP_HUB:1886` |
 | Ring Light | MQTT persistent către A5; fallback vechi numai înainte de activarea upgrade-ului | Nu este expus |
 | Illuminance | Stare MQTT retained; A6 serializat pe hub la 30 de secunde | Nu este expus |
-| WAV stocat | Pregătire/oprire prin MQTT cu agent `1.1.1`; fallback Telnet automat | Nu este expus; serviciile WAV vechi sunt blocate |
+| WAV stocat | Redare locala directa, cu volumul ALSA comun; numai comenzi prin Telnet | Nu este expus; serviciile WAV vechi sunt blocate |
 | Media / apartenență grup | Redare individuală și de grup existentă | Nu se creează player sau membru în grup |
 | Conectare la alt coordinator | Disponibilă cu confirmare explicită | Ascunsă și blocată |
 | Coordinator ON/OFF | Nu se aplică | Eliminat intenționat |
@@ -49,7 +49,7 @@ Acțiunea Routerului de conectare la alt coordinator rămâne explicită. Integr
 - Un mesaj retained cu rol `coordinator` este ignorat de un Router și invers.
 - Dacă agentul este configurat dar indisponibil, numai Ring Light, luxul și diagnosticele MQTT devin indisponibile; integrarea nu încearcă automat UART-ul vechi peste agent.
 - Disponibilitatea generală a Routerului continuă să folosească verificarea LAN ușoară existentă. Astfel o problemă a brokerului MQTT nu scoate automat playerul din grup și nu schimbă sincronizarea audio.
-- Agentul Router primește numai pregătirea și oprirea receiverului WAV local. Radio, play/pause media, volumul, mute, FFmpeg, fluxul PCM și sincronizarea grupului nu sunt mutate în agent.
+- Agentul Router isi pastreaza functiile IO. Noua redare WAV nu mai foloseste pregatirea vechiului receiver MQTT: comenzile WAV si de volum folosesc Telnet izolat. Decodarea radioului si ceasul grupului raman in Home Assistant.
 
 ## Coordonator dedicat
 
@@ -71,13 +71,13 @@ serial:
 
 Canalul Zigbee, PAN-ul, cheia de rețea și baza de date cu dispozitive rămân setări Zigbee2MQTT; această integrare nu le înlocuiește.
 
-## Entități Router (neschimbate)
+## Entități Router
 
 - **Ring Light**, cu culoare RGB și luminozitate.
 - **Illuminance**, cu atributele `adc_raw`, `millivolts` și sursa specifică rolului.
 - **Media Player** pentru streamuri și redare locală.
 - **M1S Media Group** și **Include in M1S Media Group** pentru redare sincronizată pe huburile selectate.
-- **Sound Playback Volume**, **Fine Volume Trim** și selecția **Sound**.
+- **Hub Volume**, cu ID-ul unic al fostului Sound Playback Volume, **Fine Volume Trim** si selectia **Sound**. Numarul si sliderul media individual controleaza acelasi volum. Automatizarile vechi care schimbau volumul WAV schimba acum si radioul. La restart se restaureaza nivelul media playerului, nu vechea valoare separata WAV.
 - Câte un buton pentru fiecare sunet WAV detectat care nu este sunet de sistem.
 - Evenimente **Physical Button**: click, de la dublu până la zece clickuri, început HOLD, repetare și eliberare.
 - **Hub Connectivity**, **Hub Temperature**, **WiFi IP**, starea proceselor HomeKit, MQTT și Telnet.
@@ -108,13 +108,13 @@ Starea `applied` înseamnă că configurația a fost scrisă cu succes pe hub; c
 - Instalarea, pornirea și migrarea nu șterg automat niciun sunet.
 - După un upload sau o ștergere reușită, integrarea se reîncarcă și reconstruiește entitățile sunetelor.
 
-Pe Router, pentru un WAV local se păstrează prioritatea confirmată: redarea individuală sau de grup este suspendată, WAV-ul rulează prin traseul existent TCP/FFmpeg/aplay, apoi redarea memorată este reluată. Coordonatorul nu mai participă la redarea WAV, individuală sau de grup. MQTT nu transportă audio radio/grup și nu modifică sincronizarea routerelor.
+Pentru WAV se foloseste acelasi arbitru de prioritate: opreste temporar audio-ul numai pe hubul respectiv, ruleaza `aplay` direct pe fisierul existent cu volumul local comun si reia redarea doar daca intentia curenta o permite. Coordinatorul nu participa. Nu se creeaza copii WAV. Regulile existente au teste de regresie, dar predarea completa pe noua ruta necesita verificare live.
 
 Dacă o sursă individuală nu mai livrează PCM, entitatea afișează acum `buffering`, oprește receiverul remote și îl reconstruiește numai după revenirea datelor PCM reale. La un rebase sunt memorate întârzierea, durata ultimei scrieri TCP și cauza probabilă (`tcp_drain_timeout`, `tcp_drain_slow` sau `ha_scheduler_or_other_await`). Protecția la oprirea ordonată continuă să oprească receiverul individual înainte de închiderea writerului local și nu adaugă watchdog activ pe hub.
 
 Grupul păstrează o singură istorie PCM și un singur ceas. Primul timeout TCP de 1,25 secunde este tolerat; defecțiunile confirmate izolează doar hubul afectat. Hubul revenit așteaptă fără audio vechi o pornire comună. Cererile se grupează timp de trei secunde, cu minimum 60 de secunde între alinieri cât timp există receptoare sănătoase. Pornirea comună poate produce o scurtă pauză, dar nu redeschide sursa FFmpeg. Huburile excluse, offline, folosite individual sau pentru WAV nu sunt preluate. O încercare eșuată nu blochează celelalte receptoare. Contorul încercărilor se resetează după 30 de secunde de redare admisă. Auditul folosește probe ALSA deja colectate și cere trei modificări relative plauzibile și noi; probele vechi, lente sau imposibile sunt ignorate. Nu se face resampling separat și nu se resetează grupul orbește după un cronometru. Alinierea auzită trebuie verificată pe huburile reale. Serviciul manual de resincronizare și pornirea inițială limitată în timp rămân disponibile.
 
-După ce FFmpeg termină normal un WAV, integrarea păstrează traseul încă 500 ms înainte de comanda de oprire și de reluarea redării anterioare. Această rezervă era 400 ms în `0.36.0`; nu se aplică la Stop manual, eroare FFmpeg, radio sau grupul media.
+Finalul WAV este detectat din iesirea playerului local, verificata la 500 ms; vechea rezerva dupa EOF FFmpeg nu mai este folosita. Stop si inlocuirea tintesc doar tokenul si procesul detinut. Un WAV cerut prin `play_url` este descarcat in RAM pe hub, nu pe `/data`; WAV-ul deja memorat nu necesita descarcare.
 
 Pentru Routere, Media Player individual și grupul comun M1S Media Group, controalele de volum, radioul, actualizarea metadatelor și butoanele pentru sunetele Aqara sunt păstrate din baza confirmată.
 
@@ -132,14 +132,12 @@ Serviciile media/WAV refuză un coordonator configurat ca țintă. Serviciile su
 
 ## Validare și statut TEST
 
-Pentru `0.37.13`, cele 157 de teste locale sunt documentate in `VALIDATION.txt`,
-`TEST_REPORT.json` si `TEST_LOG.txt`. Testele transportului verifica aceiasi
-octeti in aceeasi ordine pentru sase membri, individuale, EOF, mute, Stop si
-recuperare, plus calculul exact al limitelor de 105 ms pentru 8,75 ore simulate.
-Testele existente pentru managerul asincron, pierderi, reveniri, pornire comuna,
-Stop/WAV si protectiile Coordinatorului sunt pastrate. Acest build nu a instalat
-`0.37.13` pe HA si nu a efectuat o proba acustica.
-Nu este un test real peste noapte; versiunea ramane TEST.
+Rezultatele automate reale ale acestei versiuni sunt in `VALIDATION.txt`,
+`TEST_REPORT.json` si `TEST_LOG.txt`: transport, ceas comun, recuperare,
+prioritate/anulare, aliasuri de volum, confirmarea reglajului local,
+spatiu liber si izolarea Coordinatorului. Ascultarea anterioara pe un singur
+hub a confirmat reglajul local, nu pachetul final, conversia WAV, latenta sau
+sincronizarea acustica a grupului. Nu este un test real peste noapte.
 
 ### Istoric al bazei 0.37.5 (nu funcții active pe coordonatorul dedicat)
 
@@ -167,4 +165,4 @@ Istoric pentru baza anterioară: agentul Router `1.1.1` fusese instalat pe `.200
 
 ## Revenire
 
-Dacă MQTT IO pentru Router nu funcționează corect, rulează rollbackul din kitul Router, restaurează integrarea `0.35.0` și repornește Home Assistant. Pentru Coordinator rămâne rollbackul kitului Coordinator. Înlocuirea integrării nu modifică firmware-ul, datele rețelei Zigbee sau fișierele audio.
+Pentru acest prototip audio, restaureaza copia integrarii `0.37.13` si reporneste HA. Receiverele vechi nu selecteaza noua configuratie ALSA; utilitarele nefolosite pot ramane in `/data/m1s_audio_03714`. Nu se schimba firmware-ul, Zigbee sau WAV-urile originale. Rollbackul kiturilor Router MQTT si Coordinator ramane separat.

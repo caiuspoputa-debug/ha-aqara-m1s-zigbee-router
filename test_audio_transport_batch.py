@@ -117,11 +117,11 @@ class GroupBatchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(b"".join(member.writer.writes), expected)
             self.assertEqual([len(b) for b in member.writer.writes], [13440] * 6 + [4480])
 
-    async def test_muted_member_receives_same_length_zero_samples(self):
+    async def test_muted_member_still_receives_the_identical_common_timeline(self):
         self.members[0].muted_in_group = True
         expected = await self.feed(3)
         await settle(lambda: all(m.writer.writes for m in self.members))
-        self.assertEqual(self.members[0].writer.writes, [bytes(len(expected))])
+        self.assertEqual(self.members[0].writer.writes, [expected])
         self.assertEqual(self.members[1].writer.writes, [expected])
 
     async def test_old_generation_and_stop_do_not_release_tail(self):
@@ -197,7 +197,7 @@ class SingleBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(b"".join(self.writer.writes),
                          b"".join(bytes([i]) * 4480 for i in range(19)))
 
-    async def test_muted_gain_produces_only_zero(self):
+    async def test_injected_silence_preserves_transport_lengths(self):
         self.player._apply_live_pcm_gain.side_effect = lambda pcm: bytes(len(pcm))
         for _ in range(3):
             await self.write(self.chunk, stage="playout")

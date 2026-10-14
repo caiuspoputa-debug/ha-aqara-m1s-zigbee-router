@@ -1,5 +1,9 @@
 # Verificare dupa instalare - 12 octombrie 2026
 
+Nota 0.37.14: raportul de mai jos este numai istoric. Noua ruta cu WAV local
+si volum ALSA comun nu a fost instalata sau validata de grup prin acest build.
+Citeste LOCAL_AUDIO_RO.md si TEST_REPORT.json pentru situatia actuala.
+
 Raport istoric pentru 0.37.9. Versiunea 0.37.13 este pregatita ca arhiva GitHub;
 aceste rezultate vechi nu sunt o validare a intervalului nou de 105 ms.
 In verificarea din 14 octombrie a fost confirmata 0.37.12 activa la 300 ms;

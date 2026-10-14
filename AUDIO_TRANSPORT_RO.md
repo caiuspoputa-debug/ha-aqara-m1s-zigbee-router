@@ -1,4 +1,4 @@
-# Audio TCP - 0.37.13 TEST
+# Audio TCP - 0.37.14 TEST
 
 Grupul si player-ele individuale au acum blocuri TCP fixe de 105 ms,
 fata de media de 300 ms in 0.37.12. Ceasul PCM ramane la 35 ms: fiecare
@@ -8,8 +8,10 @@ si fara eroare de rotunjire cumulativa. Aceeasi cantitate de sunet este
 trimisa intr-o secunda. TCP si Wi-Fi pot fragmenta un bloc in mai multe pachete;
 nu controlam direct pachetele radio sau traficul celorlalte servicii.
 
-Ceasul audio ramane la 35 ms. Formatul S32_LE, 32 kHz, mono, volumul, rampa de
-volum, comenzile ALSA si preumplerea de 1,4 secunde sunt cele din 0.37.12.
+Ceasul audio ramane la 35 ms. Formatul S32_LE, 32 kHz, mono si preumplerea
+de 1,4 secunde raman cele din 0.37.13. In 0.37.14, gain-ul se aplica pe hub;
+receiverul selecteaza ruta ALSA `m1s_media`, cu aceleasi argumente de timing
+si buffer. Pentru migratia volumului si probele ramase citeste LOCAL_AUDIO_RO.md.
 Grupul pastreaza o singura istorie PCM si aceleasi limite de secventa pentru
 toti membrii. Nu se adauga resampling sau cozi individuale pentru grup.
 
@@ -22,7 +24,7 @@ o influenta a activitatii de retea. Ele nu separa definitiv driverul Wi-Fi,
 alimentarea si cuplajul analogic. Blocurile rare au parut ceva mai linistite
 in comparatia controlata, dar eliminarea zgomotului nu este garantata.
 
-Varianta 105 ms este o proba pentru intreruperile observate la 300 ms.
+Intervalul 105 ms este pastrat din proba pentru intreruperile de la 300 ms.
 Pe hubul inspectat, ALSA avea 4480 de cadre la 32 kHz, adica 140 ms,
 chiar daca receiverul solicita 2 secunde. Aceasta este valoarea activa,
 nu o limita maxima hardware demonstrata. Alegerea 105 ms nu garanteaza
@@ -38,4 +40,4 @@ Testele software confirma ordinea octetilor si ciclul de viata, nu acustica.
 
 Instalarea necesita repornirea Home Assistant pentru incarcarea modulelor
 Python noi. Nu se schimba firmware-ul huburilor, IP-urile sau reteaua Zigbee.
-Pentru revenire se restaureaza copia integrarii 0.37.12 si se reporneste HA.
+Pentru revenire se restaureaza copia integrarii 0.37.13 si se reporneste HA.
