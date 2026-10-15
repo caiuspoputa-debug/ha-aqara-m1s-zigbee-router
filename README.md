@@ -1,4 +1,16 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.16 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.17 TEST
+
+Version **0.37.17 TEST** adds optional coordinator/Zigbee2MQTT supervision:
+confirmed stop on coordinator loss, isolated RCP restart and Spinel/PHY preflight,
+then gated add-on start and fresh MQTT confirmation. Configure it on the dedicated
+coordinator entry. It is disabled until the exact add-on and MQTT topic are selected.
+
+Read [COORDINATOR_GUARD_RO.md](COORDINATOR_GUARD_RO.md) for installation,
+activation, rollback, timing and hardware acceptance tests. No Home Assistant
+installation or real-hardware validation was performed for this release.
+Audio runtime files are byte-identical to 0.37.16.
+
+## Previous release / Versiunea precedenta
 
 Version `0.37.16 TEST` adds an atomic notification-volume request: media yields,
 the hub confirms ALSA is closed, temporary WAV volume is applied, and normal

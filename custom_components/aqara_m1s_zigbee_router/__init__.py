@@ -214,6 +214,10 @@ async def async_setup_entry(
     hass.data[DOMAIN][DATA_COORDINATORS][
         entry.entry_id
     ] = coordinator
+    if coordinator_only:
+        from .z2m_guard import DATA_GUARDS, Z2MGuard
+        guard = Z2MGuard(hass, entry, client)
+        hass.data[DOMAIN].setdefault(DATA_GUARDS, {})[entry.entry_id] = guard
     coordinator_mqtt = None
     if not coordinator_only:
         coordinator_mqtt = M1SHubMQTTIO(hass, client, coordinator)
@@ -389,6 +393,8 @@ async def async_setup_entry(
     # listeners.  This guarantees power-off detection and automatic recovery
     # after a cold boot without requiring an integration Reload.
     coordinator.async_start_watchdog()
+    if coordinator_only:
+        await guard.async_initialize()
 
     async def _get_target(
         call: ServiceCall,
@@ -561,6 +567,11 @@ async def async_unload_entry(
     )
     if not unloaded:
         return False
+
+    from .z2m_guard import DATA_GUARDS
+    guard = hass.data[DOMAIN].get(DATA_GUARDS, {}).pop(entry.entry_id, None)
+    if guard is not None:
+        await guard.async_shutdown()
 
     coordinator_mqtt = hass.data[DOMAIN][DATA_COORDINATOR_MQTT].pop(
         entry.entry_id, None

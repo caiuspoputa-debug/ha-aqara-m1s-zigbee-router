@@ -221,16 +221,16 @@ class OptionsTests(unittest.IsolatedAsyncioTestCase):
                                           async_add_executor_job=AsyncMock(side_effect=lambda fn, *args: fn(*args)))
         return flow, client
 
-    async def test_coordinator_menu_is_exactly_two_items_without_hub_calls(self):
+    async def test_coordinator_menu_includes_supervision_without_hub_calls(self):
         flow, client = self.make_flow()
         result = await flow.async_step_init()
-        self.assertEqual(result["menu_options"], ["network_address", "change_wifi"])
+        self.assertEqual(result["menu_options"], ["network_address", "change_wifi", "z2m_supervision"])
         flow.hass.async_add_executor_job.assert_not_awaited()
         client.list_sounds.assert_not_called()
 
     async def test_saved_role_preserved_when_runtime_is_unavailable(self):
         flow, client = self.make_flow("router", "coordinator")
-        self.assertEqual((await flow.async_step_init())["menu_options"], list(profile.COORDINATOR_OPTIONS))
+        self.assertEqual((await flow.async_step_init())["menu_options"], [*profile.COORDINATOR_OPTIONS, "z2m_supervision"])
         client.coordinator_runtime_status.assert_not_called()
 
     async def test_sound_and_rejoin_steps_blocked_even_when_invoked_directly(self):
@@ -335,6 +335,9 @@ class TriggerTests(unittest.IsolatedAsyncioTestCase):
 
 class SetupTests(unittest.IsolatedAsyncioTestCase):
     async def setup_integration(self, role="coordinator", offline=False, old_fine_trim=False):
+        guard_module = load("z2m_guard")
+        self.enterContext(patch.object(guard_module, "Z2MGuard", return_value=types.SimpleNamespace(
+            async_initialize=AsyncMock(), async_shutdown=AsyncMock())))
         item = entry(role)
         client = Mock(zigbee_role=role)
         client.host = item.data["host"]

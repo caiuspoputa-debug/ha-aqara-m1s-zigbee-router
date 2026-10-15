@@ -12,6 +12,8 @@
     "file_upload",
     "mqtt"
   ],
-  "requirements": ["paho-mqtt==2.1.0"],
-  "version": "0.37.16"
+  "requirements": [
+    "paho-mqtt==2.1.0"
+  ],
+  "version": "0.37.17"
 }

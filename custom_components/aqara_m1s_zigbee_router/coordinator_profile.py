@@ -22,7 +22,7 @@ DIAGNOSTICS_COMMAND = (
 
 
 def coordinator_entity_unique_ids(entry_id: str) -> set[str]:
-    return {f"{entry_id}_{key}" for key in (*COORDINATOR_SENSOR_KEYS, "hub_connectivity")}
+    return {f"{entry_id}_{key}" for key in (*COORDINATOR_SENSOR_KEYS, "hub_connectivity", "z2m_ready")}
 
 
 def obsolete_coordinator_entities(entities, entry_id: str, domain: str) -> list[str]:

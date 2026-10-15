@@ -271,7 +271,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
 
     async def async_step_init(self, user_input=None):
         if self._coordinator_only:
-            return self.async_show_menu(step_id="init", menu_options=list(COORDINATOR_OPTIONS))
+            return self.async_show_menu(step_id="init", menu_options=[*COORDINATOR_OPTIONS, "z2m_supervision"])
         menu_options = ["shared_mqtt", "network_address", "change_wifi", "upload_sound"]
         try:
             zigbee_status = await self.hass.async_add_executor_job(
@@ -280,7 +280,7 @@ class AqaraM1SZigbeeRouterOptionsFlow(
         except (OSError, RuntimeError):
             zigbee_status = {"role": "router"}
         if zigbee_status.get("role") == "coordinator":
-            return self.async_show_menu(step_id="init", menu_options=list(COORDINATOR_OPTIONS))
+            return self.async_show_menu(step_id="init", menu_options=[*COORDINATOR_OPTIONS, "z2m_supervision"])
         try:
             sounds = await self.hass.async_add_executor_job(
                 self._client.list_sounds
@@ -299,6 +299,33 @@ class AqaraM1SZigbeeRouterOptionsFlow(
             step_id="init",
             menu_options=menu_options,
         )
+
+    async def async_step_z2m_supervision(self, user_input=None):
+        if not self._coordinator_only:
+            return self.async_abort(reason="coordinator_only")
+        from .z2m_guard import DATA_GUARDS
+        guard = self.hass.data[DOMAIN].get(DATA_GUARDS, {}).get(self.config_entry.entry_id)
+        if guard is None:
+            return self.async_abort(reason="z2m_guard_unavailable")
+        errors = {}
+        if user_input is not None:
+            try:
+                await guard.async_configure(user_input)
+            except Exception as exc:
+                _LOGGER.warning("M1S Zigbee2MQTT supervision configuration failed: %s", exc)
+                errors["base"] = "z2m_guard_configuration_failed"
+            else:
+                return self.async_create_entry(title="", data=dict(self.config_entry.options))
+        current = guard.settings
+        return self.async_show_form(
+            step_id="z2m_supervision", errors=errors,
+            data_schema=vol.Schema({
+                vol.Required("enabled", default=current["enabled"]): bool,
+                vol.Required("paused", default=current["paused"]): bool,
+                vol.Required("addon_slug", default=current["addon_slug"]): str,
+                vol.Required("base_topic", default=current["base_topic"]): str,
+                vol.Required("rcp_port", default=current["rcp_port"]): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+            }))
 
     async def async_step_shared_mqtt(self, user_input=None):
         if self._coordinator_only:

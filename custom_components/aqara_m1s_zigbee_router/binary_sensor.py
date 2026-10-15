@@ -20,7 +20,13 @@ async def async_setup_entry(
 ) -> None:
     client = hass.data[DOMAIN][DATA_CLIENTS][entry.entry_id]
     coordinator = hass.data[DOMAIN][DATA_COORDINATORS][entry.entry_id]
-    async_add_entities([AqaraM1SHubConnectivity(entry, client, coordinator)])
+    entities = [AqaraM1SHubConnectivity(entry, client, coordinator)]
+    if client.zigbee_role == "coordinator":
+        from .z2m_guard import DATA_GUARDS
+        guard = hass.data[DOMAIN].get(DATA_GUARDS, {}).get(entry.entry_id)
+        if guard is not None:
+            entities.append(AqaraM1SZ2MReady(entry, guard))
+    async_add_entities(entities)
 
 
 class AqaraM1SHubConnectivity(CoordinatorEntity, BinarySensorEntity):
@@ -50,3 +56,33 @@ class AqaraM1SHubConnectivity(CoordinatorEntity, BinarySensorEntity):
     def extra_state_attributes(self) -> dict[str, str]:
         """Expose which independent path currently proves connectivity."""
         return {"connection_source": self.coordinator.connectivity_source}
+
+
+class AqaraM1SZ2MReady(BinarySensorEntity):
+    """Separate operational readiness from Linux/Telnet connectivity."""
+
+    _attr_name = "Zigbee2MQTT Ready"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_icon = "mdi:zigbee"
+    _attr_should_poll = False
+
+    def __init__(self, entry, guard):
+        self.guard = guard
+        self._attr_unique_id = f"{entry.entry_id}_z2m_ready"
+        self._attr_device_info = device_info(entry)
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        self.async_on_remove(self.guard.listen(self.async_write_ha_state))
+
+    @property
+    def available(self):
+        return True
+
+    @property
+    def is_on(self):
+        return self.guard.ready
+
+    @property
+    def extra_state_attributes(self):
+        return self.guard.attributes

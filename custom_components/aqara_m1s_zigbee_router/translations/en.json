@@ -55,7 +55,8 @@
           "finish": "Finalizare și închidere / Finish and close",
           "change_wifi": "Schimbă rețeaua Wi-Fi / Change Wi-Fi network",
           "network_address": "Adresă de rețea / Network address",
-          "shared_mqtt": "Shared MQTT - all hubs"
+          "shared_mqtt": "Shared MQTT - all hubs",
+          "z2m_supervision": "Supraveghere Zigbee2MQTT / Zigbee2MQTT supervision"
         }
       },
       "upload_sound": {
@@ -126,6 +127,17 @@
           "username": "Username",
           "password": "Password"
         }
+      },
+      "z2m_supervision": {
+        "title": "Supraveghere Zigbee2MQTT / Zigbee2MQTT supervision",
+        "description": "Controleaza numai suplimentul ales. Activarea seteaza pornirea lui pe manual si dezactiveaza watchdog-ul Supervisor; dezactivarea restabileste optiunile anterioare. La pierderea coordonatorului opreste Z2M; inainte de repornire reinitializeaza RCP si verifica Spinel/PHY. Pauza tine Z2M oprit. MQTT base topic trebuie sa coincida exact cu Z2M. Citeste COORDINATOR_GUARD_RO.md inainte de activare.",
+        "data": {
+          "enabled": "Activeaza supravegherea automata / Enable supervision",
+          "paused": "Pauza: tine Zigbee2MQTT oprit / Pause automatic start",
+          "addon_slug": "Identificatorul exact al suplimentului Zigbee2MQTT / Add-on slug",
+          "base_topic": "Topic MQTT de baza Zigbee2MQTT / MQTT base topic",
+          "rcp_port": "Port TCP RCP (1886 pe M1S) / RCP TCP port"
+        }
       }
     },
     "progress": {
@@ -157,12 +169,14 @@
       "network_already_current": "The selected IPv4 address is already the hub's current address.",
       "network_candidate_unreachable": "The temporary IPv4 address could not be verified. The hub will automatically return to its previous address.",
       "network_identity_mismatch": "The selected IPv4 address responds, but belongs to another device.",
-      "shared_mqtt_failed": "Invalid settings, unreachable broker, rejected login or storage failure. Active settings were not changed."
+      "shared_mqtt_failed": "Invalid settings, unreachable broker, rejected login or storage failure. Active settings were not changed.",
+      "z2m_guard_configuration_failed": "Configurare nereusita: verifica Supervisor, identificatorul suplimentului si legatura MQTT. Detalii in logul integrarii. / Check Supervisor, add-on slug and MQTT connection."
     },
     "abort": {
       "coordinator_only": "This Zigbee-only coordinator supports only network address and Wi-Fi configuration.",
       "no_managed_sounds": "No WAV files were found below /data/musics.",
-      "wifi_change_started": "Testul noii rețele Wi-Fi a fost pornit pe hub. Conexiunea poate cădea temporar. Hubul păstrează noua rețea numai după obținerea unui IPv4 proaspăt."
+      "wifi_change_started": "Testul noii rețele Wi-Fi a fost pornit pe hub. Conexiunea poate cădea temporar. Hubul păstrează noua rețea numai după obținerea unui IPv4 proaspăt.",
+      "z2m_guard_unavailable": "Supravegherea nu este incarcata. Reincarca integrarea. / Reload the integration."
     }
   },
   "device_automation": {

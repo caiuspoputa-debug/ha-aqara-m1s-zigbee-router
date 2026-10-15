@@ -1,3 +1,5 @@
+> 0.37.17 TEST adauga a sasea entitate, Zigbee2MQTT Ready, si meniul optional de supraveghere. Vezi COORDINATOR_GUARD_RO.md. Instructiunile istorice de mai jos preceda aceasta functie.
+
 # 0.37.7 TEST - coordonator dedicat, Routere pastrate
 
 Aceasta este actualizarea integrarii Home Assistant, pornind exact de la
