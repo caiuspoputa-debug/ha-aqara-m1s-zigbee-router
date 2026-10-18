@@ -1,21 +1,39 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.17 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.18 TEST
 
-Versiunea **0.37.17 TEST** adauga supravegherea optionala a coordonatorului
-si Zigbee2MQTT: stop confirmat la pierderea coordonatorului, reinitializare RCP si
-verificare Spinel/PHY cu Z2M oprit, apoi pornire conditionata si confirmare MQTT noua.
+Versiunea **0.37.18 TEST** separă alertele prioritare de mute pentru media.
+WAV-urile stocate, butoanele de sunet și WAV-urile prioritare prin `play_url`
+ocolesc implicit mute individual și mute de grup, fără să schimbe starea mute
+a vreunui player. `respect_mute: true` păstrează, pentru apelul respectiv,
+comportamentul anterior față de mute individual al hubului; mute de grup
+continuă să se aplice doar muzicii de grup.
 
-Citeste [COORDINATOR_GUARD_RO.md](COORDINATOR_GUARD_RO.md) pentru instalare,
-activare si revenire la configuratia anterioara. Supravegherea este dezactivata
-pana alegi exact suplimentul si topicul MQTT. Pachetul nu a fost instalat pe
-Home Assistant si nu este validat pe hardware. Codul audio este identic cu 0.37.16.
+`volume_percent` stabilește opțional volumul temporar al alertei. Dacă lipsește,
+se folosește valoarea curentă a sliderului individual al hubului înainte de mute;
+un slider la 0% înseamnă în continuare liniște. Volumul media curent este
+confirmat înainte de reluare/reintrare în grup. Schimbările manuale de volum și
+mute din timpul alertei rămân valabile după ea. Nu este necesară o secvență YAML
+de unmute/remute și nu se salvează schimbări artificiale de mute.
+Detalii: [SOUND_MUTE_POLICY_RO.md](SOUND_MUTE_POLICY_RO.md) și
+[NOTIFICATION_VOLUME_RO.md](NOTIFICATION_VOLUME_RO.md).
 
-## Previous release / Versiunea precedenta
+Supravegherea opțională Coordinator/Zigbee2MQTT din **0.37.17** este păstrată
+fără modificări; vezi [COORDINATOR_GUARD_RO.md](COORDINATOR_GUARD_RO.md).
+Pachetul TEST nu a fost instalat pe Home Assistant și nu este validat pe hardware.
+
+## Versiuni istorice
+
+`0.37.17 TEST` a introdus supravegherea opțională Coordinator/Zigbee2MQTT:
+stop confirmat la pierderea coordonatorului, reinițializare RCP și verificare
+Spinel/PHY cu Z2M oprit, apoi pornire condiționată și confirmare MQTT nouă.
+Rămâne dezactivată până alegi exact suplimentul și topicul MQTT pe intrarea
+Coordinator. Notele mai vechi de mai jos descriu versiunile respective;
+politica audio 0.37.18 de mai sus are prioritate în acest pachet.
 
 In `0.37.16 TEST`, cererea soneriei include volumul temporar: muzica cedeaza,
 hubul confirma ALSA inchis, se aplica volumul WAV-ului, iar volumul normal
 revine inainte de reluarea muzicii. Foloseste `play_sound.volume_percent`,
-nu `number.set_value` inainte de sonerie. Exemplele Living si Dormitor sunt
-in `automations/`; detalii in `NOTIFICATION_VOLUME_RO.md`.
+nu `number.set_value` inainte de sonerie. API-ul serviciului este descris in
+`NOTIFICATION_VOLUME_RO.md`.
 Reglajul separat Fine Volume Trim este eliminat, inclusiv offsetul vechi.
 ID-urile volumului principal, precizia 0.01%, mute, ceasul comun de 35 ms
 si blocurile de 105 ms raman neschimbate.
@@ -47,13 +65,27 @@ Ceasul comun de 35 ms, blocurile de 105 ms, istoria PCM, preumplerea, bufferele,
 
 ## Instalare și actualizare
 
-1. Copiază `custom_components/aqara_m1s_zigbee_router` în Home Assistant, sub `/config/custom_components/`.
-2. Repornește Home Assistant.
-3. Intră în **Setări > Dispozitive și servicii > Adaugă integrare** și selectează **Aqara M1S Zigbee Coordinator + Router**.
-4. Introdu adresa IPv4 a hubului, portul Telnet, utilizatorul și parola.
-5. Alege DHCP sau adresă statică atunci când fluxul de configurare solicită modul de rețea.
+1. Fă backup componentei de integrare instalate. Dezarhivează
+   pachetul și copiază folderul `custom_components/aqara_m1s_zigbee_router` în
+   `/config/custom_components/aqara_m1s_zigbee_router`, înlocuind fișierele vechi.
+   Nu crea încă un folder `custom_components` în interiorul celui existent.
+2. Repornește Home Assistant pentru încărcarea **0.37.18**. Reîncărcarea YAML
+   singură nu încarcă noul cod al integrării.
+3. Verifică dacă `manifest.json` al componentei instalate indică `0.37.18` și
+   dacă Home Assistant încarcă integrarea fără erori.
 
-Domeniul intern rămâne `aqara_m1s_zigbee_router`. Diagnosticele păstrate și entitățile routerelor își păstrează ID-urile unice; vechile entități media/IO ale coordonatorului sunt eliminate automat. MAC-ul Wi-Fi fizic este folosit drept identitate atunci când este disponibil, iar ultimul rol Zigbee confirmat este păstrat dacă hubul este offline. Fă backup HA înaintea actualizării; referințele vechi la media/IO ale coordonatorului trebuie eliminate și din carduri/automatizări.
+Păstrează intrările integrării, identitatea huburilor și dispozitivele Zigbee
+asociate; nu șterge integrarea și nu repeta asocierea. Integrarea și
+automatizările sunt livrate strict separat. Acest pachet de integrare nu conține
+fișiere de automatizare și instalarea lui nu instalează sau actualizează
+automatizări. Verificări API opționale: `SOUND_MUTE_POLICY_RO.md`.
+
+Apelurile WAV separate păstrează regula obișnuită de reluare media între apeluri;
+versiunea nu introduce o sesiune care să țină radioul suspendat și în pauzele
+dintre mai multe WAV-uri. Comenzile explicite de mute/unmute media sau de volum
+comun modifică în continuare playerul; politica alertei nu suprimă aceste apeluri.
+
+Domeniul intern rămâne `aqara_m1s_zigbee_router`. Diagnosticele păstrate și entitățile routerelor își păstrează ID-urile unice; vechile entități media/IO ale coordonatorului sunt eliminate automat. MAC-ul Wi-Fi fizic este folosit drept identitate atunci când este disponibil, iar ultimul rol Zigbee confirmat este păstrat dacă hubul este offline. Referințele la controale retrase din carduri sau automatizări sunt configurație externă și nu sunt schimbate de instalarea componentei.
 
 ## Comportament Router și Coordinator
 
@@ -137,7 +169,15 @@ Starea `applied` înseamnă că configurația a fost scrisă cu succes pe hub; c
 - Instalarea, pornirea și migrarea nu șterg automat niciun sunet.
 - După un upload sau o ștergere reușită, integrarea se reîncarcă și reconstruiește entitățile sunetelor.
 
-Pentru WAV se foloseste acelasi arbitru de prioritate: opreste temporar audio-ul numai pe hubul respectiv, ruleaza `aplay` direct pe fisierul existent cu volumul local comun si reia redarea doar daca intentia curenta o permite. Coordinatorul nu participa. Nu se creeaza copii WAV. Regulile existente au teste de regresie, dar predarea completa pe noua ruta necesita verificare live.
+Pentru WAV prioritar, arbitrul suspendă audio individual/de grup numai pe hubul
+respectiv, confirmă eliberarea dispozitivului audio și pornește alerta cu volumul
+temporar. Implicit ocolește mute pentru media fără să-i schimbe starea. La final,
+Stop, eroare sau anulare, volumul media curent trebuie restabilit înainte de
+reluare; intenția curentă decide dacă playerul se reia sau hubul reintră în grup.
+Sunetul nou deține propriul token, iar curățarea unei cereri vechi nu îl poate
+opri și nu poate aplica peste el volumul media. Coordinatorul nu participă.
+Nu se creează copii WAV pentru fiecare volum. Predarea pe huburile reale rămâne
+de verificat live.
 
 Dacă o sursă individuală nu mai livrează PCM, entitatea afișează acum `buffering`, oprește receiverul remote și îl reconstruiește numai după revenirea datelor PCM reale. La un rebase sunt memorate întârzierea, durata ultimei scrieri TCP și cauza probabilă (`tcp_drain_timeout`, `tcp_drain_slow` sau `ha_scheduler_or_other_await`). Protecția la oprirea ordonată continuă să oprească receiverul individual înainte de închiderea writerului local și nu adaugă watchdog activ pe hub.
 
@@ -157,16 +197,26 @@ Integrarea înregistrează serviciile `play_url`, `play_sound`, `upload_sound`, 
 
 Serviciile media/WAV refuză un coordonator configurat ca țintă. Serviciile sunt globale deoarece rămân necesare Routerelor; ele nu sunt comenzi expuse pe dispozitivul coordonator. `run_command` rămâne un instrument administrativ explicit, nu o izolare de securitate a hubului.
 
+`play_sound` și `play_url` pentru WAV prioritar acceptă opțional `volume_percent`
+și `respect_mute` (implicit `false`). Primul schimbă numai volumul alertei,
+nu sliderul media comun. Al doilea respectă mute individual pentru cererea
+respectivă; mute de grup rămâne control pentru media de grup. Butoanele de sunet
+folosesc politica implicită și sliderul individual curent. Exemplele și cazul
+sliderului la zero sunt în `SOUND_MUTE_POLICY_RO.md`.
+
 `delete_sound` necesită `confirm: true`, refuză orice cale de sub `/data/musics/music-us` și șterge celelalte căi WAV valide fără să creeze backup. Dacă sunt configurate mai multe huburi, indică parametrul `host` pentru serviciile de sunet adresate unui hub anume.
 
 ## Validare și statut TEST
 
-Rezultatele automate reale ale acestei versiuni sunt in `VALIDATION.txt`,
-`TEST_REPORT.json` si `TEST_LOG.txt`: transport, ceas comun, recuperare,
-prioritate/anulare, aliasuri de volum, confirmarea reglajului local,
-spatiu liber si izolarea Coordinatorului. Ascultarea anterioara pe un singur
-hub a confirmat reglajul local, nu pachetul final, conversia WAV, latenta sau
-sincronizarea acustica a grupului. Nu este un test real peste noapte.
+`VALIDATION.txt` indică starea curentă a validării și identifică rularea din
+`TEST_REPORT.json` / `TEST_LOG.txt`. Un raport copiat din pachetul anterior este
+istoric până la înlocuirea lui cu o rulare 0.37.18. Acest build nu a fost instalat
+pe HA, nu a repornit HA și nu a fost testat audio live. Politica mute nouă,
+restaurarea după modificări manuale, înlocuirea/anularea sunetelor, recuperarea
+ceasului comun și supravegherea Coordinator păstrată necesită rularea locală
+corespunzătoare; predarea auzită și sincronizarea necesită huburile reale.
+Ascultarea anterioară pe un singur hub nu validează acest pachet final și nu
+reprezintă un test real peste noapte.
 
 ### Istoric al bazei 0.37.5 (nu funcții active pe coordonatorul dedicat)
 
@@ -183,8 +233,8 @@ Sursa `0.37.5` a trecut:
   pierderea dovedită a poziției comune.
 - Compilarea Python și parsarea fișierelor JSON/YAML.
 - Verificarea de sintaxă a tuturor scripturilor Router și compilarea agentului static MIPS32 cu avertismente tratate ca erori.
-- Toate cele 66 de teste izolate trec. Hashurile verificate pentru ambele
-  transporturi audio sunt notate în `VALIDATION.txt`.
+- Baza respectivă a trecut toate cele 66 de teste izolate; hashurile ei audio
+  aparțin validării acelei versiuni, nu rezultatului curent 0.37.18.
 
 Uploadul a fost verificat și pe Routerul `192.168.0.221`: 128.044 octeți în 5,46 secunde, MD5 identic, progres intermediar și ștergerea confirmată a fișierului temporar.
 
@@ -194,4 +244,10 @@ Istoric pentru baza anterioară: agentul Router `1.1.1` fusese instalat pe `.200
 
 ## Revenire
 
-Pentru acest prototip audio, restaureaza copia integrarii `0.37.13` si reporneste HA. Receiverele vechi nu selecteaza noua configuratie ALSA; utilitarele nefolosite pot ramane in `/data/m1s_audio_03714`. Nu se schimba firmware-ul, Zigbee sau WAV-urile originale. Rollbackul kiturilor Router MQTT si Coordinator ramane separat.
+Restaurează componenta anterioară din backup (în mod obișnuit `0.37.17` pentru
+această actualizare) și repornește Home Assistant. Verifică versiunea instalată
+și încărcarea ei fără erori. Versiunile vechi nu au ocolirea mute implicită
+sau opțiunea nouă `respect_mute`. Păstrează intrările integrării și asocierile
+Zigbee. Pachetul nu schimbă firmware-ul, datele Zigbee sau WAV-urile originale.
+Revenirea kiturilor Router MQTT și Coordinator rămâne separată. Dacă modifici
+și supravegherea opțională, urmează `COORDINATOR_GUARD_RO.md`.

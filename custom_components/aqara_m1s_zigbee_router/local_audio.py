@@ -86,6 +86,7 @@ class AqaraM1SLocalAudio:
         self.desired_gain = 0.05
         self._sound_gain: float | None = None
         self._sound_muted = False
+        self._sound_respect_mute = True
         self.applied_level: int | None = None
         self.last_error: str | None = None
 
@@ -94,7 +95,7 @@ class AqaraM1SLocalAudio:
         return gain_to_level(self._target_gain()) != self.applied_level
 
     def _target_gain(self) -> float:
-        if self._sound_gain is not None and self._sound_muted:
+        if self._sound_gain is not None and self._sound_respect_mute and self._sound_muted:
             return 0.0
         return self.desired_gain if self._sound_gain is None else self._sound_gain
 
@@ -188,9 +189,12 @@ class AqaraM1SLocalAudio:
         self.desired_gain = max(0.0, min(1.0, float(gain)))
         await self._async_prepare_gain()
 
-    async def async_prepare_sound(self, gain: float, *, muted: bool = False) -> None:
-        """Hold a notification-only gain after the media receiver has stopped."""
+    async def async_prepare_sound(self, gain: float, *, muted: bool = False,
+                                  respect_mute: bool = True) -> None:
+        """Hold a sound gain and its own mute policy after media has yielded."""
         gain_to_level(float(gain))
+        if not isinstance(respect_mute, bool):
+            raise ValueError("Sound mute policy must be a boolean")
         output = await self.hass.async_add_executor_job(
             self._run,
             "if grep -q '^closed$' /proc/asound/card0/pcm0p/sub0/status; then "
@@ -201,6 +205,7 @@ class AqaraM1SLocalAudio:
             raise RuntimeError("Cannot confirm media released hub audio")
         self._sound_gain = max(0.0, min(1.0, float(gain)))
         self._sound_muted = muted
+        self._sound_respect_mute = respect_mute
         await self._async_prepare_gain()
 
     async def async_restore_media(self, gain: float) -> None:
@@ -208,6 +213,8 @@ class AqaraM1SLocalAudio:
         gain_to_level(float(gain))
         self.desired_gain = max(0.0, min(1.0, float(gain)))
         self._sound_gain = None
+        self._sound_muted = False
+        self._sound_respect_mute = True
         await self._async_prepare_gain()
 
     async def _async_prepare_gain(self) -> None:

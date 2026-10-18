@@ -1,5 +1,13 @@
-0.37.17 TEST
-271 local tests passed; no skipped tests.
-Python/JSON syntax verified. Audio runtime unchanged from 0.37.16.
-No Home Assistant installation. Hardware validation pending.
-See TEST_REPORT.json, TEST_LOG.txt and COORDINATOR_GUARD_RO.md.
+0.37.18 TEST - INTEGRATION ONLY
+290 integration tests passed; 0 failures, 0 errors, 0 skipped.
+Python/JSON/service YAML syntax and selectors verified.
+18 new behavioral mute-policy tests plus existing priority, volume, group,
+Coordinator guard, MQTT and local protocol regressions.
+Default WAV mute bypass; respect_mute opt-out; saved slider and zero volume;
+current manual controls; restore-before-resume; replacement; stop/error/cancel.
+Coordinator guard, group transport and hub audio assets unchanged from 0.37.17.
+Windows asyncio/localhost tests ran outside the restricted sandbox.
+All external devices were simulated; no Home Assistant installation or restart.
+No real hub or acoustic hardware test was performed.
+No personal automation files are included or required by the test suite.
+See TEST_REPORT.json, TEST_LOG.txt, SOUND_MUTE_POLICY_RO.md and README_RO.md.

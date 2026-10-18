@@ -1,6 +1,7 @@
 {
-  "version": "0.37.17 TEST",
-  "tests_run": 271,
+  "version": "0.37.18 TEST",
+  "baseline": "0.37.17 TEST",
+  "tests_run": 290,
   "failures": 0,
   "errors": 0,
   "skipped": 0,
@@ -9,19 +10,15 @@
   "installed_on_home_assistant": false,
   "changed_existing_runtime_files": [
     "__init__.py",
-    "binary_sensor.py",
-    "config_flow.py",
-    "coordinator_profile.py",
+    "local_audio.py",
     "manifest.json",
-    "strings.json",
-    "translations/en.json",
-    "translations/ro.json"
+    "services.yaml",
+    "sound_player.py"
   ],
-  "new_runtime_files": [
-    "rcp_readiness.py",
-    "z2m_guard.py"
-  ],
-  "audio_runtime_unchanged_from": "0.37.16",
-  "test_transport": "localhost TCP Spinel emulator + simulated HA/Supervisor/MQTT",
+  "new_runtime_files": [],
+  "coordinator_guard_unchanged_from": "0.37.17",
+  "group_transport_and_hub_assets_unchanged_from": "0.37.17",
+  "scope": "integration_only",
+  "test_transport": "simulated HA/audio gain + localhost Spinel emulator + POSIX shell syntax",
   "python": "3.11.9"
 }

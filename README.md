@@ -1,22 +1,37 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.17 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.18 TEST
 
-Version **0.37.17 TEST** adds optional coordinator/Zigbee2MQTT supervision:
+Version **0.37.18 TEST** separates priority alerts from media mute. Stored WAVs,
+sound buttons and priority `play_url` WAVs bypass individual and group media mute
+by default, without changing either player's mute state. `respect_mute: true`
+opts a service call into the previous individual-hub mute behavior; group mute
+continues to apply only to group media.
+
+Use optional `volume_percent` for a temporary alert volume. Without it, the alert
+uses the current individual hub slider before mute is applied; a slider at 0%
+still means silence. Current media gain is confirmed before resume/rejoin, so
+manual volume and mute changes during the alert remain effective afterward.
+No YAML unmute/remute sequence or persistent mute-state change is required.
+Read [SOUND_MUTE_POLICY_RO.md](SOUND_MUTE_POLICY_RO.md) and
+[NOTIFICATION_VOLUME_RO.md](NOTIFICATION_VOLUME_RO.md) for policy and migration.
+
+The optional Coordinator/Zigbee2MQTT recovery guard is retained from **0.37.17**
+without changes. See [COORDINATOR_GUARD_RO.md](COORDINATOR_GUARD_RO.md).
+This TEST build has not been installed on Home Assistant or validated on hardware.
+
+## Historical releases
+
+Version `0.37.17 TEST` introduced optional coordinator/Zigbee2MQTT supervision:
 confirmed stop on coordinator loss, isolated RCP restart and Spinel/PHY preflight,
-then gated add-on start and fresh MQTT confirmation. Configure it on the dedicated
-coordinator entry. It is disabled until the exact add-on and MQTT topic are selected.
-
-Read [COORDINATOR_GUARD_RO.md](COORDINATOR_GUARD_RO.md) for installation,
-activation, rollback, timing and hardware acceptance tests. No Home Assistant
-installation or real-hardware validation was performed for this release.
-Audio runtime files are byte-identical to 0.37.16.
-
-## Previous release / Versiunea precedenta
+then gated add-on start and fresh MQTT confirmation. It remains disabled until
+the exact add-on and MQTT topic are selected on the dedicated Coordinator entry.
+The following older release notes describe their original behavior; the 0.37.18
+sound policy above takes precedence for this package.
 
 Version `0.37.16 TEST` adds an atomic notification-volume request: media yields,
 the hub confirms ALSA is closed, temporary WAV volume is applied, and normal
 media volume is restored before resume/rejoin. Use `play_sound` with optional
-`volume_percent`, not an early shared `number.set_value`. Updated Living and
-Dormitor examples are in `automations/`; see `NOTIFICATION_VOLUME_RO.md`.
+`volume_percent`, not an early shared `number.set_value`. See
+`NOTIFICATION_VOLUME_RO.md` for the service API.
 The separate Fine Volume Trim entity and offset are removed. Main volume IDs,
 0.01% precision, mute, 35 ms common clock and 105 ms batches are retained.
 
@@ -46,13 +61,27 @@ The existing 35 ms clock, 105 ms transport batches, PCM history, prefill, buffer
 
 ## Installation and update
 
-1. Copy `custom_components/aqara_m1s_zigbee_router` into Home Assistant under `/config/custom_components/`.
-2. Restart Home Assistant.
-3. Open **Settings > Devices & services > Add integration** and select **Aqara M1S Zigbee Coordinator + Router**.
-4. Enter the hub IPv4 address, Telnet port, user and password.
-5. Select DHCP or a static address when the setup flow asks for the network mode.
+1. Back up the installed integration component. Extract this package
+   and copy its `custom_components/aqara_m1s_zigbee_router` folder to
+   `/config/custom_components/aqara_m1s_zigbee_router`, replacing the old component
+   files. Do not create a second nested `custom_components` folder.
+2. Restart Home Assistant to load **0.37.18**. A YAML reload alone does not load
+   the new integration code.
+3. Check that the installed component's `manifest.json` reports `0.37.18` and
+   that Home Assistant loads the integration without errors.
 
-The internal domain remains `aqara_m1s_zigbee_router`. Retained diagnostics and Router entities keep their unique IDs; former Coordinator media/IO entities are removed automatically. The physical Wi-Fi MAC is used as device identity when available, and the last confirmed Zigbee role is retained if Home Assistant starts while the hub is temporarily offline. Back up HA before upgrading; old Coordinator controls referenced in dashboards/automations must be removed there too.
+Keep existing integration entries, hub identities and Zigbee pairings; no
+integration removal or repeat pairing is needed. Integration and automation
+deliverables are strictly separate. This integration package contains no
+automation files, and installing it does not install or update automations.
+Optional API checks are described in `SOUND_MUTE_POLICY_RO.md`.
+
+Separate WAV calls still use the normal media resume policy between calls;
+this change does not introduce a multi-alert session that holds radio playback
+across delays between WAVs. Existing explicit media mute/unmute or shared-volume
+commands still change the player; the alert policy does not suppress those calls.
+
+The internal domain remains `aqara_m1s_zigbee_router`. Retained diagnostics and Router entities keep their unique IDs; former Coordinator media/IO entities are removed automatically. The physical Wi-Fi MAC is used as device identity when available, and the last confirmed Zigbee role is retained if Home Assistant starts while the hub is temporarily offline. References to retired controls in existing dashboards or automations are external configuration and are not changed by component installation.
 
 ## Router and Coordinator behavior
 
@@ -136,7 +165,15 @@ The username and password must use printable ASCII and may contain at most 80 ch
 - Installation, startup and migration never delete sounds automatically.
 - A successful upload or deletion reloads the integration and rebuilds the sound entities.
 
-For a stored WAV on a Router, the existing priority arbiter suspends individual/group audio only on that hub, starts `aplay` on the existing file with the shared local gain, and restores playback only if current intent still permits it. The dedicated Coordinator has no WAV or media pipeline. No WAV copies are made. The prior handover rules are retained and regression-tested, but the complete new handover still needs a live check.
+For a priority WAV on a Router, the arbiter suspends individual/group audio only
+on that hub, confirms the audio device has been released, then starts the alert
+with its temporary gain. Media mute is bypassed by default without flipping
+mute state. After completion, Stop, error or cancellation, current media gain
+must be restored before playback can resume, and current playback intent still
+controls resume/rejoin. A newer sound owns its own token; stale cleanup cannot
+stop it or restore media gain over it. The dedicated Coordinator has no WAV or
+media pipeline. No per-volume WAV copies are made. Live handover remains to be
+verified on the actual hubs.
 
 If an individual source stops delivering PCM, the entity now reports `buffering`, stops its remote receiver and rebuilds it only after real PCM returns. A playout rebase records the lag, latest TCP drain duration and the most likely cause (`tcp_drain_timeout`, `tcp_drain_slow` or `ha_scheduler_or_other_await`). The orderly unload protection still stops the individual hub receiver before closing the local writer and adds no active watchdog on the hub.
 
@@ -156,11 +193,25 @@ The integration registers `play_url`, `play_sound`, `upload_sound`, `delete_soun
 
 Sound and media services reject a configured Coordinator before doing any work. Services remain globally registered for Router use; `run_command` remains an explicit administrator tool, not a restricted shell.
 
+`play_sound` and priority-WAV `play_url` accept optional `volume_percent` and
+`respect_mute` (default `false`). The former changes alert gain only, not the
+shared media slider. The latter honors individual hub mute for that request;
+group mute remains a group-media control. Sound buttons use the default bypass
+policy and current individual hub slider. See `SOUND_MUTE_POLICY_RO.md` for
+examples and the zero-volume case.
+
 `delete_sound` requires `confirm: true`, rejects every path below `/data/musics/music-us` and deletes other valid WAV paths without creating a backup. When more than one hub is configured, provide the target `host` for hub-specific sound services.
 
 ## Validation and TEST status
 
-See `TEST_REPORT.json`, `TEST_LOG.txt` and `VALIDATION.txt` for this version's actual automated results. Tests cover ordered transport, common-clock recovery, priority and cancellation, volume aliases, local gain acknowledgement, space checks and Coordinator isolation. Earlier listening on one hub confirmed local volume changes, but did not validate this final package, its WAV conversion wrapper, latency, or multiroom acoustic synchronization. Simulation is not proof of an overnight hardware test.
+See `VALIDATION.txt` for the current validation status and `TEST_REPORT.json` /
+`TEST_LOG.txt` for the automated run identified there. A test report copied from
+an older package is historical until a 0.37.18 run replaces it. No installation,
+HA restart or live audio test has been performed for this build. The new mute
+policy, restoration after manual changes, replacement/cancellation, common-clock
+recovery and unchanged Coordinator guard require the matching local test run;
+audible handover and synchronization still require actual hardware. Earlier
+single-hub listening does not validate this final package or an overnight run.
 
 The following is historical validation of the `0.37.5` base, not a new hardware test for this release:
 
@@ -174,8 +225,8 @@ The following is historical validation of the `0.37.5` base, not a new hardware 
   individual-player release and single-member quarantine recovery.
 - Python compilation plus JSON/YAML parsing.
 - Shell syntax validation for every Router script and a static MIPS32 agent build with warnings treated as errors.
-- All 66 isolated tests pass. The reviewed hashes of both audio transports are
-  recorded in `VALIDATION.txt`.
+- That base passed all 66 isolated tests; its audio-transport hashes belong to
+  that version's validation record, not the current 0.37.18 result.
 
 Upload was also verified on Router `192.168.0.221`: 128044 bytes in 5.46 seconds, identical MD5, intermediate progress and confirmed removal of the temporary probe file.
 
@@ -185,4 +236,10 @@ The base release recorded Router agent `1.1.1` installation on `.200-.209` and `
 
 ## Rollback
 
-For this audio prototype, restore the backed-up `0.37.13` component and restart Home Assistant. The older receiver paths do not select the versioned local ALSA configuration; unused helper files may remain under `/data/m1s_audio_03714`. This build changes no firmware, Zigbee data or original WAV files. Router MQTT and Coordinator kit rollbacks remain separate procedures.
+Restore the previous component from your backup (normally `0.37.17` for this
+update) and restart Home Assistant. Check that its installed version loads
+without errors. Older versions do not provide the default mute bypass or the
+new `respect_mute` option. Keep the existing integration entries and Zigbee
+pairings. This package changes no firmware, Zigbee data or original WAV files.
+Router MQTT and Coordinator kit rollbacks remain separate procedures. If also
+changing the optional supervision setup, follow `COORDINATOR_GUARD_RO.md`.

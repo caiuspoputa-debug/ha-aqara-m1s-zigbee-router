@@ -45,34 +45,12 @@ class NotificationVolumeTests(unittest.TestCase):
 
     def test_service_exposes_explicit_percent_not_a_global_volume_write(self):
         services = yaml.safe_load((COMPONENT / "services.yaml").read_text(encoding="utf-8"))
-        selector = services["play_sound"]["fields"]["volume_percent"]["selector"]["number"]
-        self.assertEqual((selector["min"], selector["max"], selector["step"]), (0, 100, 0.01))
-
-    def test_doorbells_never_change_shared_volume_before_or_after_wav(self):
-        for room, host in (("Living", "192.168.0.226"), ("Dormitor", "192.168.0.222")):
-            text = (ROOT / "automations" / f"Sonerie_{room}_Cedare_Inainte_Volum_03716.yaml").read_text(encoding="utf-8")
-            self.assertNotIn("number.set_value", text)
-            data = yaml.safe_load(text)
-            calls = []
-
-            def walk(value):
-                if isinstance(value, dict):
-                    if value.get("action") == "aqara_m1s_zigbee_router.play_sound":
-                        calls.append(value)
-                    for item in value.values():
-                        walk(item)
-                elif isinstance(value, list):
-                    for item in value:
-                        walk(item)
-
-            walk(data["actions"])
-            self.assertEqual(len(calls), 1)
-            self.assertEqual(calls[0]["data"]["host"], host)
-            self.assertIn("file_path", calls[0]["data"]["path"])
-            self.assertIn("volume_percent", calls[0]["data"])
-            self.assertEqual(data["mode"], "single")
-            self.assertEqual(data["max_exceeded"], "silent")
-
+        for name in ("play_sound", "play_url"):
+            fields = services[name]["fields"]
+            selector = fields["volume_percent"]["selector"]["number"]
+            self.assertEqual((selector["min"], selector["max"], selector["step"]), (0, 100, 0.01))
+            self.assertIs(fields["respect_mute"]["default"], False)
+            self.assertIn("boolean", fields["respect_mute"]["selector"])
 
 if __name__ == "__main__":
     unittest.main()

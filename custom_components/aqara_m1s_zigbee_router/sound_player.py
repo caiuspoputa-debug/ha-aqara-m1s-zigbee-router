@@ -64,21 +64,48 @@ class AqaraM1SSoundPlayer:
         finally:
             await self.group_manager.async_release_sound(self.entry_id)
 
-    async def async_play(self, path: str, volume: float | None = None, *,
-                         volume_percent: float | None = None) -> None:
-        # Keep legacy button calls on the shared volume. An explicit service
-        # override belongs only to this notification, never to the radio slider.
-        source = safe_sound_path(path)
+    @staticmethod
+    def _validate_policy(volume_percent: float | None, respect_mute: bool) -> float | None:
+        if not isinstance(respect_mute, bool):
+            raise ValueError("respect_mute must be a boolean")
+        if volume_percent is None:
+            return None
+        if isinstance(volume_percent, bool):
+            raise ValueError("Notification volume must be between 0 and 100 percent")
+        percent = float(volume_percent)
+        if not math.isfinite(percent) or not 0 <= percent <= 100:
+            raise ValueError("Notification volume must be between 0 and 100 percent")
+        return percent
+
+    def _notification_gain(self, volume_percent: float | None,
+                           fallback_volume: float | None) -> float:
         if volume_percent is not None:
-            if isinstance(volume_percent, bool):
-                raise ValueError("Notification volume must be between 0 and 100 percent")
-            volume_percent = float(volume_percent)
-            if not math.isfinite(volume_percent) or not 0 <= volume_percent <= 100:
-                raise ValueError("Notification volume must be between 0 and 100 percent")
-        await self._play_local(source, volume_percent=volume_percent)
+            return volume_percent / 100
+        # A muted player's effective gain is zero; its saved slider is still
+        # the notification volume. Never unmute or overwrite media intent.
+        gain = getattr(self.radio_player, "_attr_volume_level", None)
+        if gain is None:
+            gain = (float(fallback_volume) / 100 if fallback_volume is not None
+                    else self.radio_player._effective_gain())
+        gain = float(gain)
+        if not math.isfinite(gain):
+            raise ValueError("Notification volume must be finite")
+        return max(0.0, min(1.0, gain))
+
+    async def async_play(self, path: str, volume: float | None = None, *,
+                         volume_percent: float | None = None,
+                         respect_mute: bool = False) -> None:
+        # Only the priority WAV bypasses media mute. Button calls use the saved
+        # slider; an explicit service volume belongs only to this notification.
+        source = safe_sound_path(path)
+        volume_percent = self._validate_policy(volume_percent, respect_mute)
+        await self._play_local(source, volume_percent=volume_percent,
+                               respect_mute=respect_mute, fallback_volume=volume)
 
     async def _play_local(self, source: str, *, url: bool = False,
-                          volume_percent: float | None = None) -> None:
+                          volume_percent: float | None = None,
+                          respect_mute: bool = False,
+                          fallback_volume: float | None = None) -> None:
         if self.client.zigbee_role == "coordinator":
             raise RuntimeError("Dedicated coordinator does not expose audio")
         if self.local_audio is None:
@@ -96,23 +123,18 @@ class AqaraM1SSoundPlayer:
                 now = time.perf_counter()
                 timings["priority_handover"] = round((now - phase) * 1000)
                 phase = now
-                if volume_percent is not None:
-                    self._temporary_volume_active = True
-                    try:
-                        await self.local_audio.async_prepare_sound(
-                            volume_percent / 100,
-                            muted=bool(self.radio_player._attr_is_volume_muted))
-                    except LocalAudioBusy:
-                        await self.radio_player.async_cleanup_priority_receiver()
-                        await asyncio.sleep(0.25)
-                        await self.local_audio.async_prepare_sound(
-                            volume_percent / 100,
-                            muted=bool(self.radio_player._attr_is_volume_muted))
-                elif self._temporary_volume_active:
-                    self._temporary_volume_active = False
-                    await self.local_audio.async_restore_media(self.radio_player._effective_gain())
-                else:
-                    await self.local_audio.async_prepare(self.radio_player._effective_gain())
+                gain = self._notification_gain(volume_percent, fallback_volume)
+                self._temporary_volume_active = True
+                try:
+                    await self.local_audio.async_prepare_sound(
+                        gain, muted=bool(self.radio_player._attr_is_volume_muted),
+                        respect_mute=respect_mute)
+                except LocalAudioBusy:
+                    await self.radio_player.async_cleanup_priority_receiver()
+                    await asyncio.sleep(0.25)
+                    await self.local_audio.async_prepare_sound(
+                        gain, muted=bool(self.radio_player._attr_is_volume_muted),
+                        respect_mute=respect_mute)
                 now = time.perf_counter()
                 timings["volume_prepare"] = round((now - phase) * 1000)
                 phase = now
@@ -149,9 +171,13 @@ class AqaraM1SSoundPlayer:
                 await self._finish_priority()
                 raise
 
-    async def async_play_url(self, url: str) -> None:
+    async def async_play_url(self, url: str, *, volume_percent: float | None = None,
+                             respect_mute: bool = False) -> None:
         """Download an explicit WAV URL to hub RAM with the same priority policy."""
-        await self._play_local(safe_sound_url(url), url=True)
+        source = safe_sound_url(url)
+        volume_percent = self._validate_policy(volume_percent, respect_mute)
+        await self._play_local(source, url=True, volume_percent=volume_percent,
+                               respect_mute=respect_mute)
 
     async def _watch(self, token: str) -> None:
         failures = 0

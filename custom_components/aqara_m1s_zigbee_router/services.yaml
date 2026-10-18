@@ -1,6 +1,6 @@
 play_url:
   name: Play URL
-  description: Download a WAV URL to hub RAM and play locally with the shared hub volume and sound priority. The Router must be configured in this integration.
+  description: Download a WAV URL to hub RAM and play with sound priority. The WAV bypasses individual media mute by default without changing it; current media gain is restored before resuming. The Router must be configured in this integration.
   fields:
     host:
       name: Host
@@ -21,9 +21,28 @@ play_url:
       selector:
         text:
 
+    volume_percent:
+      name: Temporary sound volume
+      description: Optional 0-100 percent for this WAV only, applied after media stops. If omitted, uses the saved hub volume, including zero.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.01
+          unit_of_measurement: "%"
+
+    respect_mute:
+      name: Respect hub mute
+      description: Enable to silence this WAV when the individual hub player is muted. By default only the priority WAV bypasses mute; media mute and group mute are unchanged.
+      required: false
+      default: false
+      selector:
+        boolean:
+
 play_sound:
   name: Play Sound
-  description: Play a hub WAV after media yields audio. Optionally apply notification-only volume, restoring media volume before resuming.
+  description: Play a hub WAV after media yields audio. The WAV bypasses individual media mute by default without changing it. Current media volume and mute are applied before resuming.
   fields:
     host:
       name: Host
@@ -46,7 +65,7 @@ play_sound:
 
     volume_percent:
       name: Temporary sound volume
-      description: Optional 0-100 percent for this WAV only, applied after media stops. Does not change the main volume; hub mute still applies.
+      description: Optional 0-100 percent for this WAV only, applied after media stops. If omitted, uses the saved hub volume, including zero. Does not change the main volume or media mute.
       required: false
       selector:
         number:
@@ -54,6 +73,14 @@ play_sound:
           max: 100
           step: 0.01
           unit_of_measurement: "%"
+
+    respect_mute:
+      name: Respect hub mute
+      description: Enable to silence this WAV when the individual hub player is muted. By default only the priority WAV bypasses mute; media mute and group mute are unchanged.
+      required: false
+      default: false
+      selector:
+        boolean:
 
 run_command:
   name: Run Command

@@ -1,4 +1,30 @@
-# 0.37.17 TEST — coordinator recovery guard
+# 0.37.18 TEST — priority sound mute policy
+
+- Priority stored WAVs, sound buttons and priority-WAV `play_url` bypass
+  individual and group media mute by default without changing player mute state.
+- Add `respect_mute: true` to opt a service request into the legacy individual
+  hub-mute behavior. Group mute remains a control for group media only.
+- Use explicit `volume_percent` as temporary alert gain; when omitted, use the
+  current raw individual hub slider before mute. A zero slider remains silent.
+- Keep the media handover and closed-ALSA acknowledgement before alert gain;
+  restore current media gain before resume/rejoin, including error, cancellation
+  and manual volume/mute changes made during the alert.
+- Keep ownership/token protection during sound replacement so stale cleanup
+  cannot stop a newer sound or overwrite its temporary gain.
+- Keep integration and automation deliverables strictly separate. This
+  integration archive contains no automation files; automation deliverables
+  are distributed separately. No repeated hub/Zigbee pairing is required.
+- Separate WAV calls retain normal resume behavior between calls. This change
+  does not add a multi-alert session across the delays between repeated WAVs.
+- Preserve the 0.37.17 Coordinator/Zigbee2MQTT guard without changes, together
+  with existing group timing, transport, buffering and Stop protections.
+- TEST only. Final automated results are identified in VALIDATION.txt.
+  No Home Assistant installation/restart, live audio or hardware validation.
+
+## Historical: 0.37.17 TEST — coordinator recovery guard
+
+The following entries describe historical releases. Any historical automation
+examples mentioned below are external to this integration archive.
 
 
 Arhiva completa a integrarii Aqara M1S. Nu este o imagine de firmware si nu

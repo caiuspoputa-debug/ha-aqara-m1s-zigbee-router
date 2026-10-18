@@ -429,7 +429,10 @@ async def async_setup_entry(
         url = call.data["url"]
         sound_player = hass.data[DOMAIN][DATA_SOUND_PLAYERS].get(selected_entry_id)
         if sound_player is not None and sound_player.client.host == selected_client.host:
-            await sound_player.async_play_url(url)
+            await sound_player.async_play_url(
+                url, volume_percent=call.data.get("volume_percent"),
+                respect_mute=call.data.get("respect_mute", False),
+            )
             return
         raise HomeAssistantError("Configure this hub in the integration before local audio playback")
 
@@ -446,6 +449,7 @@ async def async_setup_entry(
             path,
             hass.data[DOMAIN][DATA_PLAYBACK_VOLUME].get(selected_entry_id, 50),
             volume_percent=call.data.get("volume_percent"),
+            respect_mute=call.data.get("respect_mute", False),
         )
 
     async def run_command(

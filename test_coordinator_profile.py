@@ -374,7 +374,8 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         group = types.SimpleNamespace(register_member=Mock(), members={}, unregister_member=AsyncMock(), async_shutdown=AsyncMock())
         mqtt = types.SimpleNamespace(async_start=AsyncMock(), async_stop=AsyncMock())
         radio = Mock()
-        sound = types.SimpleNamespace(client=client, async_play=AsyncMock(), async_stop=AsyncMock())
+        sound = types.SimpleNamespace(client=client, async_play=AsyncMock(),
+                                      async_play_url=AsyncMock(), async_stop=AsyncMock())
         patches = [patch.object(integration, "AqaraM1SClient", return_value=client),
                    patch.object(integration, "AqaraM1SRouterCoordinator", return_value=coord),
                    patch.object(integration, "AqaraM1SMediaGroupManager", return_value=group),
@@ -429,8 +430,33 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         context = await self.setup_integration("router")
         await context.handlers["play_sound"](types.SimpleNamespace(data={
             "host": "192.168.0.220", "path": "/data/musics/music-ch/test.wav", "volume_percent": 50}))
-        self.assertEqual(context.sound.async_play.await_args.kwargs, {"volume_percent": 50})
+        self.assertEqual(context.sound.async_play.await_args.kwargs,
+                         {"volume_percent": 50, "respect_mute": False})
         context.constructors[4].return_value.async_set_volume_level.assert_not_called()
+
+    async def test_sound_services_forward_optout_without_mutating_media_controls(self):
+        context = await self.setup_integration("router")
+        context.hass.data[const.DOMAIN][const.DATA_PLAYBACK_VOLUME][context.entry.entry_id] = 17.5
+        await context.handlers["play_sound"](types.SimpleNamespace(data={
+            "host": "192.168.0.220", "path": "/data/musics/music-ch/test.wav",
+            "volume_percent": 12, "respect_mute": True}))
+        context.sound.async_play.assert_awaited_once_with(
+            "/data/musics/music-ch/test.wav", 17.5,
+            volume_percent=12, respect_mute=True)
+        await context.handlers["play_url"](types.SimpleNamespace(data={
+            "host": "192.168.0.220", "url": "https://example.test/alert.wav",
+            "volume_percent": 24, "respect_mute": True}))
+        context.sound.async_play_url.assert_awaited_once_with(
+            "https://example.test/alert.wav", volume_percent=24, respect_mute=True)
+        context.constructors[4].return_value.async_set_volume_level.assert_not_called()
+        context.constructors[4].return_value.async_mute_volume.assert_not_called()
+
+    async def test_wav_url_service_uses_central_default_without_yaml_unmute(self):
+        context = await self.setup_integration("router")
+        await context.handlers["play_url"](types.SimpleNamespace(data={
+            "host": "192.168.0.220", "url": "https://example.test/alert.wav"}))
+        context.sound.async_play_url.assert_awaited_once_with(
+            "https://example.test/alert.wav", volume_percent=None, respect_mute=False)
 
     async def test_retired_fine_trim_is_removed_from_entity_registry(self):
         context = await self.setup_integration("router", old_fine_trim=True)
