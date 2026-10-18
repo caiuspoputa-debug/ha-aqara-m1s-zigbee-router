@@ -10,7 +10,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DATA_COORDINATOR_MQTT, DOMAIN
 from .coordinator_mqtt import async_detect_hub_connectivity
 from .coordinator_profile import DIAGNOSTICS_INTERVAL_SECONDS, read_diagnostics
-from .device import device_identifier
+from .device import async_get_entry_device, device_identifier
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -322,8 +322,8 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             )
 
         device_registry = dr.async_get(self.hass)
-        device = device_registry.async_get_device(
-            identifiers={device_identifier(self.config_entry)}
+        device = async_get_entry_device(
+            device_registry, self.config_entry.entry_id, device_identifier(self.config_entry)
         )
         if device is None or device.name is None:
             return

@@ -23,10 +23,19 @@ TRIGGER_SCHEMA = DEVICE_TRIGGER_BASE_SCHEMA.extend(
 
 
 def _entry_for_device(hass: HomeAssistant, device_id: str):
+    resolve_owner = getattr(dr, "async_get_device_and_config_entry_for_domain", None)
+    if callable(resolve_owner):
+        _device, entry = resolve_owner(hass, device_id, domain=DOMAIN)
+        return entry
+    # Compatibility for Core releases predating the owner-resolution helper.
     device = dr.async_get(hass).async_get(device_id)
     if device is None:
         return None
-    for entry_id in device.config_entries:
+    if hasattr(device, "config_entry_id"):
+        entry_ids = (device.config_entry_id,) if device.config_entry_id is not None else ()
+    else:
+        entry_ids = device.config_entries
+    for entry_id in entry_ids:
         entry = hass.config_entries.async_get_entry(entry_id)
         if entry and entry.domain == DOMAIN:
             return entry

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from homeassistant.const import CONF_HOST
+from homeassistant.helpers import device_registry as dr
 
 from .const import CONF_DEVICE_MAC, CONF_ZIGBEE_ROLE, DOMAIN
 
@@ -25,6 +26,24 @@ def device_identifier(entry) -> tuple[str, str]:
     if mac:
         return (DOMAIN, f"mac:{mac}")
     return (DOMAIN, str(entry.data.get(CONF_HOST, "")))
+
+
+def async_get_entry_device(
+    registry: dr.DeviceRegistry,
+    config_entry_id: str,
+    identifier: tuple[str, str],
+) -> dr.DeviceEntry | None:
+    """Resolve only this entry's device, including on pre-2026.8 Core."""
+    scoped_lookup = getattr(registry, "async_get_device_by_identifier", None)
+    if callable(scoped_lookup):
+        return scoped_lookup(identifier, config_entry_id)
+    # Older Core has no scoped lookup method. Its public entry enumerator
+    # provides the same ownership boundary without the deprecated global API.
+    return next(
+        (device for device in dr.async_entries_for_config_entry(registry, config_entry_id)
+         if identifier in device.identifiers),
+        None,
+    )
 
 
 def device_name_with_host(name: str, host: str) -> str:

@@ -1,4 +1,21 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.18 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.19 TEST
+
+Version **0.37.19 TEST** updates device-registry access for the deprecation
+warnings reported on Home Assistant **2026.10.2**. Four identifier lookups now
+use `async_get_device_by_identifier(identifier, entry.entry_id)` when available;
+older HA versions use a lookup restricted to the same config entry. Device
+trigger ownership uses the current domain helper instead of reading deprecated
+`DeviceEntry.config_entries` on current HA.
+
+Device identifiers, entity unique IDs and the existing IP-to-stable-identity
+migration are unchanged. Audio runtime remains byte-identical to **0.37.18**,
+and the Coordinator/Zigbee2MQTT guard remains unchanged from **0.37.17**.
+See [DEVICE_REGISTRY_COMPAT_RO.md](DEVICE_REGISTRY_COMPAT_RO.md) for API details,
+official deprecation references and the separate removal schedules.
+This build has not been installed or restarted on Home Assistant; final local
+test results are identified in `VALIDATION.txt`.
+
+## Retained audio behavior from 0.37.18
 
 Version **0.37.18 TEST** separates priority alerts from media mute. Stored WAVs,
 sound buttons and priority `play_url` WAVs bypass individual and group media mute
@@ -65,16 +82,18 @@ The existing 35 ms clock, 105 ms transport batches, PCM history, prefill, buffer
    and copy its `custom_components/aqara_m1s_zigbee_router` folder to
    `/config/custom_components/aqara_m1s_zigbee_router`, replacing the old component
    files. Do not create a second nested `custom_components` folder.
-2. Restart Home Assistant to load **0.37.18**. A YAML reload alone does not load
+2. Restart Home Assistant to load **0.37.19**. A YAML reload alone does not load
    the new integration code.
-3. Check that the installed component's `manifest.json` reports `0.37.18` and
+3. Check that the installed component's `manifest.json` reports `0.37.19` and
    that Home Assistant loads the integration without errors.
 
 Keep existing integration entries, hub identities and Zigbee pairings; no
 integration removal or repeat pairing is needed. Integration and automation
 deliverables are strictly separate. This integration package contains no
 automation files, and installing it does not install or update automations.
-Optional API checks are described in `SOUND_MUTE_POLICY_RO.md`.
+Check fresh startup logs for device-registry warnings as described in
+`DEVICE_REGISTRY_COMPAT_RO.md`. Optional sound API checks are described in
+`SOUND_MUTE_POLICY_RO.md`.
 
 Separate WAV calls still use the normal media resume policy between calls;
 this change does not introduce a multi-alert session that holds radio playback
@@ -206,7 +225,7 @@ examples and the zero-volume case.
 
 See `VALIDATION.txt` for the current validation status and `TEST_REPORT.json` /
 `TEST_LOG.txt` for the automated run identified there. A test report copied from
-an older package is historical until a 0.37.18 run replaces it. No installation,
+an older package is historical until a 0.37.19 run replaces it. No installation,
 HA restart or live audio test has been performed for this build. The new mute
 policy, restoration after manual changes, replacement/cancellation, common-clock
 recovery and unchanged Coordinator guard require the matching local test run;
@@ -226,7 +245,7 @@ The following is historical validation of the `0.37.5` base, not a new hardware 
 - Python compilation plus JSON/YAML parsing.
 - Shell syntax validation for every Router script and a static MIPS32 agent build with warnings treated as errors.
 - That base passed all 66 isolated tests; its audio-transport hashes belong to
-  that version's validation record, not the current 0.37.18 result.
+  that version's validation record, not the current 0.37.19 result.
 
 Upload was also verified on Router `192.168.0.221`: 128044 bytes in 5.46 seconds, identical MD5, intermediate progress and confirmed removal of the temporary probe file.
 
@@ -236,10 +255,10 @@ The base release recorded Router agent `1.1.1` installation on `.200-.209` and `
 
 ## Rollback
 
-Restore the previous component from your backup (normally `0.37.17` for this
+Restore the previous component from your backup (normally `0.37.18` for this
 update) and restart Home Assistant. Check that its installed version loads
-without errors. Older versions do not provide the default mute bypass or the
-new `respect_mute` option. Keep the existing integration entries and Zigbee
+without errors. The previous 0.37.18 keeps the same sound policy but retains
+the device-registry API warnings fixed here. Keep existing integration entries and Zigbee
 pairings. This package changes no firmware, Zigbee data or original WAV files.
 Router MQTT and Coordinator kit rollbacks remain separate procedures. If also
 changing the optional supervision setup, follow `COORDINATOR_GUARD_RO.md`.

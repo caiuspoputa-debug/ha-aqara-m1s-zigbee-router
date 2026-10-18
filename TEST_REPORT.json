@@ -1,7 +1,8 @@
 {
-  "version": "0.37.18 TEST",
-  "baseline": "0.37.17 TEST",
-  "tests_run": 290,
+  "version": "0.37.19 TEST",
+  "baseline": "0.37.18 TEST",
+  "scope": "integration_only",
+  "tests_run": 307,
   "failures": 0,
   "errors": 0,
   "skipped": 0,
@@ -10,15 +11,17 @@
   "installed_on_home_assistant": false,
   "changed_existing_runtime_files": [
     "__init__.py",
-    "local_audio.py",
-    "manifest.json",
-    "services.yaml",
-    "sound_player.py"
+    "coordinator.py",
+    "device.py",
+    "device_trigger.py",
+    "manifest.json"
   ],
   "new_runtime_files": [],
+  "deprecated_async_get_device_calls": 0,
+  "api_reference_core_version": "2026.10.2",
+  "legacy_api_compatibility_tested_with_simulated_registry": true,
+  "audio_runtime_unchanged_from": "0.37.18",
   "coordinator_guard_unchanged_from": "0.37.17",
-  "group_transport_and_hub_assets_unchanged_from": "0.37.17",
-  "scope": "integration_only",
-  "test_transport": "simulated HA/audio gain + localhost Spinel emulator + POSIX shell syntax",
+  "test_transport": "simulated HA/registry/audio + localhost Spinel emulator + POSIX shell syntax",
   "python": "3.11.9"
 }

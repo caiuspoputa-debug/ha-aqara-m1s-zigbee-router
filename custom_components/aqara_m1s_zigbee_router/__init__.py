@@ -45,7 +45,7 @@ from .const import (
     SERVICE_UPDATE_MEDIA_METADATA,
     sound_list_signal,
 )
-from .device import device_identifier, entry_title_with_host
+from .device import async_get_entry_device, device_identifier, entry_title_with_host
 from .coordinator import AqaraM1SRouterCoordinator
 from .coordinator_mqtt import M1SHubMQTTIO
 from .coordinator_profile import COORDINATOR_PLATFORMS, obsolete_coordinator_entities
@@ -242,8 +242,8 @@ async def async_setup_entry(
 
     device_registry = dr.async_get(hass)
     stable_identifier = device_identifier(entry)
-    legacy_device = device_registry.async_get_device(identifiers={(DOMAIN, host)})
-    stable_device = device_registry.async_get_device(identifiers={stable_identifier})
+    legacy_device = async_get_entry_device(device_registry, entry.entry_id, (DOMAIN, host))
+    stable_device = async_get_entry_device(device_registry, entry.entry_id, stable_identifier)
     if (
         legacy_device is not None
         and stable_identifier not in legacy_device.identifiers
@@ -371,7 +371,7 @@ async def async_setup_entry(
         except Exception:
             visible_ip = host
 
-    device = device_registry.async_get_device(identifiers={stable_identifier})
+    device = async_get_entry_device(device_registry, entry.entry_id, stable_identifier)
     if device is not None:
         device_updates = {}
         desired_name = _device_name_with_host(

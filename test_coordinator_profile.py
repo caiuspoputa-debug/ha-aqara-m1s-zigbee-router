@@ -358,9 +358,10 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
 
         hass.config_entries.async_update_entry = Mock(side_effect=update_entry)
         identifier = device.device_identifier(item)
-        dev = types.SimpleNamespace(id="device220", name="Test - 192.168.0.220", name_by_user=None, identifiers={identifier})
+        dev = types.SimpleNamespace(id="device220", name="Test - 192.168.0.220", name_by_user=None,
+                                    identifiers={identifier}, config_entries={item.entry_id})
         registry = Mock()
-        registry.async_get_device.return_value = dev
+        registry.async_get_device_by_identifier.return_value = dev
         registry.async_get_or_create.return_value = dev
         dr.async_get.return_value = registry
         dr.async_entries_for_config_entry.return_value = [dev]

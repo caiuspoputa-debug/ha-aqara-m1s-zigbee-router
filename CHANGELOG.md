@@ -1,4 +1,22 @@
-# 0.37.18 TEST — priority sound mute policy
+# 0.37.19 TEST — device-registry API compatibility
+
+- Replace four deprecated `async_get_device` identifier lookups with
+  `async_get_device_by_identifier(identifier, entry.entry_id)` on supported HA.
+  Older HA uses an enumeration limited to the owning config entry.
+- Resolve device-trigger ownership through the current domain helper; avoid
+  deprecated `DeviceEntry.config_entries` reads on new HA, retaining a fallback
+  only for older APIs.
+- Preserve existing device identifiers, entity unique IDs and identity-migration
+  behavior. No removal/re-addition or repeated Zigbee pairing is required.
+- Audio runtime is byte-identical to 0.37.18; Coordinator/Zigbee2MQTT guard
+  remains unchanged from 0.37.17. Integration and automation deliverables stay
+  strictly separate; this archive contains no automation files.
+- Document the Home Assistant 2026.10.2 warning fix and distinct API-removal
+  schedules in DEVICE_REGISTRY_COMPAT_RO.md, with official references.
+- TEST only. Final local results are identified in VALIDATION.txt.
+  No Home Assistant installation/restart or live hardware validation.
+
+## Historical: 0.37.18 TEST — priority sound mute policy
 
 - Priority stored WAVs, sound buttons and priority-WAV `play_url` bypass
   individual and group media mute by default without changing player mute state.

@@ -1,4 +1,22 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.18 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.19 TEST
+
+Versiunea **0.37.19 TEST** actualizează accesul la registrul dispozitivelor
+pentru avertismentele de API depreciat raportate pe Home Assistant **2026.10.2**.
+Cele patru căutări după identificator folosesc
+`async_get_device_by_identifier(identifier, entry.entry_id)` când este disponibil;
+pe HA vechi căutarea rămâne limitată la aceeași intrare de configurare.
+Proprietarul pentru trigger-ele dispozitivului este rezolvat prin helperul
+actual al domeniului, fără citirea `DeviceEntry.config_entries` pe HA nou.
+
+Identificatorii dispozitivelor, ID-urile unice ale entităților și migrarea
+existentă de la IP la identitatea stabilă sunt păstrate. Codul audio rămâne
+identic octet cu octet cu **0.37.18**, iar supravegherea Coordinator/Zigbee2MQTT
+rămâne neschimbată din **0.37.17**. Detalii, surse oficiale și termenele distincte:
+[DEVICE_REGISTRY_COMPAT_RO.md](DEVICE_REGISTRY_COMPAT_RO.md).
+Acest build nu a fost instalat și nu a repornit Home Assistant; rezultatele
+locale finale sunt identificate în `VALIDATION.txt`.
+
+## Comportament audio păstrat din 0.37.18
 
 Versiunea **0.37.18 TEST** separă alertele prioritare de mute pentru media.
 WAV-urile stocate, butoanele de sunet și WAV-urile prioritare prin `play_url`
@@ -69,16 +87,18 @@ Ceasul comun de 35 ms, blocurile de 105 ms, istoria PCM, preumplerea, bufferele,
    pachetul și copiază folderul `custom_components/aqara_m1s_zigbee_router` în
    `/config/custom_components/aqara_m1s_zigbee_router`, înlocuind fișierele vechi.
    Nu crea încă un folder `custom_components` în interiorul celui existent.
-2. Repornește Home Assistant pentru încărcarea **0.37.18**. Reîncărcarea YAML
+2. Repornește Home Assistant pentru încărcarea **0.37.19**. Reîncărcarea YAML
    singură nu încarcă noul cod al integrării.
-3. Verifică dacă `manifest.json` al componentei instalate indică `0.37.18` și
+3. Verifică dacă `manifest.json` al componentei instalate indică `0.37.19` și
    dacă Home Assistant încarcă integrarea fără erori.
 
 Păstrează intrările integrării, identitatea huburilor și dispozitivele Zigbee
 asociate; nu șterge integrarea și nu repeta asocierea. Integrarea și
 automatizările sunt livrate strict separat. Acest pachet de integrare nu conține
 fișiere de automatizare și instalarea lui nu instalează sau actualizează
-automatizări. Verificări API opționale: `SOUND_MUTE_POLICY_RO.md`.
+automatizări. Verificarea mesajelor noi de registru este descrisă în
+`DEVICE_REGISTRY_COMPAT_RO.md`; verificări audio API opționale:
+`SOUND_MUTE_POLICY_RO.md`.
 
 Apelurile WAV separate păstrează regula obișnuită de reluare media între apeluri;
 versiunea nu introduce o sesiune care să țină radioul suspendat și în pauzele
@@ -210,7 +230,7 @@ sliderului la zero sunt în `SOUND_MUTE_POLICY_RO.md`.
 
 `VALIDATION.txt` indică starea curentă a validării și identifică rularea din
 `TEST_REPORT.json` / `TEST_LOG.txt`. Un raport copiat din pachetul anterior este
-istoric până la înlocuirea lui cu o rulare 0.37.18. Acest build nu a fost instalat
+istoric până la înlocuirea lui cu o rulare 0.37.19. Acest build nu a fost instalat
 pe HA, nu a repornit HA și nu a fost testat audio live. Politica mute nouă,
 restaurarea după modificări manuale, înlocuirea/anularea sunetelor, recuperarea
 ceasului comun și supravegherea Coordinator păstrată necesită rularea locală
@@ -234,7 +254,7 @@ Sursa `0.37.5` a trecut:
 - Compilarea Python și parsarea fișierelor JSON/YAML.
 - Verificarea de sintaxă a tuturor scripturilor Router și compilarea agentului static MIPS32 cu avertismente tratate ca erori.
 - Baza respectivă a trecut toate cele 66 de teste izolate; hashurile ei audio
-  aparțin validării acelei versiuni, nu rezultatului curent 0.37.18.
+  aparțin validării acelei versiuni, nu rezultatului curent 0.37.19.
 
 Uploadul a fost verificat și pe Routerul `192.168.0.221`: 128.044 octeți în 5,46 secunde, MD5 identic, progres intermediar și ștergerea confirmată a fișierului temporar.
 
@@ -244,10 +264,10 @@ Istoric pentru baza anterioară: agentul Router `1.1.1` fusese instalat pe `.200
 
 ## Revenire
 
-Restaurează componenta anterioară din backup (în mod obișnuit `0.37.17` pentru
+Restaurează componenta anterioară din backup (în mod obișnuit `0.37.18` pentru
 această actualizare) și repornește Home Assistant. Verifică versiunea instalată
-și încărcarea ei fără erori. Versiunile vechi nu au ocolirea mute implicită
-sau opțiunea nouă `respect_mute`. Păstrează intrările integrării și asocierile
+și încărcarea ei fără erori. Versiunea 0.37.18 păstrează aceeași politică audio,
+dar are avertismentele de API ale registrului corectate aici. Păstrează intrările integrării și asocierile
 Zigbee. Pachetul nu schimbă firmware-ul, datele Zigbee sau WAV-urile originale.
 Revenirea kiturilor Router MQTT și Coordinator rămâne separată. Dacă modifici
 și supravegherea opțională, urmează `COORDINATOR_GUARD_RO.md`.
