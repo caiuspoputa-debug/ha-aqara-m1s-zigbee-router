@@ -1,4 +1,23 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.19 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.20 TEST
+
+Versiunea **0.37.20 TEST** corecteaza topicul MQTT ramas pe vechiul IP dupa
+schimbarea adresei hubului Router. Reincarcarea automata de dupa confirmarea
+IP-ului, o reincarcare manuala sau reconectarea hubului verifica acum agentul.
+Daca agentul este deja activat pe `TOPIC_ID=AUTO`, dar configuratia runtime nu
+corespunde adresei curente, integrarea reporneste numai agentul MQTT si cere
+confirmarea unei publicari noi. Nu reporneste hubul sau Home Assistant.
+
+Verificarea este idempotenta, ruleaza in fundal si reincearca limitat dupa o
+eroare. Nu modifica brokerul, parola, identitatea stabila a butonului, audio
+sau firmware-ul. Nu activeaza agenti dezactivati si nu atinge coordonatoarele
+dedicate. Detalii si limite: [MQTT_IP_RECOVERY_RO.md](MQTT_IP_RECOVERY_RO.md).
+
+Arhiva are aceeasi structura ca versiunea primita: continutul se poate pune in
+radacina repository-ului GitHub; componenta Home Assistant este in
+`custom_components/aqara_m1s_zigbee_router`. Nu este un kit de firmware M1S.
+Nu s-a publicat nimic pe GitHub si nu s-a instalat acest build pe dispozitive.
+
+## Compatibilitate cu registrul pastrata din 0.37.19
 
 Versiunea **0.37.19 TEST** actualizează accesul la registrul dispozitivelor
 pentru avertismentele de API depreciat raportate pe Home Assistant **2026.10.2**.

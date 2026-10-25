@@ -1,4 +1,22 @@
-# 0.37.19 TEST — device-registry API compatibility
+# 0.37.20 TEST - Router MQTT topic recovery after IP change
+
+- Extend the existing Router background MQTT synchronization to include the
+  current host in its target and reconcile AUTO topics even without saved
+  shared-broker settings. Reload/reconnect no longer leaves an enabled agent
+  running with the previous IP suffix.
+- Restart only a stale/stopped enabled Router agent, using an isolated Telnet
+  client. Confirm the runtime topic and new subscription/publication markers;
+  old log messages are not accepted as proof of recovery.
+- Preserve physical availability while retrying a failed/deferred recovery.
+  Do not restart an already-correct agent on every watchdog poll.
+- Leave dedicated Coordinators, disabled/missing agents, explicitly pinned
+  topics, stable button IDs, broker credentials, audio and firmware untouched.
+  Active WAV receivers and explicit UART maintenance defer recovery.
+- Preserve the complete 0.37.19 device-registry fix and repository-root ZIP
+  layout. Source-only TEST release; no live deployment or GitHub publication.
+- Add isolated regressions; exact executed results are in TEST_REPORT.json.
+
+## Historical: 0.37.19 TEST — device-registry API compatibility
 
 - Replace four deprecated `async_get_device` identifier lookups with
   `async_get_device_by_identifier(identifier, entry.entry_id)` on supported HA.

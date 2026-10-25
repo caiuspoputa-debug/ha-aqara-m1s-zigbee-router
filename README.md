@@ -1,4 +1,23 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.19 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.20 TEST
+
+Version **0.37.20 TEST** reconciles an enabled Router MQTT agent's AUTO topic
+after its IPv4 address changes. The existing reload after a confirmed static-IP
+change, a manual integration reload, and hub reconnection now check the topic.
+Only a stale or stopped enabled agent is restarted; a repaired topic requires
+new publication markers. The hub and Home Assistant are never rebooted.
+
+Recovery runs in the existing background MQTT synchronization task, with
+bounded retry. Disabled/missing agents, explicitly pinned topics and dedicated
+Coordinators remain untouched. Audio, broker credentials, stable button IDs,
+device-registry compatibility and firmware are unchanged. Active WAV receivers
+and explicit UART maintenance defer recovery rather than interrupting them.
+See [MQTT_IP_RECOVERY_RO.md](MQTT_IP_RECOVERY_RO.md) and `TEST_REPORT.json`.
+
+The ZIP preserves the supplied repository-root layout, including
+`custom_components/aqara_m1s_zigbee_router`. It is integration source, not M1S
+firmware. Nothing has been published to GitHub or installed on Home Assistant.
+
+## Retained device-registry compatibility from 0.37.19
 
 Version **0.37.19 TEST** updates device-registry access for the deprecation
 warnings reported on Home Assistant **2026.10.2**. Four identifier lookups now

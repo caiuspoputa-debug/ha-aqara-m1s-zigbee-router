@@ -139,8 +139,9 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
 
         from .shared_mqtt import get_shared_mqtt
         manager = await get_shared_mqtt(self.hass)
-        target = (manager.revision, self._online_generation)
-        if manager.settings and self._mqtt_applied != target:
+        target = (manager.revision, self._online_generation, self.client.host)
+        needs_sync = manager.settings or self.client.mqtt_io_confirmed
+        if needs_sync and self._mqtt_applied != target:
             if self._mqtt_task is None or self._mqtt_task.done():
                 if self.hass.loop.time() >= self._mqtt_retry_at:
                     self.mqtt_sync_state = "pending"
@@ -162,10 +163,15 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
             return
         from .shared_mqtt import apply_to_hub
         try:
-            await self.hass.async_add_executor_job(apply_to_hub, self.client, dict(manager.settings))
+            if manager.settings:
+                await self.hass.async_add_executor_job(apply_to_hub, self.client, dict(manager.settings))
+            if getattr(self.client, "mqtt_io_confirmed", False):
+                from .router_mqtt_topic import ensure_router_mqtt_topic
+                await self.hass.async_add_executor_job(ensure_router_mqtt_topic, self.client)
         except Exception:
             self.mqtt_sync_state = "failed"
             self._mqtt_retry_at = self.hass.loop.time() + 60
+            _LOGGER.warning("M1S Router MQTT synchronization not confirmed; retrying later")
         else:
             self._mqtt_applied = target
             self._mqtt_retry_at = 0

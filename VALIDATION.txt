@@ -1,13 +1,11 @@
-0.37.19 TEST - INTEGRATION ONLY
-307 integration tests passed; 0 failures, 0 errors, 0 skipped.
-Python/JSON/service YAML syntax and selectors verified.
-No deprecated DeviceRegistry.async_get_device call exists in runtime sources.
-Scoped identifier lookups; foreign-entry collisions; legacy IP/MAC migration;
-stable device IDs/user names/entity links; visual availability; missing devices;
-legacy API fallback; modern domain-owner and physical-button lookup.
-All audio runtime and sound services byte-identical to 0.37.18.
-Coordinator guard unchanged from 0.37.17.
-External devices were simulated; localhost protocol and shell tests also run.
-No Home Assistant installation/restart or live hub/hardware test performed.
-No personal automation files are included or required by the test suite.
-See TEST_REPORT.json, TEST_LOG.txt, DEVICE_REGISTRY_COMPAT_RO.md and README_RO.md.
+0.37.20 TEST - INTEGRATION ONLY
+332 local tests passed across 20 isolated suites.
+Python AST, JSON and POSIX shell syntax verified.
+Router AUTO topic recovery after IP change/reload/reconnect; unchanged topics are not restarted.
+Disabled/missing agents, explicit topics and dedicated Coordinators remain untouched.
+Audio receivers and legacy UART maintenance defer recovery with bounded retry.
+Fresh publication markers required after a repair; old log markers do not confirm it.
+Broker credentials, stable button IDs, sound files, audio runtime and device-registry fix preserved.
+No installation on Home Assistant, live hardware test, device writes or GitHub publication.
+The earlier manual repair on the owner's hub is not a hardware validation of this build.
+See TEST_REPORT.json, TEST_LOG.txt and MQTT_IP_RECOVERY_RO.md.

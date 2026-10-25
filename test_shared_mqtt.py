@@ -8,7 +8,7 @@ import sys
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from shell_test_support import shell_command, shell_path
 
@@ -105,7 +105,8 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         tree = ast.parse((ROOT / 'custom_components/aqara_m1s_zigbee_router/coordinator.py').read_text(encoding='utf-8'))
         original = next(n for n in tree.body if isinstance(n, ast.ClassDef))
         method = next(n for n in original.body if isinstance(n, ast.AsyncFunctionDef) and n.name == '_sync_shared_mqtt')
-        namespace = {'__name__': 'm1stest.coordinator', '__package__': 'm1stest'}
+        logger = Mock()
+        namespace = {'__name__': 'm1stest.coordinator', '__package__': 'm1stest', '_LOGGER': logger}
         exec(compile(ast.Module(body=[method], type_ignores=[]), '<sync>', 'exec'), namespace)
         coordinator = types.SimpleNamespace(hass=Hass(), client=types.SimpleNamespace(zigbee_role='router'), _mqtt_applied=None)
         manager = types.SimpleNamespace(settings=SETTINGS)
@@ -114,6 +115,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator.mqtt_sync_state, 'failed')
         self.assertEqual(coordinator._mqtt_retry_at, 160)
         self.assertIsNone(coordinator._mqtt_applied)
+        logger.warning.assert_called_once()
         with patch.object(module, 'apply_to_hub'):
             await namespace['_sync_shared_mqtt'](coordinator, manager, (1, 2))
         self.assertEqual(coordinator.mqtt_sync_state, 'applied')

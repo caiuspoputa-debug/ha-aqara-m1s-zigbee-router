@@ -1,27 +1,128 @@
 {
-  "version": "0.37.19 TEST",
-  "baseline": "0.37.18 TEST",
+  "version": "0.37.20 TEST",
+  "baseline": "0.37.19 DEVICE_REGISTRY_TEST",
+  "source_zip_sha256": "97bfa872d49cae2a237beb73901adbf294eff3b11cb2580f592cd3eef962234a",
   "scope": "integration_only",
-  "tests_run": 307,
-  "failures": 0,
-  "errors": 0,
-  "skipped": 0,
+  "tests_run": 332,
   "success": true,
+  "failed_suites": [],
+  "suites": [
+    {
+      "file": "test_audio_link_guard.py",
+      "tests": 11,
+      "success": true
+    },
+    {
+      "file": "test_audio_transport_batch.py",
+      "tests": 20,
+      "success": true
+    },
+    {
+      "file": "test_coordinator_io.py",
+      "tests": 20,
+      "success": true
+    },
+    {
+      "file": "test_coordinator_profile.py",
+      "tests": 29,
+      "success": true
+    },
+    {
+      "file": "test_device_registry_compat.py",
+      "tests": 17,
+      "success": true
+    },
+    {
+      "file": "test_group_clean_stop.py",
+      "tests": 6,
+      "success": true
+    },
+    {
+      "file": "test_group_cohort_alignment.py",
+      "tests": 26,
+      "success": true
+    },
+    {
+      "file": "test_group_sync_policy.py",
+      "tests": 8,
+      "success": true
+    },
+    {
+      "file": "test_local_audio.py",
+      "tests": 31,
+      "success": true
+    },
+    {
+      "file": "test_local_group_volume.py",
+      "tests": 5,
+      "success": true
+    },
+    {
+      "file": "test_notification_volume.py",
+      "tests": 4,
+      "success": true
+    },
+    {
+      "file": "test_priority_mute_policy.py",
+      "tests": 18,
+      "success": true
+    },
+    {
+      "file": "test_router_mqtt_topic.py",
+      "tests": 25,
+      "success": true
+    },
+    {
+      "file": "test_shared_mqtt.py",
+      "tests": 7,
+      "success": true
+    },
+    {
+      "file": "test_sound_delete.py",
+      "tests": 12,
+      "success": true
+    },
+    {
+      "file": "test_sound_inventory.py",
+      "tests": 11,
+      "success": true
+    },
+    {
+      "file": "test_sound_priority.py",
+      "tests": 34,
+      "success": true
+    },
+    {
+      "file": "test_sound_storage.py",
+      "tests": 8,
+      "success": true
+    },
+    {
+      "file": "test_wav_fast_start.py",
+      "tests": 6,
+      "success": true
+    },
+    {
+      "file": "test_z2m_guard.py",
+      "tests": 34,
+      "success": true
+    }
+  ],
   "hardware_tested": false,
   "installed_on_home_assistant": false,
+  "live_hubs_modified_by_this_build": false,
+  "github_published": false,
   "changed_existing_runtime_files": [
-    "__init__.py",
-    "coordinator.py",
-    "device.py",
-    "device_trigger.py",
-    "manifest.json"
+    "custom_components/aqara_m1s_zigbee_router/coordinator.py",
+    "custom_components/aqara_m1s_zigbee_router/manifest.json"
   ],
-  "new_runtime_files": [],
-  "deprecated_async_get_device_calls": 0,
-  "api_reference_core_version": "2026.10.2",
-  "legacy_api_compatibility_tested_with_simulated_registry": true,
-  "audio_runtime_unchanged_from": "0.37.18",
-  "coordinator_guard_unchanged_from": "0.37.17",
-  "test_transport": "simulated HA/registry/audio + localhost Spinel emulator + POSIX shell syntax",
+  "new_runtime_files": [
+    "custom_components/aqara_m1s_zigbee_router/router_mqtt_topic.py",
+    "custom_components/aqara_m1s_zigbee_router/router_mqtt_topic_sync.sh"
+  ],
+  "unchanged_baseline_runtime_files": 43,
+  "audio_runtime_unchanged_from": "0.37.19",
+  "coordinator_guard_unchanged_from": "0.37.19",
+  "validation": "isolated per-suite HA stand-ins, temporary shell fixtures, localhost protocol emulation",
   "python": "3.11.9"
 }

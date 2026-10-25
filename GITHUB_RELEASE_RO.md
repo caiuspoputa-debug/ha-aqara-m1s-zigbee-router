@@ -1,6 +1,16 @@
-# 0.37.19 TEST — compatibilitate cu registrul dispozitivelor Home Assistant
+# 0.37.20 TEST - MQTT Router dupa schimbarea IP-ului
 
-Corectează folosirea API-urilor depreciate raportată pe Home Assistant 2026.10.2.
+Corecteaza topicul agentului Router ramas pe IP-ul vechi dupa schimbarea
+adresei. Reincarcarea integrarii si reconectarea verifica acum agentul deja
+activat in modul AUTO si repornesc numai serviciul MQTT cand este necesar.
+Este necesara o confirmare noua de publicare; nu se reporneste hubul.
+
+Nu se activeaza agenti dezactivati si nu se modifica topicuri fixate manual,
+ID-ul stabil al butonului, brokerul, audio sau firmware-ul. Coordonatoarele
+dedicate raman neatinse. Un receiver WAV activ sau mentenanta UART amana
+reparatia. Detalii: [MQTT_IP_RECOVERY_RO.md](MQTT_IP_RECOVERY_RO.md).
+
+Pastreaza si corectia API-urilor depreciate raportate pe Home Assistant 2026.10.2:
 
 - Cele patru căutări după identificator folosesc API-ul
   `async_get_device_by_identifier(identifier, entry.entry_id)` pe HA nou.
@@ -24,7 +34,7 @@ Fă backup componentei existente. Înlocuiește componenta în
 `/config/custom_components/aqara_m1s_zigbee_router` și repornește Home Assistant.
 Nu copia întregul pachet în interiorul componentei și nu crea un folder dublu.
 Nu trebuie șterse intrările existente sau repetată asocierea Zigbee.
-Verifică dacă manifestul componentei instalate indică `0.37.19` și dacă
+Verifică dacă manifestul componentei instalate indică `0.37.20` și dacă
 integrarea se încarcă fără erori. Verifică mesajele noi de registru după restart,
 conform `DEVICE_REGISTRY_COMPAT_RO.md`. Instrucțiuni complete: `INSTALL_RO.md`.
 
@@ -37,4 +47,4 @@ reale rămâne de făcut. Păstrează marcajul pre-release **TEST**.
 
 Acesta este text pentru o publicare ulterioară. Nu s-a creat sau publicat un
 release GitHub. Pentru publicare, conținutul pachetului merge în rădăcina
-repository-ului `ha-aqara-m1s-zigbee-router`, cu manifestul 0.37.19.
+repository-ului `ha-aqara-m1s-zigbee-router`, cu manifestul 0.37.20.
