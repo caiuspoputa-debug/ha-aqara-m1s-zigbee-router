@@ -1,11 +1,31 @@
-0.37.20 TEST - INTEGRATION ONLY
-332 local tests passed across 20 isolated suites.
-Python AST, JSON and POSIX shell syntax verified.
-Router AUTO topic recovery after IP change/reload/reconnect; unchanged topics are not restarted.
-Disabled/missing agents, explicit topics and dedicated Coordinators remain untouched.
-Audio receivers and legacy UART maintenance defer recovery with bounded retry.
-Fresh publication markers required after a repair; old log markers do not confirm it.
-Broker credentials, stable button IDs, sound files, audio runtime and device-registry fix preserved.
-No installation on Home Assistant, live hardware test, device writes or GitHub publication.
-The earlier manual repair on the owner's hub is not a hardware validation of this build.
-See TEST_REPORT.json, TEST_LOG.txt and MQTT_IP_RECOVERY_RO.md.
+0.37.21 - CONTINUOUS CAST SOURCE GAP FIX
+
+342 local tests passed across 21 isolated suites (332 existing + 10 new).
+Current per-suite results are in TEST_REPORT.json and TEST_LOG.txt.
+Python AST and JSON validation passed for the complete component.
+Independent review and a separate focused test run passed.
+
+The actual production source-gap dispatch and nested helpers are executed by
+new tests. The original radio path demonstrates the previous destructive
+pending-tail clear and remote STOP; the continuous Cast path preserves every
+labelled PCM byte, partial tail, writer, receiver, batch phase and clock.
+No synthetic silence is added. Producer EOF, explicit Stop, changed process,
+source generation, shutdown and writer replacement cancel safely. The existing
+five-second source-stall failure and genuine TCP recovery remain active.
+
+Exact baseline comparison against the user's installed-version source 0.37.20:
+- Every module-level audio, buffer and timing constant is identical.
+- Group transport/synchronization and audio batching files are byte-identical.
+- Receiver start/stop shell commands and helper binaries are unchanged.
+- Other component files are identical; only media_player.py, icy_metadata.py
+  and the manifest version differ.
+
+The user's HA log confirms the destructive single rebuffer action occurred at
+2026-10-28 22:27:33.596 on Cezara, session41, host192.168.0.205. Screenshot
+confirms installed integration0.37.20, matching this source baseline.
+The exact upstream reason for temporary PCM starvation remains unverified.
+
+No Home Assistant installation, physical hub playback test, firmware/device
+write or GitHub publication was performed by this build process.
+Install integration0.37.21 and restart Home Assistant for physical validation.
+Add-on1.0.30 separately addresses the confirmed manual-selection state race.

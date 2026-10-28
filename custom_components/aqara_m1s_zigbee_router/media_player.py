@@ -31,7 +31,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .client import AqaraM1SClient
 from .media_group import AqaraM1SMediaGroup
-from .icy_metadata import watch_icy_metadata
+from .icy_metadata import is_continuous_cast_url, watch_icy_metadata
 from .audio_batch import next_batch_boundary
 from .const import (
     DATA_CLIENTS,
@@ -1845,6 +1845,7 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """Buffer raw PCM briefly, then pace it steadily to the hub."""
         session = self._ffmpeg_session
         started = self._ffmpeg_started_monotonic
+        continuous_cast_source = is_continuous_cast_url(self._media_url or "")
         stderr_task = self.hass.async_create_background_task(
             self._read_ffmpeg_stderr(process),
             f"aqara_m1s_ffmpeg_stderr_{self.entry.entry_id}",
@@ -2141,6 +2142,52 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             if transport_periods >= boundary:
                 await _flush_pcm_batch(stage=stage)
 
+        async def _wait_for_continuous_cast_pcm() -> bool:
+            """Keep queued hub audio intact across a bounded Cast source gap."""
+            def current() -> bool:
+                return (
+                    self._ffmpeg is process
+                    and self._generation_is_current(generation)
+                    and not self._shutting_down
+                    and self._stream_writer is writer
+                )
+
+            if not current():
+                return False
+            # These periods were already paced. Send the final partial batch
+            # before waiting; never clear the tail or restart the hub receiver.
+            await _flush_pcm_batch(stage="continuous_cast_source_gap")
+            if not current():
+                return False
+            gap_started = time.monotonic()
+            _LOGGER.warning(
+                "Aqara media continuous Cast source gap entity=%s session=%s "
+                "host=%s action=keep_receiver",
+                self.entity_id, session, self.client.host,
+            )
+            while queue.empty() and not producer_done.is_set():
+                if not current():
+                    return False
+                if producer_error is not None:
+                    raise producer_error
+                if time.monotonic() - gap_started > SINGLE_SOURCE_STALL_TIMEOUT:
+                    raise RuntimeError(
+                        f"PCM source stalled for more than {SINGLE_SOURCE_STALL_TIMEOUT:.1f}s"
+                    )
+                await asyncio.sleep(PCM_CHUNK_SECONDS)
+            if not current():
+                return False
+            if producer_error is not None:
+                raise producer_error
+            _LOGGER.info(
+                "Aqara media continuous Cast source gap ended entity=%s "
+                "session=%s host=%s gap_ms=%s queued_ms=%s action=keep_receiver",
+                self.entity_id, session, self.client.host,
+                int((time.monotonic() - gap_started) * 1000),
+                int(queue.qsize() * PCM_CHUNK_SECONDS * 1000),
+            )
+            return not queue.empty()
+
         try:
             # Build a real jitter cushion before opening the playout clock. For
             # short files, start as soon as FFmpeg reaches EOF instead of waiting.
@@ -2317,6 +2364,14 @@ class AqaraM1SRadioPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                         )
 
                 if not rebuffering and queue.empty() and not producer_done.is_set():
+                    if continuous_cast_source:
+                        available = await _wait_for_continuous_cast_pcm()
+                        if available:
+                            # Keep the established clock and consume real PCM
+                            # through the ordinary pacing loop, without adding
+                            # silence periods, prefill or a new transport.
+                            continue
+                        break
                     rebuffering = True
                     rebuffer_events += 1
                     if self._ffmpeg is process:

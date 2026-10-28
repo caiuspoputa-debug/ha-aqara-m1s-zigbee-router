@@ -1,4 +1,18 @@
-# 0.37.20 TEST - Router MQTT topic recovery after IP change
+# 0.37.21 — Continuous Cast tail preserved through temporary source starvation
+
+- Restrict non-destructive source waiting to recognized continuous Cast WAV URLs.
+- Flush the existing partial PCM batch, retain the TCP writer and receiver, and
+  wait for actual source data using the existing 35ms period and 5s stall limit.
+- Keep the buffered tail; do not run remote STOP or prefill a new receiver merely
+  because the HA source queue temporarily becomes empty. Add no silence frames
+  or clock offsets.
+- Preserve normal buffers, pacing, radio recovery, genuine transport recovery
+  and group synchronization. Explicit Stop/source replacement cancels the wait.
+- The user's 0.37.20 warning confirms the destructive rebuffer path executed.
+  Its upstream starvation trigger remains unverified; local tests are not an
+  acoustic test on the user's hub. See TEST_REPORT.json for current results.
+
+## Historical: 0.37.20 TEST - Router MQTT topic recovery after IP change
 
 - Extend the existing Router background MQTT synchronization to include the
   current host in its target and reconcile AUTO topics even without saved
@@ -1047,6 +1061,7 @@ Replace the final-octet slider with an always-visible numeric box in both static
 - TEST status retained pending long-run physical observation.
 
 # Changelog
+
 
 ## 0.37.6 TEST - 2026-10-08
 

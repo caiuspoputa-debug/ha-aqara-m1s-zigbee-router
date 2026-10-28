@@ -1,50 +1,20 @@
-# 0.37.20 TEST - MQTT Router dupa schimbarea IP-ului
+# 0.37.21 — Continuous Cast source wait preserves buffered endings
 
-Corecteaza topicul agentului Router ramas pe IP-ul vechi dupa schimbarea
-adresei. Reincarcarea integrarii si reconectarea verifica acum agentul deja
-activat in modul AUTO si repornesc numai serviciul MQTT cand este necesar.
-Este necesara o confirmare noua de publicare; nu se reporneste hubul.
+Fix the confirmed destructive rebuffer path used by individual M1S players
+when a continuous YouTube Cast stream temporarily runs out of decoded PCM.
+Flush the existing partial PCM batch, retain the TCP writer and hub receiver,
+and await real PCM using the existing 35 ms period and 5-second stall limit.
+Do not discard buffered tail audio, restart the receiver, add silence frames,
+prefill a new transport or add playback-position offsets for this source gap.
 
-Nu se activeaza agenti dezactivati si nu se modifica topicuri fixate manual,
-ID-ul stabil al butonului, brokerul, audio sau firmware-ul. Coordonatoarele
-dedicate raman neatinse. Un receiver WAV activ sau mentenanta UART amana
-reparatia. Detalii: [MQTT_IP_RECOVERY_RO.md](MQTT_IP_RECOVERY_RO.md).
+Recognition is limited to continuous Cast WAV URLs. Normal radio behavior and
+actual transport-fault recovery are unchanged. Explicit Stop/source replacement
+still cancels the old session. Buffer constants, normal pacing, receiver shell
+commands and group synchronization are preserved.
 
-Pastreaza si corectia API-urilor depreciate raportate pe Home Assistant 2026.10.2:
+The user's existing 0.37.20 HA warning confirms action=stop_receiver occurred.
+The upstream reason for source starvation remains unverified. Current local
+regression results are saved with the release; physical playback is not claimed.
 
-- Cele patru căutări după identificator folosesc API-ul
-  `async_get_device_by_identifier(identifier, entry.entry_id)` pe HA nou.
-  Compatibilitatea pentru HA vechi caută numai în intrarea proprietară.
-- Rezolvarea proprietarului pentru trigger-ele dispozitivului folosește
-  helperul actual al domeniului, fără citirea `DeviceEntry.config_entries`
-  pe HA nou. Fallback-ul este rezervat versiunilor fără API-ul nou.
-- Identificatorii, ID-urile unice și migrarea identității existente sunt păstrate.
-- Runtime-ul audio rămâne identic octet cu octet cu 0.37.18; supravegherea
-  Coordinator/Zigbee2MQTT rămâne neschimbată din 0.37.17.
-
-Detaliile API și sursele oficiale pentru termenele distincte de retragere sunt
-în [DEVICE_REGISTRY_COMPAT_RO.md](DEVICE_REGISTRY_COMPAT_RO.md).
-
-Integrarea și automatizările sunt livrate strict separat. Acest pachet de
-integrare nu conține și nu instalează fișiere de automatizare.
-
-## Instalare
-
-Fă backup componentei existente. Înlocuiește componenta în
-`/config/custom_components/aqara_m1s_zigbee_router` și repornește Home Assistant.
-Nu copia întregul pachet în interiorul componentei și nu crea un folder dublu.
-Nu trebuie șterse intrările existente sau repetată asocierea Zigbee.
-Verifică dacă manifestul componentei instalate indică `0.37.20` și dacă
-integrarea se încarcă fără erori. Verifică mesajele noi de registru după restart,
-conform `DEVICE_REGISTRY_COMPAT_RO.md`. Instrucțiuni complete: `INSTALL_RO.md`.
-
-## Statut
-
-Pachet complet de integrare, nu imagine de firmware. Nicio instalare HA,
-repornire HA sau probă audio live nu a fost făcută pentru acest build.
-`VALIDATION.txt` identifică rezultatele automate finale; validarea pe huburile
-reale rămâne de făcut. Păstrează marcajul pre-release **TEST**.
-
-Acesta este text pentru o publicare ulterioară. Nu s-a creat sau publicat un
-release GitHub. Pentru publicare, conținutul pachetului merge în rădăcina
-repository-ului `ha-aqara-m1s-zigbee-router`, cu manifestul 0.37.20.
+Install integration 0.37.21 and restart HA. Add-on 1.0.30 separately fixes
+obsolete manual selections publishing STOPPED for the newly selected song.

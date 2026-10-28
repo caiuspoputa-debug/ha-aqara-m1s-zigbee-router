@@ -1,4 +1,26 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.20 TEST
+# Aqara M1S Zigbee Coordinator + Router v0.37.21
+
+Corecteaza oprirea receiverului la o lipsa scurta de PCM in fluxurile continue
+YouTube Cast. In 0.37.20, logul `single rebuffer started ... action=stop_receiver`
+insemna ca integrarea golea lotul PCM si oprea receiverul de pe hub, inclusiv
+finalul piesei care era deja in curs de redare.
+
+Pentru fluxurile Cast continue `/stream/<receiver>/<serial>.wav`, integrarea
+trimite acum si ultimul lot partial, pastreaza acelasi receiver si asteapta
+datele urmatoare in limita existenta de 5 secunde. Nu insereaza audio suplimentar
+si nu reporneste transportul pentru aceasta lipsa temporara de date.
+
+Dimensiunile bufferelor, prebufferul, prefilling-ul initial, formatul PCM,
+batching-ul obisnuit, ceasul de redare si sincronizarea grupului sunt pastrate.
+Stop explicit si defectele reale de transport pastreaza recuperarea existenta.
+Comportamentul pentru radio si alte surse ramane acelasi.
+
+Se instaleaza integrarea **0.37.21**, apoi se reporneste Home Assistant.
+Add-on-ul **1.0.30** contine separat corectia selectiei manuale a piesei.
+Detalii: [CAST_CONTINUOUS_TAIL_RO.md](CAST_CONTINUOUS_TAIL_RO.md).
+Testele locale nu reprezinta o verificare acustica pe huburile utilizatorului.
+
+## Istoric 0.37.20 — MQTT Router dupa schimbarea IP-ului
 
 Versiunea **0.37.20 TEST** corecteaza topicul MQTT ramas pe vechiul IP dupa
 schimbarea adresei hubului Router. Reincarcarea automata de dupa confirmarea

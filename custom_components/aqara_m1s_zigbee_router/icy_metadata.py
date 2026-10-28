@@ -30,6 +30,14 @@ def parse_stream_title(block: bytes) -> tuple[bool, str | None, str | None]:
     return True, title or None, None
 
 
+def is_continuous_cast_url(url: str) -> bool:
+    """Recognize the continuous WAV Cast bridge across hosts and restarts."""
+    parts = urlsplit(url)
+    return parts.scheme.lower() in ("http", "https") and bool(
+        re.fullmatch(r"/stream/[^/]+/[0-9]+\.wav/?", parts.path, re.IGNORECASE)
+    )
+
+
 def is_icy_candidate(url: str) -> bool:
     """Exclude known single-client Cast transports before any HTTP request.
 
@@ -42,7 +50,7 @@ def is_icy_candidate(url: str) -> bool:
         return False
     path = parts.path
     # Current continuous WAV bridge and earlier token-based Cast sessions.
-    if re.fullmatch(r"/stream/[^/]+/[0-9]+\.wav/?", path, re.IGNORECASE):
+    if is_continuous_cast_url(url):
         return False
     if re.fullmatch(r"/audio/[^/]+/[^/]+/[0-9]+/?", path):
         return False
