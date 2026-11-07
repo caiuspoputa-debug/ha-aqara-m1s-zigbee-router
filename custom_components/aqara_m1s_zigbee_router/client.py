@@ -226,6 +226,28 @@ class AqaraM1SClient:
         finally:
             isolated.disconnect()
 
+    def run_isolated_commands(self, commands: list[str], *, timeout: float) -> str:
+        """Run acknowledged commands on one fresh Telnet session.
+
+        Keep session variables intact: do not reconnect/retry a single command
+        after a failure. The caller can retry the whole sequence from scratch.
+        """
+        isolated = type(self)(
+            host=self.host,
+            port=self.port,
+            username=self.username,
+            password=self.password,
+            timeout=self.timeout,
+        )
+        try:
+            output = ""
+            with isolated._lock:
+                for command in commands:
+                    output = isolated._run_command_locked(command, timeout=timeout)
+            return output
+        finally:
+            isolated.disconnect()
+
     def _close_uart_locked(self) -> None:
         sock = self._uart_sock
         self._uart_sock = None

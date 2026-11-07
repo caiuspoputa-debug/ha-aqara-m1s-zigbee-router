@@ -1,8 +1,8 @@
 {
-  "version": "0.37.22",
-  "baseline": "0.37.21",
-  "run_at_utc": "2026-11-07T03:05:17.302060+00:00",
-  "tests_run": 343,
+  "version": "0.37.23",
+  "baseline": "0.37.22",
+  "run_at_utc": "2026-11-07T03:41:48.935209+00:00",
+  "tests_run": 345,
   "success": true,
   "failed_suites": [],
   "suites": [
@@ -86,7 +86,7 @@
     },
     {
       "file": "test_router_mqtt_topic.py",
-      "tests": 25,
+      "tests": 27,
       "success": true,
       "returncode": 0
     },
@@ -133,8 +133,17 @@
       "returncode": 0
     }
   ],
-  "validation": "Python 3.11 syntax, JSON parsing and isolated existing regression suites; no live Home Assistant/hub validation",
-  "recheck_note": "Initial shared MQTT test fixture lacked client.host; fixture updated and 7 tests rerun successfully. Added assertions for hub host and exception traceback.",
-  "source_zip_sha256": "2ae2a2da9953198fe52814dfa94a6bf4147011dc2bd2e4c88eccb60bfcce4834",
-  "audio_runtime_byte_identical_to_baseline": true
+  "validation": "Python syntax and JSON parsing; 345 isolated local regression tests passed; additional live read-only transfer diagnostic on one hub. No installation/full Home Assistant validation.",
+  "source_zip_sha256": "adf4124de9d2e9649aa7b6ffb09fc79e7b3d1ff807c58d3b7ad71363a1163839",
+  "live_read_only_diagnostic": {
+    "host": "192.168.0.203",
+    "old_bulk_transfer": "Observed truncation of base64 command to bas; did not reproduce exact historic 45-second timeout",
+    "chunked_transfer": "M1S_ROUTER_TOPIC_SYNC_READY",
+    "commands": 12,
+    "largest_command_characters": 454,
+    "elapsed_seconds": 10.16,
+    "device_mutations": false,
+    "limitation": "Diagnostic variant stops before locks or agent restart; full integration not deployed"
+  },
+  "existing_client_methods_unchanged": true
 }

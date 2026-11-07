@@ -1,14 +1,15 @@
 test_audio_link_guard.py
 ...........
 ----------------------------------------------------------------------
-Ran 11 tests in 0.456s
+Ran 11 tests in 0.484s
 
 OK
 
 test_audio_transport_batch.py
+Executing <Task pending name='aqara_m1s_group_writer_224' coro=<AqaraM1SMediaGroupManager._member_writer_loop() running at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_0_37_23\custom_components\aqara_m1s_zigbee_router\media_group.py:2303> wait_for=<Future pending cb=[Task.task_wakeup()] created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py:428> created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py:384> took 0.141 seconds
 ....................
 ----------------------------------------------------------------------
-Ran 20 tests in 3.368s
+Ran 20 tests in 3.796s
 
 OK
 
@@ -25,7 +26,7 @@ Aqara media continuous Cast source gap entity=media_player.cezara session=41 hos
 .Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
 .
 ----------------------------------------------------------------------
-Ran 10 tests in 0.620s
+Ran 10 tests in 0.467s
 
 OK
 
@@ -33,7 +34,7 @@ test_coordinator_io.py
 .............Ignored M1S MQTT state for role coordinator on router entry
 .......
 ----------------------------------------------------------------------
-Ran 20 tests in 0.517s
+Ran 20 tests in 0.408s
 
 OK
 
@@ -70,7 +71,7 @@ test_old_coordinator_trigger_cannot_subscribe_to_auxiliary_mqtt (__main__.Trigge
 test_router_physical_button_triggers_are_preserved (__main__.TriggerTests.test_router_physical_button_triggers_are_preserved) ... ok
 
 ----------------------------------------------------------------------
-Ran 30 tests in 0.748s
+Ran 30 tests in 0.540s
 
 OK
 
@@ -94,16 +95,15 @@ test_missing_own_device_does_not_rename_a_foreign_collision (__main__.VisualAvai
 test_offline_and_online_names_update_only_the_config_entry_device (__main__.VisualAvailabilityRegistryTests.test_offline_and_online_names_update_only_the_config_entry_device) ... ok
 
 ----------------------------------------------------------------------
-Ran 17 tests in 0.133s
+Ran 17 tests in 0.112s
 
 OK
 
 test_group_clean_stop.py
-.Executing <Task pending name='Task-13' coro=<GroupCleanStopTests.test_existing_pipe_consumers_cancel_before_discard_readers() running at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_group_clean_stop.py:67> wait_for=<Future pending cb=[Task.task_wakeup()] created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py:428> cb=[_run_until_complete_cb() at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py:181] created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.109 seconds
-.M1S group FFmpeg did not exit after terminate pid=123 reason=user_stop; killing process
+..M1S group FFmpeg did not exit after terminate pid=123 reason=user_stop; killing process
 ....
 ----------------------------------------------------------------------
-Ran 6 tests in 1.002s
+Ran 6 tests in 0.696s
 
 OK
 
@@ -120,54 +120,54 @@ M1S group quarantining affected member member=Aqara M1S Zigbee Router@192.168.0.
 M1S group confirmed TCP backpressure member=Aqara M1S Zigbee Router@192.168.0.222 seq=102 consecutive=2 action=isolate_member_keep_group_clock
 ..
 ----------------------------------------------------------------------
-Ran 26 tests in 7.751s
+Ran 26 tests in 5.546s
 
 OK
 
 test_group_sync_policy.py
 ........
 ----------------------------------------------------------------------
-Ran 8 tests in 0.294s
+Ran 8 tests in 0.174s
 
 OK
 
 test_local_audio.py
 ...............................
 ----------------------------------------------------------------------
-Ran 31 tests in 1.095s
+Ran 31 tests in 0.679s
 
 OK
 
 test_local_group_volume.py
 .....
 ----------------------------------------------------------------------
-Ran 5 tests in 0.155s
+Ran 5 tests in 0.099s
 
 OK
 
 test_notification_volume.py
 ....
 ----------------------------------------------------------------------
-Ran 4 tests in 0.168s
+Ran 4 tests in 0.092s
 
 OK
 
 test_priority_mute_policy.py
 ..................
 ----------------------------------------------------------------------
-Ran 18 tests in 1.431s
+Ran 18 tests in 0.751s
 
 OK
 
 test_router_mqtt_topic.py
 M1S Router MQTT synchronization not confirmed for hub 192.168.0.210; retrying later
 Traceback (most recent call last):
-  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\custom_components\aqara_m1s_zigbee_router\coordinator.py", line 170, in _sync_shared_mqtt
+  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_0_37_23\custom_components\aqara_m1s_zigbee_router\coordinator.py", line 170, in _sync_shared_mqtt
     await self.hass.async_add_executor_job(ensure_router_mqtt_topic, self.client)
   File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 2253, in _execute_mock_call
     result = effect(*args, **kwargs)
              ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_router_mqtt_topic.py", line 226, in <lambda>
+  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_0_37_23\test_router_mqtt_topic.py", line 262, in <lambda>
     async_add_executor_job=AsyncMock(side_effect=lambda fn, *args: fn(*args)))
                                                                    ^^^^^^^^^
   File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1124, in __call__
@@ -179,70 +179,31 @@ Traceback (most recent call last):
   File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1183, in _execute_mock_call
     raise effect
 RuntimeError: deferred
-.........................
+...........................
 ----------------------------------------------------------------------
-Ran 25 tests in 10.588s
+Ran 27 tests in 6.053s
 
 OK
 
 test_shared_mqtt.py
-Executing <Task finished name='Task-2' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 1.797 seconds
-....Executing <Task finished name='Task-24' coro=<Tests.test_paho_accept_and_reject() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py:59> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.266 seconds
-..E
-======================================================================
-ERROR: test_sync_failure_retry_and_recovery (__main__.Tests.test_sync_failure_retry_and_recovery)
+Executing <Task finished name='Task-2' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_0_37_23\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.687 seconds
+.......
 ----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "<sync>", line 167, in _sync_shared_mqtt
-  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py", line 37, in async_add_executor_job
-    async def async_add_executor_job(self, fn, *args): return fn(*args)
-                                                              ^^^^^^^^^
-  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1124, in __call__
-    return self._mock_call(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1128, in _mock_call
-    return self._execute_mock_call(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1183, in _execute_mock_call
-    raise effect
-OSError: offline
+Ran 7 tests in 0.916s
 
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\async_case.py", line 90, in _callTestMethod
-    if self._callMaybeAsync(method) is not None:
-       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\async_case.py", line 112, in _callMaybeAsync
-    return self._asyncioRunner.run(
-           ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
-    return self._loop.run_until_complete(task)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 654, in run_until_complete
-    return future.result()
-           ^^^^^^^^^^^^^^^
-  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py", line 114, in test_sync_failure_retry_and_recovery
-    await namespace['_sync_shared_mqtt'](coordinator, manager, (1, 1))
-  File "<sync>", line 176, in _sync_shared_mqtt
-AttributeError: 'types.SimpleNamespace' object has no attribute 'host'
-
-----------------------------------------------------------------------
-Ran 7 tests in 2.310s
-
-FAILED (errors=1)
+OK
 
 test_sound_delete.py
 ............
 ----------------------------------------------------------------------
-Ran 12 tests in 0.114s
+Ran 12 tests in 0.056s
 
 OK
 
 test_sound_inventory.py
 ...........
 ----------------------------------------------------------------------
-Ran 11 tests in 0.377s
+Ran 11 tests in 0.261s
 
 OK
 
@@ -254,36 +215,27 @@ test_sound_priority.py
 .....M1S WAV URL download timed out host=test
 ....
 ----------------------------------------------------------------------
-Ran 34 tests in 2.003s
+Ran 34 tests in 1.431s
 
 OK
 
 test_sound_storage.py
 ........
 ----------------------------------------------------------------------
-Ran 8 tests in 0.142s
+Ran 8 tests in 0.104s
 
 OK
 
 test_wav_fast_start.py
 ......
 ----------------------------------------------------------------------
-Ran 6 tests in 0.195s
+Ran 6 tests in 0.213s
 
 OK
 
 test_z2m_guard.py
 ..................................
 ----------------------------------------------------------------------
-Ran 34 tests in 0.990s
-
-OK
-
-FINAL RECHECK: test_shared_mqtt.py (fixture updated with client.host)
-Executing <Task finished name='Task-2' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 1.125 seconds
-....Executing <Task finished name='Task-24' coro=<Tests.test_paho_accept_and_reject() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py:59> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.140 seconds
-...
-----------------------------------------------------------------------
-Ran 7 tests in 1.489s
+Ran 34 tests in 0.615s
 
 OK

@@ -26,46 +26,82 @@ spec.loader.exec_module(topic)
 class WrapperTests(unittest.TestCase):
     def client(self, **changes):
         fields = dict(host="192.168.0.210", zigbee_role="router", mqtt_io_confirmed=True,
-                      run_isolated_command=Mock(return_value="M1S_ROUTER_TOPIC_SYNC_REPAIRED\n"))
+                      run_isolated_commands=Mock(return_value="M1S_ROUTER_TOPIC_SYNC_REPAIRED\n"))
         fields.update(changes)
         return types.SimpleNamespace(**fields)
 
     def test_repaired_topic_uses_isolated_client_and_short_lines(self):
         client = self.client()
         self.assertEqual(topic.ensure_router_mqtt_topic(client), "repaired")
-        command = client.run_isolated_command.call_args.args[0]
-        self.assertEqual(client.run_isolated_command.call_args.kwargs["timeout"], 45)
+        commands = client.run_isolated_commands.call_args.args[0]
+        command = commands[-1]
+        self.assertEqual(client.run_isolated_commands.call_args.kwargs["timeout"], 45)
         self.assertIn("M1S_EXPECTED_IPV4=192.168.0.210", command)
-        self.assertLess(max(map(len, command.splitlines())), 512)
-        payload = "".join(re.findall(r"printf '%s' '([A-Za-z0-9+/=]+)'", command))
+        self.assertLess(max(map(len, commands)), 512)
+        prefix = '__m1s_topic_sync_payload="${__m1s_topic_sync_payload}"'
+        self.assertEqual(commands[0], "__m1s_topic_sync_payload=''")
+        self.assertTrue(all(part.startswith(prefix) for part in commands[1:-1]))
+        payload = "".join(part[len(prefix):] for part in commands[1:-1])
         self.assertEqual(base64.b64decode(payload), SCRIPT.read_bytes())
 
     def test_coordinator_never_receives_a_command(self):
         client = self.client(zigbee_role="coordinator")
         self.assertEqual(topic.ensure_router_mqtt_topic(client), "not_used")
-        client.run_isolated_command.assert_not_called()
+        client.run_isolated_commands.assert_not_called()
 
     def test_disabled_or_unconfirmed_agent_is_not_enabled(self):
         client = self.client(mqtt_io_confirmed=False)
         self.assertEqual(topic.ensure_router_mqtt_topic(client), "not_used")
-        client.run_isolated_command.assert_not_called()
+        client.run_isolated_commands.assert_not_called()
 
     def test_ready_and_legacy_runtime_are_accepted(self):
         for marker, expected in (("READY", "ready"), ("NOT_USED", "not_used")):
             self.assertEqual(topic.ensure_router_mqtt_topic(self.client(
-                run_isolated_command=Mock(return_value="M1S_ROUTER_TOPIC_SYNC_" + marker))), expected)
+                run_isolated_commands=Mock(return_value="M1S_ROUTER_TOPIC_SYNC_" + marker))), expected)
 
     def test_unknown_echo_and_unconfirmed_output_are_rejected(self):
         for output in ("", "echo M1S_ROUTER_TOPIC_SYNC_READY", "M1S_ROUTER_TOPIC_SYNC_DEFERRED"):
             with self.assertRaises(RuntimeError):
-                topic.ensure_router_mqtt_topic(self.client(run_isolated_command=Mock(return_value=output)))
+                topic.ensure_router_mqtt_topic(self.client(run_isolated_commands=Mock(return_value=output)))
 
     def test_invalid_host_is_rejected_before_transmission(self):
         for host in ("192.168.0.210;reboot", "not-an-ip", "192.168.0.210\n"):
             client = self.client(host=host)
             with self.assertRaises(ValueError):
                 topic.ensure_router_mqtt_topic(client)
-            client.run_isolated_command.assert_not_called()
+            client.run_isolated_commands.assert_not_called()
+
+
+class IsolatedSessionTests(unittest.TestCase):
+    def setUp(self):
+        import test_coordinator_profile as support
+        self.client_type = support.client_module.AqaraM1SClient
+
+    def test_commands_share_one_session_and_disconnect_without_service_cleanup(self):
+        client = self.client_type("192.168.0.203")
+        calls = []
+        def execute(instance, command, *, timeout):
+            calls.append((instance, command, timeout))
+            return "READY" if command == "execute" else ""
+        with patch.object(self.client_type, "_run_command_locked", execute), \
+             patch.object(self.client_type, "disconnect") as disconnect, \
+             patch.object(self.client_type, "close") as close:
+            result = client.run_isolated_commands(["init", "append", "execute"], timeout=45)
+        self.assertEqual(result, "READY")
+        self.assertEqual([c[1] for c in calls], ["init", "append", "execute"])
+        self.assertTrue(all(c[0] is calls[0][0] for c in calls))
+        self.assertIsNot(calls[0][0], client)
+        disconnect.assert_called_once()
+        close.assert_not_called()
+
+    def test_partial_upload_aborts_without_retry_or_execution(self):
+        client = self.client_type("192.168.0.203")
+        with patch.object(self.client_type, "_run_command_locked", side_effect=["", TimeoutError("lost ack")]) as execute, \
+             patch.object(self.client_type, "disconnect") as disconnect:
+            with self.assertRaises(TimeoutError):
+                client.run_isolated_commands(["init", "append", "execute"], timeout=45)
+        self.assertEqual([c.args[0] for c in execute.call_args_list], ["init", "append"])
+        disconnect.assert_called_once()
 
 
 class ShellTests(unittest.TestCase):

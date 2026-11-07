@@ -1,3 +1,16 @@
+# v0.37.23 — Transfer Telnet confirmat pentru sincronizarea MQTT
+
+Corectează transmiterea scriptului de verificare MQTT către hub: blocul Base64
+este trimis în comenzi scurte, confirmate individual pe aceeași sesiune Telnet.
+Comanda finală rulează numai după confirmarea tuturor segmentelor. Dacă apare
+o eroare, sesiunea se închide și sincronizarea poate fi reluată integral la
+următoarea încercare. Nu se reia un segment pe o sesiune care și-a pierdut variabilele.
+
+Include corecțiile 0.37.22: EntityCategory.DIAGNOSTIC și importul necesar pentru
+senzori, plus IP-ul hubului și traceback în avertismentele MQTT. Păstrează fixul
+Cast 0.37.21. Transferul audio și scriptul de recuperare MQTT nu sunt modificate.
+
+
 # 0.37.22 — Sensor category compatibility and MQTT diagnostics
 
 - Fix diagnostic sensor registration by importing EntityCategory and using

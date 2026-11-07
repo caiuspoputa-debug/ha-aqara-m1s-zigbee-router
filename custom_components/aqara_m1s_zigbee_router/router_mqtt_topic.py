@@ -15,15 +15,20 @@ def ensure_router_mqtt_topic(client):
     address = str(ipaddress.IPv4Address(client.host))
     script = Path(__file__).with_name("router_mqtt_topic_sync.sh").read_bytes()
     encoded = base64.b64encode(script).decode("ascii")
-    chunks = "\n".join(
-        f"printf '%s' '{encoded[index:index + 400]}'"
-        for index in range(0, len(encoded), 400)
-    )
-    command = (
-        "{\n" + chunks + "\n} | base64 -d | "
+    # Do not send the complete >4 KB script to the interactive Telnet shell
+    # in one burst: the hub can truncate pending input, including END markers.
+    # Keep every transfer short and wait for its execution acknowledgement.
+    commands = ["__m1s_topic_sync_payload=''"]
+    for index in range(0, len(encoded), 400):
+        chunk = encoded[index:index + 400]
+        commands.append(
+            '__m1s_topic_sync_payload="${__m1s_topic_sync_payload}"' + shlex.quote(chunk)
+        )
+    commands.append(
+        "printf '%s' \"$__m1s_topic_sync_payload\" | base64 -d | "
         + "M1S_EXPECTED_IPV4=" + shlex.quote(address) + " /bin/sh"
     )
-    output = client.run_isolated_command(command, timeout=45.0)
+    output = client.run_isolated_commands(commands, timeout=45.0)
     lines = {line.strip() for line in output.splitlines()}
     if "M1S_ROUTER_TOPIC_SYNC_REPAIRED" in lines:
         return "repaired"
