@@ -108,7 +108,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         logger = Mock()
         namespace = {'__name__': 'm1stest.coordinator', '__package__': 'm1stest', '_LOGGER': logger}
         exec(compile(ast.Module(body=[method], type_ignores=[]), '<sync>', 'exec'), namespace)
-        coordinator = types.SimpleNamespace(hass=Hass(), client=types.SimpleNamespace(zigbee_role='router'), _mqtt_applied=None)
+        coordinator = types.SimpleNamespace(hass=Hass(), client=types.SimpleNamespace(zigbee_role='router', host='192.168.0.205'), _mqtt_applied=None)
         manager = types.SimpleNamespace(settings=SETTINGS)
         with patch.object(module, 'apply_to_hub', side_effect=OSError('offline')):
             await namespace['_sync_shared_mqtt'](coordinator, manager, (1, 1))
@@ -116,6 +116,8 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator._mqtt_retry_at, 160)
         self.assertIsNone(coordinator._mqtt_applied)
         logger.warning.assert_called_once()
+        self.assertEqual(logger.warning.call_args.args[1], '192.168.0.205')
+        self.assertTrue(logger.warning.call_args.kwargs['exc_info'])
         with patch.object(module, 'apply_to_hub'):
             await namespace['_sync_shared_mqtt'](coordinator, manager, (1, 2))
         self.assertEqual(coordinator.mqtt_sync_state, 'applied')

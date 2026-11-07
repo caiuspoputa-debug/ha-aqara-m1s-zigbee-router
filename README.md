@@ -1,4 +1,7 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.21
+# Aqara M1S Zigbee Coordinator + Router v0.37.22
+
+Version 0.37.22 fixes diagnostic sensor registration and adds hub-specific MQTT exception details.
+
 
 Continuous YouTube Cast streams no longer take the destructive radio rebuffer
 path when HA temporarily runs out of decoded PCM. That path cleared pending
@@ -11,7 +14,7 @@ Buffer sizes, initial prefill, normal PCM pacing and group synchronization are
 unchanged. Explicit Stop and genuine transport failures remain authoritative.
 Ordinary radio rebuffer behavior is retained.
 
-Install integration **0.37.21** and restart Home Assistant. Add-on **1.0.30**
+Install integration **0.37.22** and restart Home Assistant. Add-on **1.0.30**
 separately fixes obsolete manual selections publishing STOPPED for a newer song.
 Physical hub playback still requires verification after installation.
 

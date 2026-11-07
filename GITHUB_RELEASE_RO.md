@@ -1,20 +1,16 @@
-# 0.37.21 — Continuous Cast source wait preserves buffered endings
+# v0.37.22 — Corecții senzori și diagnostic MQTT
 
-Fix the confirmed destructive rebuffer path used by individual M1S players
-when a continuous YouTube Cast stream temporarily runs out of decoded PCM.
-Flush the existing partial PCM batch, retain the TCP writer and hub receiver,
-and await real PCM using the existing 35 ms period and 5-second stall limit.
-Do not discard buffered tail audio, restart the receiver, add silence frames,
-prefill a new transport or add playback-position offsets for this source gap.
+- Corectează înregistrarea celor două clase de senzori diagnostic folosind EntityCategory.DIAGNOSTIC și importul necesar.
+- Adaugă IP-ul hubului și traceback-ul excepției la avertismentul de sincronizare MQTT. Reîncercarea după 60 de secunde este păstrată.
+- Păstrează fixul Cast din 0.37.21. Fișierele audio sunt identice cu arhiva de bază.
 
-Recognition is limited to continuous Cast WAV URLs. Normal radio behavior and
-actual transport-fault recovery are unchanged. Explicit Stop/source replacement
-still cancels the old session. Buffer constants, normal pacing, receiver shell
-commands and group synchronization are preserved.
+Validare: 343 de teste trecute, sintaxă Python și JSON verificate. Testele folosesc simulări; această arhivă nu a fost testată pe huburi reale sau într-o instanță Home Assistant.
 
-The user's existing 0.37.20 HA warning confirms action=stop_receiver occurred.
-The upstream reason for source starvation remains unverified. Current local
-regression results are saved with the release; physical playback is not claimed.
+## Upload GitHub
 
-Install integration 0.37.21 and restart HA. Add-on 1.0.30 separately fixes
-obsolete manual selections publishing STOPPED for the newly selected song.
+1. Dezarhivează pachetul și încarcă fișierele sale în rădăcina repository-ului ha-aqara-m1s-zigbee-router, păstrând structura custom_components/aqara_m1s_zigbee_router. Nu încărca doar ZIP-ul în repository.
+2. Creează un release cu tag-ul v0.37.22 pe commitul care conține fișierele noi.
+3. Folosește titlul și descrierea de mai sus; atașează M1S_Integration_0.37.22_SENSOR_MQTT_FIX.zip ca asset.
+4. Pentru instalare manuală, salvează o copie a folderului integrării, înlocuiește-l cu cel din pachet și repornește Home Assistant.
+
+Pachetul nu modifică aqara_m1s_local, Tuya Local sau bridge-ul de climatizare. Modificările debug ale acelor integrări trebuie păstrate separat.

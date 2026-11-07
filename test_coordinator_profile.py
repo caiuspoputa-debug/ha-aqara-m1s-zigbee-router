@@ -1,5 +1,6 @@
 """Coordinator-only regressions using small HA stand-ins, without a live hub."""
 import asyncio
+from enum import Enum
 import importlib.util
 import pathlib
 import sys
@@ -87,6 +88,12 @@ helpers.device_registry, helpers.entity_registry = dr, er
 module("homeassistant.helpers.dispatcher", async_dispatcher_send=Mock())
 module("homeassistant.helpers.update_coordinator", DataUpdateCoordinator=FakeCoordinatorBase,
        UpdateFailed=type("UpdateFailed", (RuntimeError,), {}), CoordinatorEntity=FakeCoordinatorEntity)
+class FakeEntityCategory(str, Enum):
+    CONFIG = "config"
+    DIAGNOSTIC = "diagnostic"
+
+
+module("homeassistant.helpers.entity", EntityCategory=FakeEntityCategory)
 module("homeassistant.helpers.entity_platform", AddEntitiesCallback=object)
 module("homeassistant.helpers.storage", Store=Mock())
 module("homeassistant.helpers.trigger", TriggerActionType=object, TriggerInfo=object)
@@ -296,6 +303,12 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         await coord._async_refresh_diagnostics(1)
         self.assertEqual(coord.data, {"online": False})
 
+    async def test_diagnostic_categories_are_entity_category_instances(self):
+        for name in ("AqaraM1SCoordinatorDiagnosticSensor", "AqaraM1SMQTTSyncSensor"):
+            category = getattr(sensor_module, name)._attr_entity_category
+            self.assertIsInstance(category, FakeEntityCategory)
+            self.assertIs(category, FakeEntityCategory.DIAGNOSTIC)
+
     async def test_coordinator_sensor_platform_exposes_four_live_diagnostics(self):
         coord, hass = self.make_coordinator()
         item = entry()
@@ -475,3 +488,4 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

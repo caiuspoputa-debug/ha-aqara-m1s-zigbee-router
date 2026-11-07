@@ -1,3 +1,12 @@
+# 0.37.22 — Sensor category compatibility and MQTT diagnostics
+
+- Fix diagnostic sensor registration by importing EntityCategory and using
+  EntityCategory.DIAGNOSTIC instead of plain strings in both diagnostic classes.
+- Include the hub IP and exception traceback when Router MQTT synchronization
+  fails. Keep warning severity and the existing 60-second retry behavior.
+- Preserve the 0.37.21 continuous Cast tail fix and all audio runtime files.
+
+
 # 0.37.21 — Continuous Cast tail preserved through temporary source starvation
 
 - Restrict non-destructive source waiting to recognized continuous Cast WAV URLs.

@@ -171,7 +171,11 @@ class AqaraM1SRouterCoordinator(DataUpdateCoordinator[dict]):
         except Exception:
             self.mqtt_sync_state = "failed"
             self._mqtt_retry_at = self.hass.loop.time() + 60
-            _LOGGER.warning("M1S Router MQTT synchronization not confirmed; retrying later")
+            _LOGGER.warning(
+                "M1S Router MQTT synchronization not confirmed for hub %s; retrying later",
+                self.client.host,
+                exc_info=True,
+            )
         else:
             self._mqtt_applied = target
             self._mqtt_retry_at = 0

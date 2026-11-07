@@ -1,520 +1,289 @@
-0.37.21 final isolated local suite results
-
-===== test_audio_link_guard.py =====
-test_group_drain_timeout_fits_shared_history_budget (test_audio_link_guard.AudioCleanShutdownTests.test_group_drain_timeout_fits_shared_history_budget) ... ok
-test_group_latest_request_wins_before_and_after_media_resolution (test_audio_link_guard.AudioCleanShutdownTests.test_group_latest_request_wins_before_and_after_media_resolution) ... ok
-test_group_receiver_alignment_preserves_source_and_transport_format (test_audio_link_guard.AudioCleanShutdownTests.test_group_receiver_alignment_preserves_source_and_transport_format) ... ok
-test_group_recovery_is_bounded_and_faults_quarantine_one_member (test_audio_link_guard.AudioCleanShutdownTests.test_group_recovery_is_bounded_and_faults_quarantine_one_member) ... ok
-test_group_stop_releases_individual_players (test_audio_link_guard.AudioCleanShutdownTests.test_group_stop_releases_individual_players) ... ok
-test_individual_buffering_and_rebase_diagnostics_are_exposed (test_audio_link_guard.AudioCleanShutdownTests.test_individual_buffering_and_rebase_diagnostics_are_exposed) ... ok
-test_individual_receiver_and_pcm_clock_match_reviewed_baseline (test_audio_link_guard.AudioCleanShutdownTests.test_individual_receiver_and_pcm_clock_match_reviewed_baseline) ... ok
-test_individual_volume_preserves_hundredth_percent_precision (test_audio_link_guard.AudioCleanShutdownTests.test_individual_volume_preserves_hundredth_percent_precision) ... ok
-test_no_active_polling_guard_was_added (test_audio_link_guard.AudioCleanShutdownTests.test_no_active_polling_guard_was_added) ... ok
-test_remote_commands_are_scoped_short_and_shell_valid (test_audio_link_guard.AudioCleanShutdownTests.test_remote_commands_are_scoped_short_and_shell_valid) ... ok
-test_shutdown_pre_stops_remote_before_local_writer (test_audio_link_guard.AudioCleanShutdownTests.test_shutdown_pre_stops_remote_before_local_writer) ... ok
-
+test_audio_link_guard.py
+...........
 ----------------------------------------------------------------------
-Ran 11 tests in 0.339s
+Ran 11 tests in 0.456s
 
 OK
 
-===== test_audio_transport_batch.py =====
-test_all_six_receive_identical_ordered_common_bursts (test_audio_transport_batch.GroupBatchTests.test_all_six_receive_identical_ordered_common_bursts) ... ok
-test_cohort_origin_not_zero_preserves_common_phase (test_audio_transport_batch.GroupBatchTests.test_cohort_origin_not_zero_preserves_common_phase) ... ok
-test_eof_flushes_short_tail_identically (test_audio_transport_batch.GroupBatchTests.test_eof_flushes_short_tail_identically) ... ok
-test_muted_member_still_receives_the_identical_common_timeline (test_audio_transport_batch.GroupBatchTests.test_muted_member_still_receives_the_identical_common_timeline) ... ok
-test_no_partial_write_before_common_boundary (test_audio_transport_batch.GroupBatchTests.test_no_partial_write_before_common_boundary) ... ok
-test_old_generation_and_stop_do_not_release_tail (test_audio_transport_batch.GroupBatchTests.test_old_generation_and_stop_do_not_release_tail) ... ok
-test_slow_member_does_not_block_healthy_bursts (test_audio_transport_batch.GroupBatchTests.test_slow_member_does_not_block_healthy_bursts) ... ok
-test_expected_teardown_discards_pending_not_writes (test_audio_transport_batch.SingleBatchTests.test_expected_teardown_discards_pending_not_writes) ... ok
-test_first_three_chunks_one_write_gain_still_per_period (test_audio_transport_batch.SingleBatchTests.test_first_three_chunks_one_write_gain_still_per_period) ... ok
-test_injected_silence_preserves_transport_lengths (test_audio_transport_batch.SingleBatchTests.test_injected_silence_preserves_transport_lengths) ... ok
-test_single_matches_group_fixed_105_ms_cycle (test_audio_transport_batch.SingleBatchTests.test_single_matches_group_fixed_105_ms_cycle) ... ok
-test_socket_failure_does_not_replay_old_batch_on_recovery (test_audio_transport_batch.SingleBatchTests.test_socket_failure_does_not_replay_old_batch_on_recovery) ... ok
-test_tail_flush_is_idempotent_and_ordered (test_audio_transport_batch.SingleBatchTests.test_tail_flush_is_idempotent_and_ordered) ... ok
-test_timeout_does_not_duplicate_already_written_bytes (test_audio_transport_batch.SingleBatchTests.test_timeout_does_not_duplicate_already_written_bytes) ... ok
-test_105_ms_boundaries_are_exact_for_over_eight_hours (test_audio_transport_batch.TransportContractTests.test_105_ms_boundaries_are_exact_for_over_eight_hours) ... ok
-test_batch_fits_existing_watermarks_and_prefill (test_audio_transport_batch.TransportContractTests.test_batch_fits_existing_watermarks_and_prefill) ... ok
-test_diagnostics_report_fixed_105_ms_for_both_paths (test_audio_transport_batch.TransportContractTests.test_diagnostics_report_fixed_105_ms_for_both_paths) ... ok
-test_integer_boundaries_do_not_accumulate_rounding_drift (test_audio_transport_batch.TransportContractTests.test_integer_boundaries_do_not_accumulate_rounding_drift) ... ok
-test_large_cohort_origin_has_identical_boundary_schedule (test_audio_transport_batch.TransportContractTests.test_large_cohort_origin_has_identical_boundary_schedule) ... ok
-test_source_rebuffer_and_recovery_clear_pending_before_await (test_audio_transport_batch.TransportContractTests.test_source_rebuffer_and_recovery_clear_pending_before_await) ... ok
-
+test_audio_transport_batch.py
+....................
 ----------------------------------------------------------------------
-Ran 20 tests in 2.313s
+Ran 20 tests in 3.368s
 
 OK
 
-===== test_continuous_cast_gap.py =====
-test_exact_continuous_bridge_across_hosts_and_ports (test_continuous_cast_gap.ContinuousCastClassificationTests.test_exact_continuous_bridge_across_hosts_and_ports) ... ok
-test_ordinary_radio_local_and_legacy_finite_streams_unchanged (test_continuous_cast_gap.ContinuousCastClassificationTests.test_ordinary_radio_local_and_legacy_finite_streams_unchanged) ... ok
-test_cancellation_during_tail_flush_never_enters_gap_wait (test_continuous_cast_gap.ContinuousCastGapTests.test_cancellation_during_tail_flush_never_enters_gap_wait) ... ok
-test_existing_five_second_source_failure_remains_a_failure (test_continuous_cast_gap.ContinuousCastGapTests.test_existing_five_second_source_failure_remains_a_failure) ... Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
-ok
-test_manual_stop_new_generation_shutdown_and_new_writer_win (test_continuous_cast_gap.ContinuousCastGapTests.test_manual_stop_new_generation_shutdown_and_new_writer_win) ... Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
+test_continuous_cast_gap.py
+...Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
+.Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
 Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
 Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
 Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
-ok
-test_original_radio_branch_reproduces_destructive_tail_clear (test_continuous_cast_gap.ContinuousCastGapTests.test_original_radio_branch_reproduces_destructive_tail_clear) ... Aqara media single rebuffer started entity=media_player.cezara session=41 host=192.168.0.205 rebuffer_events=1 action=stop_receiver
-ok
-test_producer_eof_exits_without_waiting_or_restart (test_continuous_cast_gap.ContinuousCastGapTests.test_producer_eof_exits_without_waiting_or_restart) ... Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
-ok
-test_producer_error_propagates_into_existing_watcher_recovery (test_continuous_cast_gap.ContinuousCastGapTests.test_producer_error_propagates_into_existing_watcher_recovery) ... Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
-ok
-test_real_tcp_failure_keeps_existing_recovery_path (test_continuous_cast_gap.ContinuousCastGapTests.test_real_tcp_failure_keeps_existing_recovery_path) ... Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
-ok
-test_short_gap_flushes_every_tail_byte_and_retains_original_clock (test_continuous_cast_gap.ContinuousCastGapTests.test_short_gap_flushes_every_tail_byte_and_retains_original_clock) ... Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
-ok
-
+.Aqara media single rebuffer started entity=media_player.cezara session=41 host=192.168.0.205 rebuffer_events=1 action=stop_receiver
+.Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
+.Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
+.Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
+.Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
+.
 ----------------------------------------------------------------------
-Ran 10 tests in 0.448s
+Ran 10 tests in 0.620s
 
 OK
 
-===== test_coordinator_io.py =====
-test_client_blocks_coordinator_telnet_sideband (test_coordinator_io.CoordinatorMQTTTests.test_client_blocks_coordinator_telnet_sideband) ... ok
-test_close_never_stops_coordinator_uart_relay (test_coordinator_io.CoordinatorMQTTTests.test_close_never_stops_coordinator_uart_relay) ... ok
-test_current_ip_defines_topics (test_coordinator_io.CoordinatorMQTTTests.test_current_ip_defines_topics) ... ok
-test_hub_is_offline_only_when_mqtt_and_telnet_are_both_down (test_coordinator_io.CoordinatorMQTTTests.test_hub_is_offline_only_when_mqtt_and_telnet_are_both_down) ... ok
-test_local_sound_prepare_uses_mqtt_and_waits_for_ready (test_coordinator_io.CoordinatorMQTTTests.test_local_sound_prepare_uses_mqtt_and_waits_for_ready) ... ok
-test_mqtt_online_proves_hub_connectivity_without_telnet (test_coordinator_io.CoordinatorMQTTTests.test_mqtt_online_proves_hub_connectivity_without_telnet) ... ok
-test_offline_clears_only_optional_io (test_coordinator_io.CoordinatorMQTTTests.test_offline_clears_only_optional_io) ... ok
-test_online_availability_requests_coordinator_refresh (test_coordinator_io.CoordinatorMQTTTests.test_online_availability_requests_coordinator_refresh) ... ok
-test_online_probe_reports_offline_after_all_attempts_fail (test_coordinator_io.CoordinatorMQTTTests.test_online_probe_reports_offline_after_all_attempts_fail) ... ok
-test_online_probe_retries_transient_telnet_accept_delays (test_coordinator_io.CoordinatorMQTTTests.test_online_probe_retries_transient_telnet_accept_delays) ... ok
-test_protocol_and_ranges_are_strict (test_coordinator_io.CoordinatorMQTTTests.test_protocol_and_ranges_are_strict) ... ok
-test_retained_state_cannot_override_offline_availability (test_coordinator_io.CoordinatorMQTTTests.test_retained_state_cannot_override_offline_availability) ... ok
-test_router_rejoin_pauses_and_resumes_persistent_uart_owner (test_coordinator_io.CoordinatorMQTTTests.test_router_rejoin_pauses_and_resumes_persistent_uart_owner) ... ok
-test_router_state_and_telemetry_confirm_only_router_role (test_coordinator_io.CoordinatorMQTTTests.test_router_state_and_telemetry_confirm_only_router_role) ... Ignored M1S MQTT state for role coordinator on router entry
-ok
-test_router_subscribes_sound_status_and_requires_capability (test_coordinator_io.CoordinatorMQTTTests.test_router_subscribes_sound_status_and_requires_capability) ... ok
-test_state_updates_rgb_and_lux (test_coordinator_io.CoordinatorMQTTTests.test_state_updates_rgb_and_lux) ... ok
-test_subscribe_and_rgb_publish (test_coordinator_io.CoordinatorMQTTTests.test_subscribe_and_rgb_publish) ... ok
-test_telemetry_updates_all_coordinator_diagnostics (test_coordinator_io.CoordinatorMQTTTests.test_telemetry_updates_all_coordinator_diagnostics) ... ok
-test_telnet_is_fallback_when_mqtt_is_not_online (test_coordinator_io.CoordinatorMQTTTests.test_telnet_is_fallback_when_mqtt_is_not_online) ... ok
-test_uart_guard_allows_only_explicit_maintenance_window (test_coordinator_io.CoordinatorMQTTTests.test_uart_guard_allows_only_explicit_maintenance_window) ... ok
-
+test_coordinator_io.py
+.............Ignored M1S MQTT state for role coordinator on router entry
+.......
 ----------------------------------------------------------------------
-Ran 20 tests in 0.394s
+Ran 20 tests in 0.517s
 
 OK
 
-===== test_coordinator_profile.py =====
-test_coordinator_refresh_has_no_mqtt_or_uart_work (test_coordinator_profile.CoordinatorTests.test_coordinator_refresh_has_no_mqtt_or_uart_work) ... ok
-test_coordinator_sensor_platform_exposes_four_live_diagnostics (test_coordinator_profile.CoordinatorTests.test_coordinator_sensor_platform_exposes_four_live_diagnostics) ... ok
-test_diagnostics_refresh_is_throttled (test_coordinator_profile.CoordinatorTests.test_diagnostics_refresh_is_throttled) ... ok
-test_failed_diagnostics_do_not_set_hub_offline (test_coordinator_profile.CoordinatorTests.test_failed_diagnostics_do_not_set_hub_offline) ... ok
-test_result_after_disconnect_or_new_generation_is_ignored (test_coordinator_profile.CoordinatorTests.test_result_after_disconnect_or_new_generation_is_ignored) ... ok
-test_coordinator_menu_includes_supervision_without_hub_calls (test_coordinator_profile.OptionsTests.test_coordinator_menu_includes_supervision_without_hub_calls) ... ok
-test_router_menu_keeps_media_and_shared_mqtt (test_coordinator_profile.OptionsTests.test_router_menu_keeps_media_and_shared_mqtt) ... ok
-test_saved_role_preserved_when_runtime_is_unavailable (test_coordinator_profile.OptionsTests.test_saved_role_preserved_when_runtime_is_unavailable) ... ok
-test_sound_and_rejoin_steps_blocked_even_when_invoked_directly (test_coordinator_profile.OptionsTests.test_sound_and_rejoin_steps_blocked_even_when_invoked_directly) ... ok
-test_diagnostics_ignore_shell_echo (test_coordinator_profile.ProfileTests.test_diagnostics_ignore_shell_echo) ... ok
-test_diagnostics_use_only_read_only_linux_commands (test_coordinator_profile.ProfileTests.test_diagnostics_use_only_read_only_linux_commands) ... ok
-test_incomplete_and_invalid_diagnostics_are_rejected (test_coordinator_profile.ProfileTests.test_incomplete_and_invalid_diagnostics_are_rejected) ... ok
-test_keep_only_live_per_hub_entities (test_coordinator_profile.ProfileTests.test_keep_only_live_per_hub_entities) ... ok
-test_shared_mqtt_never_writes_to_coordinator (test_coordinator_profile.ProfileTests.test_shared_mqtt_never_writes_to_coordinator) ... ok
-test_stopped_processes_are_not_reported_running (test_coordinator_profile.ProfileTests.test_stopped_processes_are_not_reported_running) ... ok
-test_transport_requires_local_port_not_an_outgoing_connection (test_coordinator_profile.ProfileTests.test_transport_requires_local_port_not_an_outgoing_connection) ... ok
-test_unknown_role_keeps_setup_fallback_possible (test_coordinator_profile.ProfileTests.test_unknown_role_keeps_setup_fallback_possible) ... ok
-test_coordinator_does_not_construct_any_media_or_mqtt_runtime (test_coordinator_profile.SetupTests.test_coordinator_does_not_construct_any_media_or_mqtt_runtime) ... ok
-test_coordinator_unload_does_not_touch_router_group (test_coordinator_profile.SetupTests.test_coordinator_unload_does_not_touch_router_group) ... ok
-test_offline_coordinator_still_uses_restricted_profile (test_coordinator_profile.SetupTests.test_offline_coordinator_still_uses_restricted_profile) ... ok
-test_old_sound_actions_fail_before_read_or_play (test_coordinator_profile.SetupTests.test_old_sound_actions_fail_before_read_or_play) ... ok
-test_retired_fine_trim_is_removed_from_entity_registry (test_coordinator_profile.SetupTests.test_retired_fine_trim_is_removed_from_entity_registry) ... ok
-test_router_still_constructs_and_registers_media_runtime (test_coordinator_profile.SetupTests.test_router_still_constructs_and_registers_media_runtime) ... ok
-test_sound_service_passes_temporary_volume_without_changing_radio_volume (test_coordinator_profile.SetupTests.test_sound_service_passes_temporary_volume_without_changing_radio_volume) ... ok
-test_sound_services_forward_optout_without_mutating_media_controls (test_coordinator_profile.SetupTests.test_sound_services_forward_optout_without_mutating_media_controls) ... ok
-test_wav_url_service_uses_central_default_without_yaml_unmute (test_coordinator_profile.SetupTests.test_wav_url_service_uses_central_default_without_yaml_unmute) ... ok
-test_coordinator_has_no_physical_button_triggers (test_coordinator_profile.TriggerTests.test_coordinator_has_no_physical_button_triggers) ... ok
-test_old_coordinator_trigger_cannot_subscribe_to_auxiliary_mqtt (test_coordinator_profile.TriggerTests.test_old_coordinator_trigger_cannot_subscribe_to_auxiliary_mqtt) ... ok
-test_router_physical_button_triggers_are_preserved (test_coordinator_profile.TriggerTests.test_router_physical_button_triggers_are_preserved) ... ok
+test_coordinator_profile.py
+test_coordinator_refresh_has_no_mqtt_or_uart_work (__main__.CoordinatorTests.test_coordinator_refresh_has_no_mqtt_or_uart_work) ... ok
+test_coordinator_sensor_platform_exposes_four_live_diagnostics (__main__.CoordinatorTests.test_coordinator_sensor_platform_exposes_four_live_diagnostics) ... ok
+test_diagnostic_categories_are_entity_category_instances (__main__.CoordinatorTests.test_diagnostic_categories_are_entity_category_instances) ... ok
+test_diagnostics_refresh_is_throttled (__main__.CoordinatorTests.test_diagnostics_refresh_is_throttled) ... ok
+test_failed_diagnostics_do_not_set_hub_offline (__main__.CoordinatorTests.test_failed_diagnostics_do_not_set_hub_offline) ... ok
+test_result_after_disconnect_or_new_generation_is_ignored (__main__.CoordinatorTests.test_result_after_disconnect_or_new_generation_is_ignored) ... ok
+test_coordinator_menu_includes_supervision_without_hub_calls (__main__.OptionsTests.test_coordinator_menu_includes_supervision_without_hub_calls) ... ok
+test_router_menu_keeps_media_and_shared_mqtt (__main__.OptionsTests.test_router_menu_keeps_media_and_shared_mqtt) ... ok
+test_saved_role_preserved_when_runtime_is_unavailable (__main__.OptionsTests.test_saved_role_preserved_when_runtime_is_unavailable) ... ok
+test_sound_and_rejoin_steps_blocked_even_when_invoked_directly (__main__.OptionsTests.test_sound_and_rejoin_steps_blocked_even_when_invoked_directly) ... ok
+test_diagnostics_ignore_shell_echo (__main__.ProfileTests.test_diagnostics_ignore_shell_echo) ... ok
+test_diagnostics_use_only_read_only_linux_commands (__main__.ProfileTests.test_diagnostics_use_only_read_only_linux_commands) ... ok
+test_incomplete_and_invalid_diagnostics_are_rejected (__main__.ProfileTests.test_incomplete_and_invalid_diagnostics_are_rejected) ... ok
+test_keep_only_live_per_hub_entities (__main__.ProfileTests.test_keep_only_live_per_hub_entities) ... ok
+test_shared_mqtt_never_writes_to_coordinator (__main__.ProfileTests.test_shared_mqtt_never_writes_to_coordinator) ... ok
+test_stopped_processes_are_not_reported_running (__main__.ProfileTests.test_stopped_processes_are_not_reported_running) ... ok
+test_transport_requires_local_port_not_an_outgoing_connection (__main__.ProfileTests.test_transport_requires_local_port_not_an_outgoing_connection) ... ok
+test_unknown_role_keeps_setup_fallback_possible (__main__.ProfileTests.test_unknown_role_keeps_setup_fallback_possible) ... ok
+test_coordinator_does_not_construct_any_media_or_mqtt_runtime (__main__.SetupTests.test_coordinator_does_not_construct_any_media_or_mqtt_runtime) ... ok
+test_coordinator_unload_does_not_touch_router_group (__main__.SetupTests.test_coordinator_unload_does_not_touch_router_group) ... ok
+test_offline_coordinator_still_uses_restricted_profile (__main__.SetupTests.test_offline_coordinator_still_uses_restricted_profile) ... ok
+test_old_sound_actions_fail_before_read_or_play (__main__.SetupTests.test_old_sound_actions_fail_before_read_or_play) ... ok
+test_retired_fine_trim_is_removed_from_entity_registry (__main__.SetupTests.test_retired_fine_trim_is_removed_from_entity_registry) ... ok
+test_router_still_constructs_and_registers_media_runtime (__main__.SetupTests.test_router_still_constructs_and_registers_media_runtime) ... ok
+test_sound_service_passes_temporary_volume_without_changing_radio_volume (__main__.SetupTests.test_sound_service_passes_temporary_volume_without_changing_radio_volume) ... ok
+test_sound_services_forward_optout_without_mutating_media_controls (__main__.SetupTests.test_sound_services_forward_optout_without_mutating_media_controls) ... ok
+test_wav_url_service_uses_central_default_without_yaml_unmute (__main__.SetupTests.test_wav_url_service_uses_central_default_without_yaml_unmute) ... ok
+test_coordinator_has_no_physical_button_triggers (__main__.TriggerTests.test_coordinator_has_no_physical_button_triggers) ... ok
+test_old_coordinator_trigger_cannot_subscribe_to_auxiliary_mqtt (__main__.TriggerTests.test_old_coordinator_trigger_cannot_subscribe_to_auxiliary_mqtt) ... ok
+test_router_physical_button_triggers_are_preserved (__main__.TriggerTests.test_router_physical_button_triggers_are_preserved) ... ok
 
 ----------------------------------------------------------------------
-Ran 29 tests in 0.535s
+Ran 30 tests in 0.748s
 
 OK
 
-===== test_device_registry_compat.py =====
-test_current_api_empty_registry_returns_none (test_device_registry_compat.DeviceLookupCompatibilityTests.test_current_api_empty_registry_returns_none) ... ok
-test_current_api_missing_own_device_does_not_return_foreign_collision (test_device_registry_compat.DeviceLookupCompatibilityTests.test_current_api_missing_own_device_does_not_return_foreign_collision) ... ok
-test_current_api_scopes_colliding_ip_and_mac_identifiers (test_device_registry_compat.DeviceLookupCompatibilityTests.test_current_api_scopes_colliding_ip_and_mac_identifiers) ... ok
-test_noncallable_current_lookup_uses_old_ha_fallback (test_device_registry_compat.DeviceLookupCompatibilityTests.test_noncallable_current_lookup_uses_old_ha_fallback) ... ok
-test_old_ha_foreign_only_and_nonmatching_own_devices_return_none (test_device_registry_compat.DeviceLookupCompatibilityTests.test_old_ha_foreign_only_and_nonmatching_own_devices_return_none) ... ok
-test_old_ha_uses_scoped_enumeration_for_ip_and_mac_collisions (test_device_registry_compat.DeviceLookupCompatibilityTests.test_old_ha_uses_scoped_enumeration_for_ip_and_mac_collisions) ... ok
-test_ip_to_mac_migration_keeps_device_id_user_name_and_entity_link (test_device_registry_compat.DeviceRegistrySetupTests.test_ip_to_mac_migration_keeps_device_id_user_name_and_entity_link) ... ok
-test_setup_with_only_foreign_collisions_creates_own_device (test_device_registry_compat.DeviceRegistrySetupTests.test_setup_with_only_foreign_collisions_creates_own_device) ... ok
-test_stale_own_ip_device_links_move_to_own_mac_device_only (test_device_registry_compat.DeviceRegistrySetupTests.test_stale_own_ip_device_links_move_to_own_mac_device_only) ... ok
-test_interim_owner_none_is_not_replaced_by_obsolete_plural_owners (test_device_registry_compat.DeviceTriggerOwnerCompatibilityTests.test_interim_owner_none_is_not_replaced_by_obsolete_plural_owners) ... ok
-test_interim_singular_owner_avoids_plural_deprecation (test_device_registry_compat.DeviceTriggerOwnerCompatibilityTests.test_interim_singular_owner_avoids_plural_deprecation) ... ok
-test_modern_domain_helper_resolves_own_entry_without_legacy_lookup (test_device_registry_compat.DeviceTriggerOwnerCompatibilityTests.test_modern_domain_helper_resolves_own_entry_without_legacy_lookup) ... ok
-test_modern_missing_device_does_not_fall_back_to_unscoped_owner_search (test_device_registry_compat.DeviceTriggerOwnerCompatibilityTests.test_modern_missing_device_does_not_fall_back_to_unscoped_owner_search) ... ok
-test_true_old_ha_missing_device_returns_none (test_device_registry_compat.DeviceTriggerOwnerCompatibilityTests.test_true_old_ha_missing_device_returns_none) ... ok
-test_true_old_ha_plural_fallback_skips_other_domains (test_device_registry_compat.DeviceTriggerOwnerCompatibilityTests.test_true_old_ha_plural_fallback_skips_other_domains) ... ok
-test_missing_own_device_does_not_rename_a_foreign_collision (test_device_registry_compat.VisualAvailabilityRegistryTests.test_missing_own_device_does_not_rename_a_foreign_collision) ... ok
-test_offline_and_online_names_update_only_the_config_entry_device (test_device_registry_compat.VisualAvailabilityRegistryTests.test_offline_and_online_names_update_only_the_config_entry_device) ... ok
+test_device_registry_compat.py
+test_current_api_empty_registry_returns_none (__main__.DeviceLookupCompatibilityTests.test_current_api_empty_registry_returns_none) ... ok
+test_current_api_missing_own_device_does_not_return_foreign_collision (__main__.DeviceLookupCompatibilityTests.test_current_api_missing_own_device_does_not_return_foreign_collision) ... ok
+test_current_api_scopes_colliding_ip_and_mac_identifiers (__main__.DeviceLookupCompatibilityTests.test_current_api_scopes_colliding_ip_and_mac_identifiers) ... ok
+test_noncallable_current_lookup_uses_old_ha_fallback (__main__.DeviceLookupCompatibilityTests.test_noncallable_current_lookup_uses_old_ha_fallback) ... ok
+test_old_ha_foreign_only_and_nonmatching_own_devices_return_none (__main__.DeviceLookupCompatibilityTests.test_old_ha_foreign_only_and_nonmatching_own_devices_return_none) ... ok
+test_old_ha_uses_scoped_enumeration_for_ip_and_mac_collisions (__main__.DeviceLookupCompatibilityTests.test_old_ha_uses_scoped_enumeration_for_ip_and_mac_collisions) ... ok
+test_ip_to_mac_migration_keeps_device_id_user_name_and_entity_link (__main__.DeviceRegistrySetupTests.test_ip_to_mac_migration_keeps_device_id_user_name_and_entity_link) ... ok
+test_setup_with_only_foreign_collisions_creates_own_device (__main__.DeviceRegistrySetupTests.test_setup_with_only_foreign_collisions_creates_own_device) ... ok
+test_stale_own_ip_device_links_move_to_own_mac_device_only (__main__.DeviceRegistrySetupTests.test_stale_own_ip_device_links_move_to_own_mac_device_only) ... ok
+test_interim_owner_none_is_not_replaced_by_obsolete_plural_owners (__main__.DeviceTriggerOwnerCompatibilityTests.test_interim_owner_none_is_not_replaced_by_obsolete_plural_owners) ... ok
+test_interim_singular_owner_avoids_plural_deprecation (__main__.DeviceTriggerOwnerCompatibilityTests.test_interim_singular_owner_avoids_plural_deprecation) ... ok
+test_modern_domain_helper_resolves_own_entry_without_legacy_lookup (__main__.DeviceTriggerOwnerCompatibilityTests.test_modern_domain_helper_resolves_own_entry_without_legacy_lookup) ... ok
+test_modern_missing_device_does_not_fall_back_to_unscoped_owner_search (__main__.DeviceTriggerOwnerCompatibilityTests.test_modern_missing_device_does_not_fall_back_to_unscoped_owner_search) ... ok
+test_true_old_ha_missing_device_returns_none (__main__.DeviceTriggerOwnerCompatibilityTests.test_true_old_ha_missing_device_returns_none) ... ok
+test_true_old_ha_plural_fallback_skips_other_domains (__main__.DeviceTriggerOwnerCompatibilityTests.test_true_old_ha_plural_fallback_skips_other_domains) ... ok
+test_missing_own_device_does_not_rename_a_foreign_collision (__main__.VisualAvailabilityRegistryTests.test_missing_own_device_does_not_rename_a_foreign_collision) ... ok
+test_offline_and_online_names_update_only_the_config_entry_device (__main__.VisualAvailabilityRegistryTests.test_offline_and_online_names_update_only_the_config_entry_device) ... ok
 
 ----------------------------------------------------------------------
-Ran 17 tests in 0.125s
+Ran 17 tests in 0.133s
 
 OK
 
-===== test_group_clean_stop.py =====
-test_cancellation_of_stop_cannot_orphan_child (test_group_clean_stop.GroupCleanStopTests.test_cancellation_of_stop_cannot_orphan_child) ... ok
-test_existing_pipe_consumers_cancel_before_discard_readers (test_group_clean_stop.GroupCleanStopTests.test_existing_pipe_consumers_cancel_before_discard_readers) ... ok
-test_genuinely_stubborn_child_is_killed_and_reaped (test_group_clean_stop.GroupCleanStopTests.test_genuinely_stubborn_child_is_killed_and_reaped) ... M1S group FFmpeg did not exit after terminate pid=123 reason=user_stop; killing process
-ok
-test_real_full_pipe_stop_reaps_without_forced_reset (test_group_clean_stop.GroupCleanStopTests.test_real_full_pipe_stop_reaps_without_forced_reset) ... ok
-test_unread_pipe_reproduces_wait_stall_after_terminate (test_group_clean_stop.GroupCleanStopTests.test_unread_pipe_reproduces_wait_stall_after_terminate) ... ok
-test_user_stop_silences_hub_then_reaps_real_child (test_group_clean_stop.GroupCleanStopTests.test_user_stop_silences_hub_then_reaps_real_child) ... ok
-
+test_group_clean_stop.py
+.Executing <Task pending name='Task-13' coro=<GroupCleanStopTests.test_existing_pipe_consumers_cancel_before_discard_readers() running at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_group_clean_stop.py:67> wait_for=<Future pending cb=[Task.task_wakeup()] created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py:428> cb=[_run_until_complete_cb() at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py:181] created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.109 seconds
+.M1S group FFmpeg did not exit after terminate pid=123 reason=user_stop; killing process
+....
 ----------------------------------------------------------------------
-Ran 6 tests in 0.779s
+Ran 6 tests in 1.002s
 
 OK
 
-===== test_group_cohort_alignment.py =====
-test_fixed_queue_differences_are_not_drift (test_group_cohort_alignment.AlignmentPolicyTests.test_fixed_queue_differences_are_not_drift) ... ok
-test_membership_change_or_clean_sample_resets_confirmation (test_group_cohort_alignment.AlignmentPolicyTests.test_membership_change_or_clean_sample_resets_confirmation) ... ok
-test_no_healthy_audio_does_not_wait_for_cooldown (test_group_cohort_alignment.AlignmentPolicyTests.test_no_healthy_audio_does_not_wait_for_cooldown) ... ok
-test_return_requests_are_coalesced_with_a_cooldown (test_group_cohort_alignment.AlignmentPolicyTests.test_return_requests_are_coalesced_with_a_cooldown) ... ok
-test_six_hour_flapping_cannot_trigger_a_reset_storm (test_group_cohort_alignment.AlignmentPolicyTests.test_six_hour_flapping_cannot_trigger_a_reset_storm) ... ok
-test_three_relative_queue_changes_are_required (test_group_cohort_alignment.AlignmentPolicyTests.test_three_relative_queue_changes_are_required) ... ok
-test_actual_broadcaster_rejoins_via_common_barrier_and_keeps_source (test_group_cohort_alignment.ManagerAlignmentTests.test_actual_broadcaster_rejoins_via_common_barrier_and_keeps_source) ... M1S group common receiver alignment reason=returning_receiver:192.168.0.222 hosts=['192.168.0.221', '192.168.0.222'] action=common_prefill_keep_source cooldown=60.0s
-ok
-test_common_prefill_same_pcm_cursor_and_source_for_all_receivers (test_group_cohort_alignment.ManagerAlignmentTests.test_common_prefill_same_pcm_cursor_and_source_for_all_receivers) ... M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221', '192.168.0.222', '192.168.0.223'] action=common_prefill_keep_source cooldown=60.0s
-ok
-test_cooldown_does_not_touch_healthy_writers (test_group_cohort_alignment.ManagerAlignmentTests.test_cooldown_does_not_touch_healthy_writers) ... ok
-test_duplicate_names_do_not_hide_hubs_in_diagnostics (test_group_cohort_alignment.ManagerAlignmentTests.test_duplicate_names_do_not_hide_hubs_in_diagnostics) ... ok
-test_empty_source_does_not_tear_down_healthy_audio (test_group_cohort_alignment.ManagerAlignmentTests.test_empty_source_does_not_tear_down_healthy_audio) ... ok
-test_health_result_from_detached_generation_is_ignored (test_group_cohort_alignment.ManagerAlignmentTests.test_health_result_from_detached_generation_is_ignored) ... ok
-test_late_join_never_writes_history_or_claims_alignment (test_group_cohort_alignment.ManagerAlignmentTests.test_late_join_never_writes_history_or_claims_alignment) ... ok
-test_new_play_intent_during_preparation_cannot_readmit_old_source (test_group_cohort_alignment.ManagerAlignmentTests.test_new_play_intent_during_preparation_cannot_readmit_old_source) ... M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221'] action=common_prefill_keep_source cooldown=60.0s
-ok
-test_one_failed_prefill_isolated_without_aborting_other_receiver (test_group_cohort_alignment.ManagerAlignmentTests.test_one_failed_prefill_isolated_without_aborting_other_receiver) ... M1S group initial prefill failed member=Aqara M1S Zigbee Router@192.168.0.222 error=test network loss
+test_group_cohort_alignment.py
+......M1S group common receiver alignment reason=returning_receiver:192.168.0.222 hosts=['192.168.0.221', '192.168.0.222'] action=common_prefill_keep_source cooldown=60.0s
+.M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221', '192.168.0.222', '192.168.0.223'] action=common_prefill_keep_source cooldown=60.0s
+......M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221'] action=common_prefill_keep_source cooldown=60.0s
+.M1S group initial prefill failed member=Aqara M1S Zigbee Router@192.168.0.222 error=test network loss
 M1S group quarantining affected member member=Aqara M1S Zigbee Router@192.168.0.222 reason=initial prefill failed: test network loss retry_in=1.5s healthy_receivers=[] action=isolate_member_keep_group_clock
-ok
-test_one_failed_prepare_does_not_block_healthy_cohort (test_group_cohort_alignment.ManagerAlignmentTests.test_one_failed_prepare_does_not_block_healthy_cohort) ... M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221', '192.168.0.222'] action=common_prefill_keep_source cooldown=60.0s
-ok
-test_prefill_cannot_reclaim_a_priority_sound (test_group_cohort_alignment.ManagerAlignmentTests.test_prefill_cannot_reclaim_a_priority_sound) ... ok
-test_priority_claim_while_connecting_closes_orphan_tcp (test_group_cohort_alignment.ManagerAlignmentTests.test_priority_claim_while_connecting_closes_orphan_tcp) ... ok
-test_real_preparation_stages_tcp_without_resetting_failure_history (test_group_cohort_alignment.ManagerAlignmentTests.test_real_preparation_stages_tcp_without_resetting_failure_history) ... ok
-test_reused_health_snapshot_cannot_supply_three_confirmations (test_group_cohort_alignment.ManagerAlignmentTests.test_reused_health_snapshot_cannot_supply_three_confirmations) ... ok
-test_single_timeout_followed_by_success_keeps_receiver (test_group_cohort_alignment.ManagerAlignmentTests.test_single_timeout_followed_by_success_keeps_receiver) ... M1S group first consecutive TCP drain timeout tolerated member=Aqara M1S Zigbee Router@192.168.0.222 seq=100 timeout=1.25s action=keep_receiver
-ok
-test_stale_slow_or_impossible_timing_never_requests_alignment (test_group_cohort_alignment.ManagerAlignmentTests.test_stale_slow_or_impossible_timing_never_requests_alignment) ... ok
-test_stop_during_cohort_preparation_does_not_admit_receivers (test_group_cohort_alignment.ManagerAlignmentTests.test_stop_during_cohort_preparation_does_not_admit_receivers) ... M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221'] action=common_prefill_keep_source cooldown=60.0s
-ok
-test_stop_or_source_change_discards_pending_alignment (test_group_cohort_alignment.ManagerAlignmentTests.test_stop_or_source_change_discards_pending_alignment) ... ok
-test_two_real_writer_timeouts_only_quarantine_that_member (test_group_cohort_alignment.ManagerAlignmentTests.test_two_real_writer_timeouts_only_quarantine_that_member) ... M1S group first consecutive TCP drain timeout tolerated member=Aqara M1S Zigbee Router@192.168.0.222 seq=100 timeout=1.25s action=keep_receiver
+.M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221', '192.168.0.222'] action=common_prefill_keep_source cooldown=60.0s
+.....M1S group first consecutive TCP drain timeout tolerated member=Aqara M1S Zigbee Router@192.168.0.222 seq=100 timeout=1.25s action=keep_receiver
+..M1S group common receiver alignment reason=test_rejoin hosts=['192.168.0.221'] action=common_prefill_keep_source cooldown=60.0s
+..M1S group first consecutive TCP drain timeout tolerated member=Aqara M1S Zigbee Router@192.168.0.222 seq=100 timeout=1.25s action=keep_receiver
 M1S group confirmed TCP backpressure member=Aqara M1S Zigbee Router@192.168.0.222 seq=102 consecutive=2 action=isolate_member_keep_group_clock
-ok
-test_valid_fresh_timing_changes_request_common_alignment (test_group_cohort_alignment.ManagerAlignmentTests.test_valid_fresh_timing_changes_request_common_alignment) ... ok
-
+..
 ----------------------------------------------------------------------
-Ran 26 tests in 4.965s
+Ran 26 tests in 7.751s
 
 OK
 
-===== test_group_sync_policy.py =====
-test_automatic_fault_paths_never_pause_or_rebuild_healthy_cohort (test_group_sync_policy.GroupSyncLossSimulationTests.test_automatic_fault_paths_never_pause_or_rebuild_healthy_cohort) ... ok
-test_confirmed_cursor_or_alsa_loss_requests_member_isolation (test_group_sync_policy.GroupSyncLossSimulationTests.test_confirmed_cursor_or_alsa_loss_requests_member_isolation) ... ok
-test_failed_late_join_keeps_exponential_retry_history (test_group_sync_policy.GroupSyncLossSimulationTests.test_failed_late_join_keeps_exponential_retry_history) ... ok
-test_group_volume_preserves_hundredth_percent_precision (test_group_sync_policy.GroupSyncLossSimulationTests.test_group_volume_preserves_hundredth_percent_precision) ... ok
-test_light_data_loss_keeps_every_receiver_untouched (test_group_sync_policy.GroupSyncLossSimulationTests.test_light_data_loss_keeps_every_receiver_untouched) ... ok
-test_manual_resync_remains_explicit_full_timeline_restart (test_group_sync_policy.GroupSyncLossSimulationTests.test_manual_resync_remains_explicit_full_timeline_restart) ... ok
-test_one_short_drain_timeout_is_tolerated (test_group_sync_policy.GroupSyncLossSimulationTests.test_one_short_drain_timeout_is_tolerated) ... ok
-test_two_drain_timeouts_quarantine_only_slow_member (test_group_sync_policy.GroupSyncLossSimulationTests.test_two_drain_timeouts_quarantine_only_slow_member) ... ok
-
+test_group_sync_policy.py
+........
 ----------------------------------------------------------------------
-Ran 8 tests in 0.177s
+Ran 8 tests in 0.294s
 
 OK
 
-===== test_local_audio.py =====
-test_audibly_confirmed_levels_and_fine_log_resolution (test_local_audio.GainProtocolTests.test_audibly_confirmed_levels_and_fine_log_resolution) ... ok
-test_echoed_shell_text_is_not_an_acknowledgement (test_local_audio.GainProtocolTests.test_echoed_shell_text_is_not_an_acknowledgement) ... ok
-test_gain_limits_and_smallest_positive_ui_step (test_local_audio.GainProtocolTests.test_gain_limits_and_smallest_positive_ui_step) ... ok
-test_helper_is_static_little_endian_mips (test_local_audio.GainProtocolTests.test_helper_is_static_little_endian_mips) ... ok
-test_nonfinite_values_never_become_full_volume (test_local_audio.GainProtocolTests.test_nonfinite_values_never_become_full_volume) ... ok
-test_only_hub_wavs_are_accepted (test_local_audio.GainProtocolTests.test_only_hub_wavs_are_accepted) ... ok
-test_pcm_gain_methods_are_identity_functions (test_local_audio.GainProtocolTests.test_pcm_gain_methods_are_identity_functions) ... ok
-test_sound_script_cannot_kill_native_services_or_unrelated_players (test_local_audio.GainProtocolTests.test_sound_script_cannot_kill_native_services_or_unrelated_players) ... ok
-test_sound_script_has_valid_posix_shell_syntax (test_local_audio.GainProtocolTests.test_sound_script_has_valid_posix_shell_syntax) ... ok
-test_url_is_explicit_http_media_not_a_local_path_or_shell_command (test_local_audio.GainProtocolTests.test_url_is_explicit_http_media_not_a_local_path_or_shell_command) ... ok
-test_wav_number_is_the_media_volume_alias_not_a_restored_fifty_percent (test_local_audio.GainProtocolTests.test_wav_number_is_the_media_volume_alias_not_a_restored_fifty_percent) ... ok
-test_audio_channel_is_reused_and_disconnect_does_not_close_uart (test_local_audio.LocalControllerTests.test_audio_channel_is_reused_and_disconnect_does_not_close_uart) ... ok
-test_coordinator_never_receives_audio_assets (test_local_audio.LocalControllerTests.test_coordinator_never_receives_audio_assets) ... ok
-test_corrupt_transfer_is_removed_without_installing_it (test_local_audio.LocalControllerTests.test_corrupt_transfer_is_removed_without_installing_it) ... ok
-test_explicit_busy_reply_is_pre_start_not_an_ambiguous_ack (test_local_audio.LocalControllerTests.test_explicit_busy_reply_is_pre_start_not_an_ambiguous_ack) ... ok
-test_failed_asset_install_is_reported_and_retried (test_local_audio.LocalControllerTests.test_failed_asset_install_is_reported_and_retried) ... ok
-test_failed_command_is_not_replayed_and_next_call_reconnects (test_local_audio.LocalControllerTests.test_failed_command_is_not_replayed_and_next_call_reconnects) ... ok
-test_failed_restore_clears_override_so_recovery_cannot_reuse_loud_gain (test_local_audio.LocalControllerTests.test_failed_restore_clears_override_so_recovery_cannot_reuse_loud_gain) ... ok
-test_failed_volume_is_not_treated_as_applied (test_local_audio.LocalControllerTests.test_failed_volume_is_not_treated_as_applied) ... ok
-test_hub_mute_and_unmute_affect_temporary_gain_without_transport_restart (test_local_audio.LocalControllerTests.test_hub_mute_and_unmute_affect_temporary_gain_without_transport_restart) ... ok
-test_low_space_prevents_any_asset_upload (test_local_audio.LocalControllerTests.test_low_space_prevents_any_asset_upload) ... ok
-test_matching_assets_are_not_rewritten (test_local_audio.LocalControllerTests.test_matching_assets_are_not_rewritten) ... ok
-test_missing_idle_acknowledgement_cannot_raise_volume (test_local_audio.LocalControllerTests.test_missing_idle_acknowledgement_cannot_raise_volume) ... ok
-test_mute_preserves_prepared_runtime_and_does_not_restart (test_local_audio.LocalControllerTests.test_mute_preserves_prepared_runtime_and_does_not_restart) ... ok
-test_nonfinite_prepare_is_rejected_before_install (test_local_audio.LocalControllerTests.test_nonfinite_prepare_is_rejected_before_install) ... ok
-test_notification_gain_waits_for_closed_alsa_not_just_a_stop_request (test_local_audio.LocalControllerTests.test_notification_gain_waits_for_closed_alsa_not_just_a_stop_request) ... ok
-test_pending_slider_update_cannot_overwrite_sound_gain (test_local_audio.LocalControllerTests.test_pending_slider_update_cannot_overwrite_sound_gain) ... ok
-test_prepare_sets_volume_before_playback_and_provisions_once (test_local_audio.LocalControllerTests.test_prepare_sets_volume_before_playback_and_provisions_once) ... ok
-test_rapid_slider_updates_coalesce_to_latest (test_local_audio.LocalControllerTests.test_rapid_slider_updates_coalesce_to_latest) ... ok
-test_sound_status_validates_token_and_real_completed_record (test_local_audio.LocalControllerTests.test_sound_status_validates_token_and_real_completed_record) ... ok
-test_temporary_sound_gain_does_not_change_canonical_media_volume (test_local_audio.LocalControllerTests.test_temporary_sound_gain_does_not_change_canonical_media_volume) ... ok
-
+test_local_audio.py
+...............................
 ----------------------------------------------------------------------
-Ran 31 tests in 0.665s
+Ran 31 tests in 1.095s
 
 OK
 
-===== test_local_group_volume.py =====
-test_group_slider_does_not_overwrite_independent_player (test_local_group_volume.LocalGroupVolumeTests.test_group_slider_does_not_overwrite_independent_player) ... ok
-test_group_slider_updates_canonical_hub_volumes_without_transport_changes (test_local_group_volume.LocalGroupVolumeTests.test_group_slider_updates_canonical_hub_volumes_without_transport_changes) ... ok
-test_late_rejoin_preserves_a_manual_per_hub_volume_override (test_local_group_volume.LocalGroupVolumeTests.test_late_rejoin_preserves_a_manual_per_hub_volume_override) ... ok
-test_muting_keeps_pcm_and_receivers_active (test_local_group_volume.LocalGroupVolumeTests.test_muting_keeps_pcm_and_receivers_active) ... ok
-test_only_one_member_is_muted (test_local_group_volume.LocalGroupVolumeTests.test_only_one_member_is_muted) ... ok
-
+test_local_group_volume.py
+.....
 ----------------------------------------------------------------------
-Ran 5 tests in 0.107s
+Ran 5 tests in 0.155s
 
 OK
 
-===== test_notification_volume.py =====
-test_main_gain_ignores_retired_trim_and_preserves_mute_zero_and_precision (test_notification_volume.NotificationVolumeTests.test_main_gain_ignores_retired_trim_and_preserves_mute_zero_and_precision) ... ok
-test_no_fine_volume_entity_is_created (test_notification_volume.NotificationVolumeTests.test_no_fine_volume_entity_is_created) ... ok
-test_receiver_starts_confirm_canonical_gain_before_remote_play (test_notification_volume.NotificationVolumeTests.test_receiver_starts_confirm_canonical_gain_before_remote_play) ... ok
-test_service_exposes_explicit_percent_not_a_global_volume_write (test_notification_volume.NotificationVolumeTests.test_service_exposes_explicit_percent_not_a_global_volume_write) ... ok
-
+test_notification_volume.py
+....
 ----------------------------------------------------------------------
-Ran 4 tests in 0.106s
+Ran 4 tests in 0.168s
 
 OK
 
-===== test_priority_mute_policy.py =====
-test_cancelled_start_settles_owned_token_before_clearing_override (test_priority_mute_policy.PriorityMutePolicyTests.test_cancelled_start_settles_owned_token_before_clearing_override) ... ok
-test_current_media_controls_cannot_silence_bypass_wav (test_priority_mute_policy.PriorityMutePolicyTests.test_current_media_controls_cannot_silence_bypass_wav) ... ok
-test_default_alert_is_audible_without_mutating_any_media_mute (test_priority_mute_policy.PriorityMutePolicyTests.test_default_alert_is_audible_without_mutating_any_media_mute) ... ok
-test_implicit_volume_replacement_does_not_restore_between_wavs (test_priority_mute_policy.PriorityMutePolicyTests.test_implicit_volume_replacement_does_not_restore_between_wavs) ... ok
-test_invalid_notification_options_never_interrupt_media (test_priority_mute_policy.PriorityMutePolicyTests.test_invalid_notification_options_never_interrupt_media) ... ok
-test_legacy_volume_is_fallback_when_slider_has_no_value (test_priority_mute_policy.PriorityMutePolicyTests.test_legacy_volume_is_fallback_when_slider_has_no_value) ... ok
-test_low_level_default_still_respects_mute_for_explicit_callers (test_priority_mute_policy.PriorityMutePolicyTests.test_low_level_default_still_respects_mute_for_explicit_callers) ... ok
-test_manual_stop_restores_muted_gain_before_resume (test_priority_mute_policy.PriorityMutePolicyTests.test_manual_stop_restores_muted_gain_before_resume) ... ok
-test_muted_implicit_volume_uses_raw_slider_not_zero_effective_gain (test_priority_mute_policy.PriorityMutePolicyTests.test_muted_implicit_volume_uses_raw_slider_not_zero_effective_gain) ... ok
-test_prepare_gain_failure_restores_media_without_starting_wav (test_priority_mute_policy.PriorityMutePolicyTests.test_prepare_gain_failure_restores_media_without_starting_wav) ... ok
-test_replacement_keeps_override_and_restores_only_latest_token (test_priority_mute_policy.PriorityMutePolicyTests.test_replacement_keeps_override_and_restores_only_latest_token) ... ok
-test_respect_mute_optout_keeps_muted_notification_silent (test_priority_mute_policy.PriorityMutePolicyTests.test_respect_mute_optout_keeps_muted_notification_silent) ... ok
-test_start_failure_clears_gain_overlay_before_restoring_owners (test_priority_mute_policy.PriorityMutePolicyTests.test_start_failure_clears_gain_overlay_before_restoring_owners) ... ok
-test_url_announcement_uses_the_same_default_bypass_and_volume (test_priority_mute_policy.PriorityMutePolicyTests.test_url_announcement_uses_the_same_default_bypass_and_volume) ... ok
-test_url_respect_mute_optout_is_forwarded (test_priority_mute_policy.PriorityMutePolicyTests.test_url_respect_mute_optout_is_forwarded) ... ok
-test_user_unmute_during_wav_survives_restore_with_current_volume (test_priority_mute_policy.PriorityMutePolicyTests.test_user_unmute_during_wav_survives_restore_with_current_volume) ... ok
-test_zero_media_slider_is_not_replaced_by_legacy_volume (test_priority_mute_policy.PriorityMutePolicyTests.test_zero_media_slider_is_not_replaced_by_legacy_volume) ... ok
-test_zero_notification_volume_stays_silent_even_with_mute_bypass (test_priority_mute_policy.PriorityMutePolicyTests.test_zero_notification_volume_stays_silent_even_with_mute_bypass) ... ok
-
+test_priority_mute_policy.py
+..................
 ----------------------------------------------------------------------
-Ran 18 tests in 0.747s
+Ran 18 tests in 1.431s
 
 OK
 
-===== test_router_mqtt_topic.py =====
-test_failure_preserves_hub_availability_and_backs_off (test_router_mqtt_topic.CoordinatorRecoveryTests.test_failure_preserves_hub_availability_and_backs_off) ... M1S Router MQTT synchronization not confirmed; retrying later
-ok
-test_host_change_triggers_a_new_check (test_router_mqtt_topic.CoordinatorRecoveryTests.test_host_change_triggers_a_new_check) ... ok
-test_legacy_disabled_agent_does_not_schedule_recovery (test_router_mqtt_topic.CoordinatorRecoveryTests.test_legacy_disabled_agent_does_not_schedule_recovery) ... ok
-test_reload_repairs_without_saved_shared_credentials (test_router_mqtt_topic.CoordinatorRecoveryTests.test_reload_repairs_without_saved_shared_credentials) ... ok
-test_shared_configuration_is_applied_before_recovery (test_router_mqtt_topic.CoordinatorRecoveryTests.test_shared_configuration_is_applied_before_recovery) ... ok
-test_success_is_not_repeated_on_every_poll (test_router_mqtt_topic.CoordinatorRecoveryTests.test_success_is_not_repeated_on_every_poll) ... ok
-test_active_wav_receivers_and_uart_tunnel_are_deferred (test_router_mqtt_topic.ShellTests.test_active_wav_receivers_and_uart_tunnel_are_deferred) ... ok
-test_broker_button_identity_and_audio_files_are_preserved (test_router_mqtt_topic.ShellTests.test_broker_button_identity_and_audio_files_are_preserved) ... ok
-test_correct_topic_is_idempotent (test_router_mqtt_topic.ShellTests.test_correct_topic_is_idempotent) ... ok
-test_dedicated_coordinator_marker_blocks_restart (test_router_mqtt_topic.ShellTests.test_dedicated_coordinator_marker_blocks_restart) ... ok
-test_disabled_agent_is_not_started (test_router_mqtt_topic.ShellTests.test_disabled_agent_is_not_started) ... ok
-test_explicit_topic_is_not_overwritten (test_router_mqtt_topic.ShellTests.test_explicit_topic_is_not_overwritten) ... ok
-test_ip_change_repairs_topic_and_confirms_new_publication (test_router_mqtt_topic.ShellTests.test_ip_change_repairs_topic_and_confirms_new_publication) ... ok
-test_live_coordinator_role_blocks_restart (test_router_mqtt_topic.ShellTests.test_live_coordinator_role_blocks_restart) ... ok
-test_missing_legacy_agent_is_skipped (test_router_mqtt_topic.ShellTests.test_missing_legacy_agent_is_skipped) ... ok
-test_old_log_markers_never_confirm_a_new_restart (test_router_mqtt_topic.ShellTests.test_old_log_markers_never_confirm_a_new_restart) ... ok
-test_uart_maintenance_and_concurrent_recovery_are_deferred (test_router_mqtt_topic.ShellTests.test_uart_maintenance_and_concurrent_recovery_are_deferred) ... ok
-test_unconfirmed_or_alias_address_does_not_restart (test_router_mqtt_topic.ShellTests.test_unconfirmed_or_alias_address_does_not_restart) ... ok
-test_wrong_runtime_topic_and_failed_restart_are_rejected (test_router_mqtt_topic.ShellTests.test_wrong_runtime_topic_and_failed_restart_are_rejected) ... ok
-test_coordinator_never_receives_a_command (test_router_mqtt_topic.WrapperTests.test_coordinator_never_receives_a_command) ... ok
-test_disabled_or_unconfirmed_agent_is_not_enabled (test_router_mqtt_topic.WrapperTests.test_disabled_or_unconfirmed_agent_is_not_enabled) ... ok
-test_invalid_host_is_rejected_before_transmission (test_router_mqtt_topic.WrapperTests.test_invalid_host_is_rejected_before_transmission) ... ok
-test_ready_and_legacy_runtime_are_accepted (test_router_mqtt_topic.WrapperTests.test_ready_and_legacy_runtime_are_accepted) ... ok
-test_repaired_topic_uses_isolated_client_and_short_lines (test_router_mqtt_topic.WrapperTests.test_repaired_topic_uses_isolated_client_and_short_lines) ... ok
-test_unknown_echo_and_unconfirmed_output_are_rejected (test_router_mqtt_topic.WrapperTests.test_unknown_echo_and_unconfirmed_output_are_rejected) ... ok
-
+test_router_mqtt_topic.py
+M1S Router MQTT synchronization not confirmed for hub 192.168.0.210; retrying later
+Traceback (most recent call last):
+  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\custom_components\aqara_m1s_zigbee_router\coordinator.py", line 170, in _sync_shared_mqtt
+    await self.hass.async_add_executor_job(ensure_router_mqtt_topic, self.client)
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 2253, in _execute_mock_call
+    result = effect(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_router_mqtt_topic.py", line 226, in <lambda>
+    async_add_executor_job=AsyncMock(side_effect=lambda fn, *args: fn(*args)))
+                                                                   ^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1124, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1128, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1183, in _execute_mock_call
+    raise effect
+RuntimeError: deferred
+.........................
 ----------------------------------------------------------------------
-Ran 25 tests in 6.210s
+Ran 25 tests in 10.588s
 
 OK
 
-===== test_shared_mqtt.py =====
-test_atomic_shell_write_backup_and_idempotence (test_shared_mqtt.Tests.test_atomic_shell_write_backup_and_idempotence) ... Executing <Task finished name='Task-2' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-10-28\a\work\integration-tail-fix\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.969 seconds
-ok
-test_global_persistence_and_failed_validation (test_shared_mqtt.Tests.test_global_persistence_and_failed_validation) ... ok
-test_invalid_settings (test_shared_mqtt.Tests.test_invalid_settings) ... ok
-test_missing_hub_runtime_is_failure (test_shared_mqtt.Tests.test_missing_hub_runtime_is_failure) ... ok
-test_paho_accept_and_reject (test_shared_mqtt.Tests.test_paho_accept_and_reject) ... Executing <Task finished name='Task-24' coro=<Tests.test_paho_accept_and_reject() done, defined at C:\Users\Dell\Documents\Codex\2026-10-28\a\work\integration-tail-fix\test_shared_mqtt.py:59> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.110 seconds
-ok
-test_storage_failure_preserves_active_config (test_shared_mqtt.Tests.test_storage_failure_preserves_active_config) ... ok
-test_sync_failure_retry_and_recovery (test_shared_mqtt.Tests.test_sync_failure_retry_and_recovery) ... ok
+test_shared_mqtt.py
+Executing <Task finished name='Task-2' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 1.797 seconds
+....Executing <Task finished name='Task-24' coro=<Tests.test_paho_accept_and_reject() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py:59> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.266 seconds
+..E
+======================================================================
+ERROR: test_sync_failure_retry_and_recovery (__main__.Tests.test_sync_failure_retry_and_recovery)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<sync>", line 167, in _sync_shared_mqtt
+  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py", line 37, in async_add_executor_job
+    async def async_add_executor_job(self, fn, *args): return fn(*args)
+                                                              ^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1124, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1128, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1183, in _execute_mock_call
+    raise effect
+OSError: offline
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\async_case.py", line 90, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\async_case.py", line 112, in _callMaybeAsync
+    return self._asyncioRunner.run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 654, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py", line 114, in test_sync_failure_retry_and_recovery
+    await namespace['_sync_shared_mqtt'](coordinator, manager, (1, 1))
+  File "<sync>", line 176, in _sync_shared_mqtt
+AttributeError: 'types.SimpleNamespace' object has no attribute 'host'
 
 ----------------------------------------------------------------------
-Ran 7 tests in 1.216s
+Ran 7 tests in 2.310s
+
+FAILED (errors=1)
+
+test_sound_delete.py
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.114s
 
 OK
 
-===== test_sound_delete.py =====
-test_direct_delete_uses_validated_manifest_without_backup (test_sound_delete.SoundDeleteTests.test_direct_delete_uses_validated_manifest_without_backup) ... ok
-test_empty_selection_is_rejected (test_sound_delete.SoundDeleteTests.test_empty_selection_is_rejected) ... ok
-test_failed_or_incomplete_scan_is_not_an_empty_inventory (test_sound_delete.SoundDeleteTests.test_failed_or_incomplete_scan_is_not_an_empty_inventory) ... ok
-test_list_sounds_filters_and_deduplicates (test_sound_delete.SoundDeleteTests.test_list_sounds_filters_and_deduplicates) ... ok
-test_many_files_use_bounded_chunk_commands (test_sound_delete.SoundDeleteTests.test_many_files_use_bounded_chunk_commands) ... ok
-test_missing_success_marker_is_failure (test_sound_delete.SoundDeleteTests.test_missing_success_marker_is_failure) ... ok
-test_rejects_newline_in_path (test_sound_delete.SoundDeleteTests.test_rejects_newline_in_path) ... ok
-test_rejects_unsafe_paths_before_transport (test_sound_delete.SoundDeleteTests.test_rejects_unsafe_paths_before_transport) ... ok
-test_success_count_must_match_selection (test_sound_delete.SoundDeleteTests.test_success_count_must_match_selection) ... ok
-test_successful_empty_scan_is_authoritative (test_sound_delete.SoundDeleteTests.test_successful_empty_scan_is_authoritative) ... ok
-test_system_sound_directory_is_not_managed_upload_space (test_sound_delete.SoundDeleteTests.test_system_sound_directory_is_not_managed_upload_space) ... ok
-test_telnet_echo_after_completion_does_not_hide_sounds (test_sound_delete.SoundDeleteTests.test_telnet_echo_after_completion_does_not_hide_sounds) ... ok
-
+test_sound_inventory.py
+...........
 ----------------------------------------------------------------------
-Ran 12 tests in 0.050s
+Ran 11 tests in 0.377s
 
 OK
 
-===== test_sound_inventory.py =====
-test_confirmed_deletion_removes_only_missing_sound (test_sound_inventory.SoundInventoryTests.test_confirmed_deletion_removes_only_missing_sound) ... ok
-test_confirmed_empty_inventory_does_not_create_nonexistent_sounds (test_sound_inventory.SoundInventoryTests.test_confirmed_empty_inventory_does_not_create_nonexistent_sounds) ... ok
-test_disconnect_during_scan_does_not_apply_result (test_sound_inventory.SoundInventoryTests.test_disconnect_during_scan_does_not_apply_result) ... ok
-test_events_during_scan_are_coalesced_without_losing_last_refresh (test_sound_inventory.SoundInventoryTests.test_events_during_scan_are_coalesced_without_losing_last_refresh) ... ok
-test_failed_scan_does_not_remove_existing_entities (test_sound_inventory.SoundInventoryTests.test_failed_scan_does_not_remove_existing_entities) ... ok
-test_no_manual_refresh_entity_or_extra_helper (test_sound_inventory.SoundInventoryTests.test_no_manual_refresh_entity_or_extra_helper) ... ok
-test_offline_start_recovers_all_sounds_without_reload (test_sound_inventory.SoundInventoryTests.test_offline_start_recovers_all_sounds_without_reload) ... ok
-test_online_initial_scan_failure_retries_until_success (test_sound_inventory.SoundInventoryTests.test_online_initial_scan_failure_retries_until_success) ... ok
-test_reconnect_refreshes_inventory (test_sound_inventory.SoundInventoryTests.test_reconnect_refreshes_inventory) ... ok
-test_successful_online_setup_is_not_rescanned_on_each_sensor_update (test_sound_inventory.SoundInventoryTests.test_successful_online_setup_is_not_rescanned_on_each_sensor_update) ... ok
-test_unload_cancels_pending_scan_and_unsubscribes (test_sound_inventory.SoundInventoryTests.test_unload_cancels_pending_scan_and_unsubscribes) ... ok
-
+test_sound_priority.py
+...................M1S local WAV session disappeared host=test
+.M1S local WAV status failed host=test: offline
+....M1S media gain restore failed host=test: offline
+.M1S audio resume failed after local WAV host=test: offline
+.....M1S WAV URL download timed out host=test
+....
 ----------------------------------------------------------------------
-Ran 11 tests in 0.267s
+Ran 34 tests in 2.003s
 
 OK
 
-===== test_sound_priority.py =====
-test_active_group_retains_settle_even_without_individual_radio (test_sound_priority.SoundPriorityTests.test_active_group_retains_settle_even_without_individual_radio) ... ok
-test_ambiguous_start_failure_never_replays_audio (test_sound_priority.SoundPriorityTests.test_ambiguous_start_failure_never_replays_audio) ... ok
-test_audio_still_busy_after_cleanup_never_starts_wav (test_sound_priority.SoundPriorityTests.test_audio_still_busy_after_cleanup_never_starts_wav) ... ok
-test_busy_audio_is_cleaned_before_retrying_notification_gain (test_sound_priority.SoundPriorityTests.test_busy_audio_is_cleaned_before_retrying_notification_gain) ... ok
-test_busy_rejection_cleans_residual_receiver_then_starts_once (test_sound_priority.SoundPriorityTests.test_busy_rejection_cleans_residual_receiver_then_starts_once) ... ok
-test_cancellation_during_remote_start_settles_and_stops_owned_job (test_sound_priority.SoundPriorityTests.test_cancellation_during_remote_start_settles_and_stops_owned_job) ... ok
-test_cancelled_temporary_wav_restores_gain_before_resume (test_sound_priority.SoundPriorityTests.test_cancelled_temporary_wav_restores_gain_before_resume) ... ok
-test_coordinator_cannot_play_or_provision_audio (test_sound_priority.SoundPriorityTests.test_coordinator_cannot_play_or_provision_audio) ... ok
-test_failed_group_handover_releases_claim_without_raising_gain (test_sound_priority.SoundPriorityTests.test_failed_group_handover_releases_claim_without_raising_gain) ... ok
-test_failed_start_restores_normal_gain_before_releasing_priority (test_sound_priority.SoundPriorityTests.test_failed_start_restores_normal_gain_before_releasing_priority) ... ok
-test_idle_hub_cannot_start_wav_when_volume_is_not_confirmed (test_sound_priority.SoundPriorityTests.test_idle_hub_cannot_start_wav_when_volume_is_not_confirmed) ... ok
-test_idle_hub_does_not_start_previously_stopped_radio (test_sound_priority.SoundPriorityTests.test_idle_hub_does_not_start_previously_stopped_radio) ... ok
-test_idle_hub_skips_settle_but_still_applies_gain_and_priority (test_sound_priority.SoundPriorityTests.test_idle_hub_skips_settle_but_still_applies_gain_and_priority) ... ok
-test_invalid_notification_volume_cannot_interrupt_music (test_sound_priority.SoundPriorityTests.test_invalid_notification_volume_cannot_interrupt_music) ... ok
-test_invalid_path_is_rejected_before_interrupting_music (test_sound_priority.SoundPriorityTests.test_invalid_path_is_rejected_before_interrupting_music) ... ok
-test_invalid_url_cannot_preempt_audio (test_sound_priority.SoundPriorityTests.test_invalid_url_cannot_preempt_audio) ... ok
-test_local_wav_claims_suspends_and_resumes_without_ffmpeg (test_sound_priority.SoundPriorityTests.test_local_wav_claims_suspends_and_resumes_without_ffmpeg) ... ok
-test_manual_media_change_during_wav_is_the_value_restored (test_sound_priority.SoundPriorityTests.test_manual_media_change_during_wav_is_the_value_restored) ... ok
-test_manual_stop_kills_only_its_job_then_restores_priority (test_sound_priority.SoundPriorityTests.test_manual_stop_kills_only_its_job_then_restores_priority) ... ok
-test_missing_or_failed_job_does_not_hold_audio_forever (test_sound_priority.SoundPriorityTests.test_missing_or_failed_job_does_not_hold_audio_forever) ... M1S local WAV session disappeared host=test
-ok
-test_repeated_status_failures_stop_job_and_release_priority (test_sound_priority.SoundPriorityTests.test_repeated_status_failures_stop_job_and_release_priority) ... M1S local WAV status failed host=test: offline
-ok
-test_replacement_without_explicit_volume_keeps_priority_gain_until_end (test_sound_priority.SoundPriorityTests.test_replacement_without_explicit_volume_keeps_priority_gain_until_end) ... ok
-test_replacing_temporary_sound_keeps_focus_and_restores_only_at_end (test_sound_priority.SoundPriorityTests.test_replacing_temporary_sound_keeps_focus_and_restores_only_at_end) ... ok
-test_replacing_wav_keeps_focus_until_the_new_sound_finishes (test_sound_priority.SoundPriorityTests.test_replacing_wav_keeps_focus_until_the_new_sound_finishes) ... ok
-test_restore_error_still_releases_focus_for_gain_checked_receiver_restart (test_sound_priority.SoundPriorityTests.test_restore_error_still_releases_focus_for_gain_checked_receiver_restart) ... M1S media gain restore failed host=test: offline
-ok
-test_resume_failure_still_releases_group_claim (test_sound_priority.SoundPriorityTests.test_resume_failure_still_releases_group_claim) ... M1S audio resume failed after local WAV host=test: offline
-ok
-test_second_busy_rejection_is_not_retried_again (test_sound_priority.SoundPriorityTests.test_second_busy_rejection_is_not_retried_again) ... ok
-test_start_error_releases_both_gates (test_sound_priority.SoundPriorityTests.test_start_error_releases_both_gates) ... ok
-test_suspension_error_still_releases_group_claim (test_sound_priority.SoundPriorityTests.test_suspension_error_still_releases_group_claim) ... ok
-test_temporary_gain_follows_handover_and_is_restored_before_resume (test_sound_priority.SoundPriorityTests.test_temporary_gain_follows_handover_and_is_restored_before_resume) ... ok
-test_url_timeout_with_failed_stop_still_releases_priority (test_sound_priority.SoundPriorityTests.test_url_timeout_with_failed_stop_still_releases_priority) ... M1S WAV URL download timed out host=test
-ok
-test_waiting_for_radio_to_yield_never_applies_notification_gain (test_sound_priority.SoundPriorityTests.test_waiting_for_radio_to_yield_never_applies_notification_gain) ... ok
-test_wav_url_keeps_the_same_priority_and_uses_media_slider_for_sound (test_sound_priority.SoundPriorityTests.test_wav_url_keeps_the_same_priority_and_uses_media_slider_for_sound) ... ok
-test_zero_notification_gain_and_hub_mute_are_explicit (test_sound_priority.SoundPriorityTests.test_zero_notification_gain_and_hub_mute_are_explicit) ... ok
-
+test_sound_storage.py
+........
 ----------------------------------------------------------------------
-Ran 34 tests in 1.464s
+Ran 8 tests in 0.142s
 
 OK
 
-===== test_sound_storage.py =====
-test_batch_is_refused_when_projected_free_is_below_reserve (test_sound_storage.SoundStorageTests.test_batch_is_refused_when_projected_free_is_below_reserve) ... ok
-test_capacity_rejects_system_folder_and_empty_batch (test_sound_storage.SoundStorageTests.test_capacity_rejects_system_folder_and_empty_batch) ... ok
-test_failed_preflight_writes_no_file (test_sound_storage.SoundStorageTests.test_failed_preflight_writes_no_file) ... ok
-test_fallback_progress_never_moves_backwards (test_sound_storage.SoundStorageTests.test_fallback_progress_never_moves_backwards) ... ok
-test_multiple_uploads_are_rejected_before_remote_write (test_sound_storage.SoundStorageTests.test_multiple_uploads_are_rejected_before_remote_write) ... ok
-test_single_capacity_check_accounts_for_replacement (test_sound_storage.SoundStorageTests.test_single_capacity_check_accounts_for_replacement) ... ok
-test_tcp_upload_transfers_real_socket_chunks_and_reports_progress (test_sound_storage.SoundStorageTests.test_tcp_upload_transfers_real_socket_chunks_and_reports_progress) ... ok
-test_upload_preflights_once_before_file (test_sound_storage.SoundStorageTests.test_upload_preflights_once_before_file) ... ok
-
+test_wav_fast_start.py
+......
 ----------------------------------------------------------------------
-Ran 8 tests in 0.082s
+Ran 6 tests in 0.195s
 
 OK
 
-===== test_wav_fast_start.py =====
-test_group_preparation_is_treated_as_active_handover (test_wav_fast_start.GroupHandoverTests.test_group_preparation_is_treated_as_active_handover) ... ok
-test_idle_group_does_not_request_remote_stop (test_wav_fast_start.GroupHandoverTests.test_idle_group_does_not_request_remote_stop) ... ok
-test_busy_fallback_requires_priority_ownership (test_wav_fast_start.RadioHandoverTests.test_busy_fallback_requires_priority_ownership) ... ok
-test_idle_hub_reserves_priority_without_remote_stop (test_wav_fast_start.RadioHandoverTests.test_idle_hub_reserves_priority_without_remote_stop) ... ok
-test_in_flight_start_is_not_mistaken_for_idle (test_wav_fast_start.RadioHandoverTests.test_in_flight_start_is_not_mistaken_for_idle) ... ok
-test_running_radio_keeps_scoped_stop_and_resume_intent (test_wav_fast_start.RadioHandoverTests.test_running_radio_keeps_scoped_stop_and_resume_intent) ... ok
-
+test_z2m_guard.py
+..................................
 ----------------------------------------------------------------------
-Ran 6 tests in 0.132s
+Ran 34 tests in 0.990s
 
 OK
 
-===== test_z2m_guard.py =====
-test_hdlc_fragmentation_escaping_crc (test_z2m_guard.PreflightTests.test_hdlc_fragmentation_escaping_crc) ... ok
-test_integer_bounds (test_z2m_guard.PreflightTests.test_integer_bounds) ... ok
-test_phy_enable_failure_still_disables_radio (test_z2m_guard.PreflightTests.test_phy_enable_failure_still_disables_radio) ... ok
-test_readiness_command_is_passive_and_does_not_require_aux_mqtt (test_z2m_guard.PreflightTests.test_readiness_command_is_passive_and_does_not_require_aux_mqtt) ... ok
-test_real_tcp_probe_and_socket_release (test_z2m_guard.PreflightTests.test_real_tcp_probe_and_socket_release) ... ok
-test_snapshot_does_not_count_remote_destination_port (test_z2m_guard.PreflightTests.test_snapshot_does_not_count_remote_destination_port) ... ok
-test_snapshot_rejects_incomplete_duplicate_or_stale_identity (test_z2m_guard.PreflightTests.test_snapshot_rejects_incomplete_duplicate_or_stale_identity) ... ok
-test_snapshot_requires_every_prerequisite (test_z2m_guard.PreflightTests.test_snapshot_requires_every_prerequisite) ... ok
-test_wrong_firmware_is_rejected_without_phy_changes (test_z2m_guard.PreflightTests.test_wrong_firmware_is_rejected_without_phy_changes) ... ok
-test_cached_bridge_online_cannot_finish_startup (test_z2m_guard.RecoveryTests.test_cached_bridge_online_cannot_finish_startup) ... ok
-test_disable_restores_only_original_supervisor_policy (test_z2m_guard.RecoveryTests.test_disable_restores_only_original_supervisor_policy) ... ok
-test_disabled_is_inert (test_z2m_guard.RecoveryTests.test_disabled_is_inert) ... ok
-test_error_state_is_not_confirmation_of_stop (test_z2m_guard.RecoveryTests.test_error_state_is_not_confirmation_of_stop) ... ok
-test_failed_phy_probe_never_starts_addon (test_z2m_guard.RecoveryTests.test_failed_phy_probe_never_starts_addon) ... ok
-test_handover_wait_does_not_repeat_radio_probe (test_z2m_guard.RecoveryTests.test_handover_wait_does_not_repeat_radio_probe) ... ok
-test_incomplete_configuration_pauses_automatic_start (test_z2m_guard.RecoveryTests.test_incomplete_configuration_pauses_automatic_start) ... ok
-test_manual_stop_pauses_and_is_persisted (test_z2m_guard.RecoveryTests.test_manual_stop_pauses_and_is_persisted) ... ok
-test_mqtt_disconnected_stops_and_never_probes (test_z2m_guard.RecoveryTests.test_mqtt_disconnected_stops_and_never_probes) ... ok
-test_new_boot_resets_retry_limit (test_z2m_guard.RecoveryTests.test_new_boot_resets_retry_limit) ... ok
-test_no_reset_or_probe_when_port_owned_by_another_client (test_z2m_guard.RecoveryTests.test_no_reset_or_probe_when_port_owned_by_another_client) ... ok
-test_offline_stops_even_before_radio_preflight (test_z2m_guard.RecoveryTests.test_offline_stops_even_before_radio_preflight) ... ok
-test_online_without_transport_cannot_finish_startup (test_z2m_guard.RecoveryTests.test_online_without_transport_cannot_finish_startup) ... ok
-test_paused_never_preflights_or_starts (test_z2m_guard.RecoveryTests.test_paused_never_preflights_or_starts) ... ok
-test_power_loss_then_return_recovers_without_manual_restart (test_z2m_guard.RecoveryTests.test_power_loss_then_return_recovers_without_manual_restart) ... ok
-test_relay_restart_without_hub_reboot_stops_and_revalidates (test_z2m_guard.RecoveryTests.test_relay_restart_without_hub_reboot_stops_and_revalidates) ... ok
-test_retained_online_is_not_a_start_acknowledgement (test_z2m_guard.RecoveryTests.test_retained_online_is_not_a_start_acknowledgement) ... ok
-test_runtime_change_during_probe_never_starts_z2m (test_z2m_guard.RecoveryTests.test_runtime_change_during_probe_never_starts_z2m) ... ok
-test_second_controller_cannot_claim_same_addon (test_z2m_guard.RecoveryTests.test_second_controller_cannot_claim_same_addon) ... ok
-test_start_timeout_stops_and_retries_with_limit (test_z2m_guard.RecoveryTests.test_start_timeout_stops_and_retries_with_limit) ... ok
-test_stop_confirmation_required_before_reset (test_z2m_guard.RecoveryTests.test_stop_confirmation_required_before_reset) ... ok
-test_stop_reset_probe_start_order_and_no_fixed_boot_delay (test_z2m_guard.RecoveryTests.test_stop_reset_probe_start_order_and_no_fixed_boot_delay) ... ok
-test_supervisor_adapter_uses_only_selected_slug (test_z2m_guard.RecoveryTests.test_supervisor_adapter_uses_only_selected_slug) ... ok
-test_unknown_supervisor_policy_cannot_start (test_z2m_guard.RecoveryTests.test_unknown_supervisor_policy_cannot_start) ... ok
-test_unload_does_not_reenable_watchdog_or_change_boot_policy (test_z2m_guard.RecoveryTests.test_unload_does_not_reenable_watchdog_or_change_boot_policy) ... ok
-
+FINAL RECHECK: test_shared_mqtt.py (fixture updated with client.host)
+Executing <Task finished name='Task-2' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 1.125 seconds
+....Executing <Task finished name='Task-24' coro=<Tests.test_paho_accept_and_reject() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_release\test_shared_mqtt.py:59> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.140 seconds
+...
 ----------------------------------------------------------------------
-Ran 34 tests in 0.559s
+Ran 7 tests in 1.489s
 
 OK

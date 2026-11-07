@@ -8,6 +8,7 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, Sen
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import LIGHT_LUX, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -136,7 +137,7 @@ class AqaraM1SCoordinatorDiagnosticSensor(CoordinatorEntity, SensorEntity):
     """Live Linux data, independent of the intentionally disabled MQTT agent."""
 
     _attr_should_poll = False
-    _attr_entity_category = "diagnostic"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, entry, coordinator, definition: SensorDef) -> None:
         super().__init__(coordinator)
@@ -157,7 +158,7 @@ class AqaraM1SCoordinatorDiagnosticSensor(CoordinatorEntity, SensorEntity):
 class AqaraM1SMQTTSyncSensor(CoordinatorEntity, SensorEntity):
     _attr_name = "MQTT configuration"
     _attr_should_poll = False
-    _attr_entity_category = "diagnostic"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, entry, coordinator):
         super().__init__(coordinator)
