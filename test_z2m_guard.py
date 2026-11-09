@@ -1,5 +1,6 @@
 """Recovery regressions, including an actual TCP Spinel emulator (no hardware)."""
 import asyncio
+from copy import deepcopy
 import importlib.util
 import json
 from pathlib import Path
@@ -181,7 +182,11 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.now = 0
         self.backend = Backend()
-        self.store = types.SimpleNamespace(async_save=AsyncMock(), async_load=AsyncMock(return_value=None))
+        self.persisted = None
+        self.store = types.SimpleNamespace(
+            async_save=AsyncMock(side_effect=self.save),
+            async_load=AsyncMock(side_effect=lambda: deepcopy(self.persisted)),
+        )
         self.hass = types.SimpleNamespace(data={}, async_add_executor_job=AsyncMock(side_effect=lambda f, *args: f(*args)))
         self.client = types.SimpleNamespace(host="hub")
         self.guard = guard_module.Z2MGuard(self.hass, types.SimpleNamespace(entry_id="entry"), self.client,
@@ -195,6 +200,23 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.reset = self.enterContext(patch.object(guard_module, "restart_runtime"))
         self.probe = self.enterContext(patch.object(guard_module, "probe_rcp", return_value={"phy_test": "passed"}))
         self.guard.clock = lambda: self.now
+
+    def save(self, data):
+        self.persisted = deepcopy(data)
+
+    async def reload_guard(self):
+        entry = types.SimpleNamespace(
+            entry_id="entry", async_create_background_task=Mock(
+                side_effect=lambda hass, coro, **kwargs: coro.close()),
+        )
+        self.guard = guard_module.Z2MGuard(
+            self.hass, entry, self.client, backend=self.backend, store=self.store,
+        )
+        self.guard._offline = AsyncMock(side_effect=self.offline)
+        self.guard._subscribe = AsyncMock()
+        self.guard._mqtt_connected = Mock(return_value=True)
+        self.guard.clock = lambda: self.now
+        await self.guard.async_initialize()
 
     def offline(self):
         self.guard.bridge_online = False
@@ -268,14 +290,77 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         await self.tick()
         self.assertFalse(self.guard.ready)
 
-    async def test_manual_stop_pauses_and_is_persisted(self):
+    async def test_unexpected_stop_retries_same_runtime_without_persisting_pause(self):
         await self.start()
+        self.guard._offline.reset_mock()
         self.backend.data["state"] = "stopped"
+        self.snapshot = rcp.Snapshot(BOOT, self.snapshot.runtime_id, 1886, 0)
         await self.tick()
-        self.assertTrue(self.guard.settings["paused"])
-        self.assertEqual(self.guard.phase, "paused")
+        self.assertFalse(self.guard.ready)
+        self.assertEqual(self.guard.phase, "waiting")
+        self.assertEqual(self.guard.reason, "addon_stopped_recovery_scheduled")
+        self.assertFalse(self.guard.settings["paused"])
+        self.assertFalse(self.persisted["settings"]["paused"])
+        self.guard._offline.assert_awaited()
+
+        await self.tick(1)  # The guard must not reset or start on the next immediate poll.
+        self.assertEqual(self.backend.events.count(("start",)), 1)
+        self.assertEqual(self.reset.call_count, 1)
+        self.assertEqual(self.probe.call_count, 1)
+        await self.tick(100)  # Backoff passed; same hub/runtime remains usable.
+        self.assertEqual(self.reset.call_count, 2)
+        self.assertEqual(self.backend.data["state"], "stopped")
+        await self.tick()  # Fresh runtime baseline.
+        self.assertEqual(self.backend.events.count(("start",)), 1)
+        await self.tick()  # New PHY probe and Start.
+        self.assertEqual(self.probe.call_count, 2)
+        self.assertEqual(self.backend.events.count(("start",)), 2)
+        self.assertEqual(self.guard.phase, "starting")
+
+        self.snapshot = rcp.Snapshot(BOOT, self.snapshot.runtime_id, 1886, 1)
+        self.guard.bridge_online = True  # A stale online value is not sufficient.
         await self.tick()
-        self.assertEqual(sum(event[0] == "start" for event in self.backend.events), 1)
+        self.assertFalse(self.guard.ready)
+        self.guard._online_since_start = True
+        await self.tick()
+        self.assertTrue(self.guard.ready)
+
+    async def test_briefly_ready_flaps_exhaust_retries_without_setting_pause(self):
+        for attempt in range(guard_module.MAX_ATTEMPTS):
+            with self.subTest(attempt=attempt):
+                self.snapshot = rcp.Snapshot(BOOT, self.snapshot.runtime_id, 1886, 0)
+                await self.tick(100)
+                await self.tick()
+                await self.tick()
+                self.assertEqual(self.guard.phase, "starting")
+                self.snapshot = rcp.Snapshot(BOOT, self.snapshot.runtime_id, 1886, 1)
+                self.guard.bridge_online = self.guard._online_since_start = True
+                await self.tick()
+                self.assertTrue(self.guard.ready)
+                await self.tick()  # A healthy poll is insufficient to refill the budget.
+                self.backend.data["state"] = "stopped"
+                self.snapshot = rcp.Snapshot(BOOT, self.snapshot.runtime_id, 1886, 0)
+                await self.tick()
+                self.assertFalse(self.guard.ready)
+
+        await self.tick(100)
+        await self.tick(100)
+        self.assertEqual(self.guard.phase, "fault")
+        self.assertIn("retry_limit", self.guard.reason)
+        self.assertFalse(self.guard.settings["paused"])
+        self.assertFalse(self.persisted["settings"]["paused"])
+        self.assertEqual(self.backend.events.count(("start",)), guard_module.MAX_ATTEMPTS)
+        self.assertEqual(self.reset.call_count, guard_module.MAX_ATTEMPTS)
+        self.assertEqual(self.probe.call_count, guard_module.MAX_ATTEMPTS)
+
+    async def test_sustained_readiness_refills_retry_budget(self):
+        await self.start()
+        self.assertGreater(self.guard.attributes["attempts"], 0)
+        await self.tick()
+        self.assertGreater(self.guard.attributes["attempts"], 0)
+        await self.tick(guard_module.STABLE_READY_SECONDS + 1)
+        self.assertTrue(self.guard.ready)
+        self.assertEqual(self.guard.attributes["attempts"], 0)
 
     async def test_power_loss_then_return_recovers_without_manual_restart(self):
         await self.start()
@@ -327,11 +412,28 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.guard.saved)
 
     async def test_paused_never_preflights_or_starts(self):
-        self.guard.settings["paused"] = True
+        await self.guard.async_configure({**self.guard.settings, "paused": True})
+        self.assertTrue(self.persisted["settings"]["paused"])
         await self.tick()
+        await self.reload_guard()
+        await self.tick(100)
+        self.assertTrue(self.guard.settings["paused"])
+        self.assertEqual(self.guard.phase, "paused")
         self.reset.assert_not_called()
         self.probe.assert_not_called()
+        self.assertNotIn(("start",), self.backend.events)
         self.assertEqual(self.backend.data["state"], "stopped")
+
+    async def test_legacy_pause_without_origin_is_preserved(self):
+        self.persisted = {"settings": {**self.guard.settings, "paused": True}, "saved": {}}
+        await self.reload_guard()
+        await self.tick(100)
+        self.assertTrue(self.guard.settings["paused"])
+        self.assertTrue(self.persisted["settings"]["paused"])
+        self.assertEqual(self.guard.phase, "paused")
+        self.reset.assert_not_called()
+        self.probe.assert_not_called()
+        self.assertNotIn(("start",), self.backend.events)
 
     async def test_unload_does_not_reenable_watchdog_or_change_boot_policy(self):
         await self.tick()
@@ -352,13 +454,28 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.guard.reason, "mqtt_disconnected")
         self.probe.assert_not_called()
 
-    async def test_incomplete_configuration_pauses_automatic_start(self):
+    async def test_failed_configuration_latches_without_pause_and_valid_config_clears_it(self):
         self.guard._subscribe.side_effect = RuntimeError("subscription failed")
         with self.assertRaisesRegex(RuntimeError, "subscription failed"):
             await self.guard.async_configure(self.guard.settings)
-        self.assertTrue(self.guard.settings["paused"])
-        await self.tick()
+        self.assertFalse(self.guard.settings["paused"])
+        self.assertTrue(self.persisted["configuration_blocked"])
+        self.assertEqual(self.guard.phase, "fault")
+        self.assertEqual(self.guard.reason, "configuration_failed_automatic_start_blocked")
+
+        await self.reload_guard()
+        await self.tick(100)
+        self.assertFalse(self.guard.settings["paused"])
+        self.assertTrue(self.persisted["configuration_blocked"])
+        self.assertEqual(self.guard.phase, "fault")
+        self.assertEqual(self.guard.reason, "configuration_failed_automatic_start_blocked")
+        self.reset.assert_not_called()
+        self.probe.assert_not_called()
         self.assertNotIn(("start",), self.backend.events)
+
+        await self.guard.async_configure(self.guard.settings)
+        self.assertFalse(self.persisted["configuration_blocked"])
+        await self.start()
 
     async def test_second_controller_cannot_claim_same_addon(self):
         other = types.SimpleNamespace(settings=self.guard.settings.copy())

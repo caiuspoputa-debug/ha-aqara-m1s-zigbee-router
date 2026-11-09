@@ -88,18 +88,22 @@ nu face automat adaptări pentru alt firmware, alt UART sau alt coordonator.
 
 ## Oprire manuală, încercări și repornire Home Assistant
 
-- Bifa **Pauza** ține Z2M oprit și blochează pornirea automată. Debifează și
-  salvează pentru o nouă recuperare controlată.
-- Dacă Z2M se oprește în timp ce hubul este verificat sănătos, supravegherea
-  salvează o pauză, ca să nu contrazică butonul Stop al utilizatorului. Nu se poate
-  deosebi sigur fiecare oprire manuală de fiecare ieșire a procesului numai din
-  starea Supervisor. Verifică motivul, apoi reia din Configure.
-- O cădere confirmată a hubului are prioritate asupra acestei reguli: revenirea
-  lui declanșează automat recuperarea, fără intervenție manuală.
-- Există maximum trei încercări per boot detectat, cu pauze progresive. Lipsa
-  confirmării unei porniri după 90 de secunde duce la stop și o nouă încercare;
-  după limită, starea este `fault`, fără o buclă infinită de reporniri. Un boot nou
-  sau salvarea din Configure reîncepe seria de încercări.
+- Bifa **Pauza** ține Z2M oprit și blochează pornirea automată. Folosește-o
+  pentru mentenanță; debifează și salvează când vrei reluarea. O pauză deja
+  salvată înainte de actualizare este păstrată, pentru că vechea versiune nu
+  înregistra dacă a fost aleasă manual sau automat.
+- Cu supravegherea activă și Pauza debifată, dacă Z2M se oprește, integrarea
+  publică `offline`, raportează `addon_stopped_recovery_scheduled` și reia
+  verificările înainte de a porni. Același comportament se aplică unui Stop
+  din pagina suplimentului: Supervisor nu îi spune integrării cine a oprit Z2M.
+- Există maximum trei încercări într-o serie, cu așteptare progresivă. Lipsa
+  confirmării unei porniri după 90 de secunde duce la stop și o nouă încercare.
+  Bugetul se reface după 60 de secunde de funcționare confirmată, la un boot nou
+  al hubului sau la salvarea configurării. După epuizare, `fault` cere o nouă
+  configurare sau un boot nou; nu modifică bifa Pauză.
+- Dacă salvarea configurării eșuează în timpul preluării supravegherii, pornirea
+  automată rămâne blocată, inclusiv la reîncărcare. Verifică `phase` și `reason`,
+  corectează configurarea și salvează din nou.
 - La repornirea/reîncărcarea integrării, configurația se încarcă din stocarea HA;
   dacă supravegherea este activată, se reface verificarea completă și se poate
   produce o repornire controlată Z2M. Nu se adoptă necondiționat un `online` vechi.
@@ -129,8 +133,10 @@ diagnostic suplimentar. Nu declarăm remedierea hardware validată înainte de t
 3. Reconectează coordonatorul. Confirmă că Z2M rămâne oprit în timpul pornirii
    și pornește după preflight, fără comenzi manuale. Apasă din nou butonul.
 4. Repetă întreruperea, inclusiv una scurtă, și testează restart HA cu hubul oprit.
-5. Testează Pauza și Stop manual: Z2M nu trebuie repornit contra intenției tale.
-6. Verifică soneria/radioul: fișierele audio nu au fost schimbate față de 0.37.16.
+5. Cu Pauza debifată și Ready activ, oprește o dată Z2M din pagina suplimentului.
+   Verifică revenirea automată și faptul că Pauza a rămas debifată.
+6. Bifează Pauza și salvează. Confirmă că Z2M rămâne oprit, apoi debifează și
+   salvează pentru a relua funcționarea normală.
 
 ## Referințe folosite
 

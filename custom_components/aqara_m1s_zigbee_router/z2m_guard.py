@@ -16,6 +16,7 @@ DATA_GUARDS = "z2m_guards"
 POLL_SECONDS = 5
 START_TIMEOUT = 90
 MAX_ATTEMPTS = 3
+STABLE_READY_SECONDS = 60
 
 
 def validate_settings(settings):
@@ -72,6 +73,7 @@ class Z2MGuard:
         self.store = store
         self.settings = validate_settings({})
         self.saved = {}
+        self._configuration_blocked = False
         self.phase = "disabled"
         self.reason = "not_configured"
         self.boot_id = None
@@ -86,6 +88,7 @@ class Z2MGuard:
         self._candidate = None
         self._candidate_since = 0.0
         self._started_at = None
+        self._healthy_since = None
         self._attempts = 0
         self._retry_at = 0.0
         self._was_running = False
@@ -105,7 +108,8 @@ class Z2MGuard:
     def attributes(self):
         return {"phase": self.phase, "reason": self.reason,
                 "addon_slug": self.settings["addon_slug"],
-                "automatic_recovery": self.settings["enabled"] and not self.settings["paused"],
+                "automatic_recovery": (self.settings["enabled"] and not self.settings["paused"]
+                                       and not self._configuration_blocked),
                 "attempts": self._attempts, "boot_id": self.boot_id,
                 "rcp_preflight": self.probe_result,
                 "radio_over_air_verified": False}
@@ -124,13 +128,17 @@ class Z2MGuard:
             callback()
 
     async def _save(self):
-        await self.store.async_save({"settings": self.settings, "saved": self.saved})
+        await self.store.async_save({"settings": self.settings, "saved": self.saved,
+                                     "configuration_blocked": self._configuration_blocked})
 
     async def async_initialize(self):
         data = await self.store.async_load() or {}
         self.settings = validate_settings(data.get("settings", {}))
         self.saved = data.get("saved", {})
-        if self.settings["enabled"]:
+        self._configuration_blocked = bool(data.get("configuration_blocked", False))
+        if self.settings["enabled"] and self._configuration_blocked:
+            self._state("fault", "configuration_failed_automatic_start_blocked")
+        elif self.settings["enabled"]:
             await self._subscribe()
         self._task = self.entry.async_create_background_task(
             self.hass, self._loop(), name="M1S Zigbee2MQTT recovery supervisor")
@@ -144,7 +152,8 @@ class Z2MGuard:
 
         @callback
         def receive(message):
-            if self._closed or not self.settings["enabled"] or topic != self.settings["base_topic"] + "/bridge/state":
+            if (self._closed or not self.settings["enabled"] or self._configuration_blocked
+                    or topic != self.settings["base_topic"] + "/bridge/state"):
                 return
             try:
                 payload = message.payload
@@ -194,14 +203,12 @@ class Z2MGuard:
                 await self._restore_supervisor()
             self.settings = values
             self._validated_slug = None
-            self._pending = True
-            self._reset_done = False
-            self._probe_runtime_id = None
-            self._candidate = None
-            self._started_at = None
+            self._invalidate()
             self._attempts = 0
             self._retry_at = 0
-            self._allow_online = False
+            # A reload between saving and taking ownership must not start the
+            # app from an incomplete configuration. Pause is user intent only.
+            self._configuration_blocked = values["enabled"]
             await self._save()
             if self._unsubscribe:
                 self._unsubscribe()
@@ -210,12 +217,14 @@ class Z2MGuard:
                 try:
                     await self._subscribe()
                     await self._take_ownership()
-                except Exception:
-                    # An incomplete configuration must not start an add-on
-                    # later, after the UI has reported a configuration error.
-                    self.settings["paused"] = True
+                    self._configuration_blocked = False
                     await self._save()
-                    self._state("fault", "configuration_failed_automatic_start_paused")
+                except Exception:
+                    self._configuration_blocked = True
+                    if self._unsubscribe:
+                        self._unsubscribe()
+                        self._unsubscribe = None
+                    self._state("fault", "configuration_failed_automatic_start_blocked")
                     raise
                 self._state("paused" if values["paused"] else "waiting", "configuration_saved")
             else:
@@ -268,12 +277,21 @@ class Z2MGuard:
         self._probe_runtime_id = None
         self._candidate = None
         self._started_at = None
+        self._healthy_since = None
+        self._online_since_start = False
         self.probe_result = None
         self._allow_online = False
+
+    def _schedule_recovery(self, now):
+        self._invalidate()
+        self._retry_at = now + min(60, 5 * 2 ** self._attempts)
 
     async def async_tick(self):
         async with self._lock:
             if not self.settings["enabled"]:
+                return
+            if self._configuration_blocked:
+                self._state("fault", "configuration_failed_automatic_start_blocked")
                 return
             info = await self._take_ownership()
             if not self._mqtt_connected():
@@ -299,6 +317,7 @@ class Z2MGuard:
             if self.boot_id != snapshot.boot_id:
                 self._attempts = 0
                 self._retry_at = 0
+                self._healthy_since = None
                 self.boot_id = snapshot.boot_id
             if self.runtime_id is not None and snapshot.runtime_id != self.runtime_id:
                 self._invalidate()
@@ -307,23 +326,24 @@ class Z2MGuard:
 
             if not self._pending:
                 if not running:
-                    # With the hub healthy we cannot distinguish a manual stop
-                    # from every process exit. Prefer an explicit pause to
-                    # fighting the user's Stop button.
-                    self.settings["paused"] = True
-                    await self._save()
+                    # Supervisor's state alone cannot identify a manual Stop.
+                    # Only the explicit Pause option disables recovery.
+                    self._schedule_recovery(now)
                     await self._offline()
-                    self._state("paused", "addon_stopped_while_coordinator_healthy")
+                    self._state("waiting", "addon_stopped_recovery_scheduled")
                 elif snapshot.connections != 1:
-                    self._invalidate()
+                    self._schedule_recovery(now)
                     await self._ensure_stopped(info)
                     self._state("waiting", "z2m_transport_session_missing_or_ambiguous")
                 elif not self.bridge_online:
-                    self._invalidate()
+                    self._schedule_recovery(now)
                     await self._ensure_stopped(info)
                     self._state("waiting", "bridge_reported_offline")
                 else:
-                    self._attempts = 0
+                    if self._healthy_since is None:
+                        self._healthy_since = now
+                    if now - self._healthy_since >= STABLE_READY_SECONDS:
+                        self._attempts = 0
                     self._state("running", "rcp_initialized_and_fresh_bridge_online")
                 return
 
@@ -331,14 +351,14 @@ class Z2MGuard:
                 if running and snapshot.connections == 1 and self._online_since_start and self.bridge_online:
                     self._pending = False
                     self._started_at = None
+                    self._healthy_since = now
                     self._state("running", "rcp_initialized_and_fresh_bridge_online")
                     return
                 if now - self._started_at < START_TIMEOUT:
                     self._state("starting", "waiting_for_fresh_bridge_online_and_transport")
                     return
-                self._invalidate()
+                self._schedule_recovery(now)
                 await self._ensure_stopped(info)
-                self._retry_at = now + min(60, 5 * 2 ** self._attempts)
                 self._state("waiting", "z2m_start_confirmation_timeout")
                 return
 

@@ -1,7 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.23
+# Aqara M1S Zigbee Coordinator + Router v0.37.24
 
-Version 0.37.23 sends Router MQTT scripts in short acknowledged commands on a single Telnet session. It includes the sensor category and MQTT diagnostic fixes from 0.37.22.
+With coordinator supervision enabled, an unexpected Zigbee2MQTT stop now triggers bounded recovery after the usual readiness checks. Pause is an explicit maintenance option. A failed configuration blocks automatic start without changing Pause. See [Coordinator supervision](COORDINATOR_GUARD_RO.md).
 
+Version 0.37.23's acknowledged Router MQTT Telnet transfer and the diagnostic fixes from 0.37.22 are included.
 
 Continuous YouTube Cast streams no longer take the destructive radio rebuffer
 path when HA temporarily runs out of decoded PCM. That path cleared pending
@@ -14,7 +15,7 @@ Buffer sizes, initial prefill, normal PCM pacing and group synchronization are
 unchanged. Explicit Stop and genuine transport failures remain authoritative.
 Ordinary radio rebuffer behavior is retained.
 
-Install integration **0.37.23** and restart Home Assistant. Add-on **1.0.30**
+Install integration **0.37.24** and restart Home Assistant. The separate media add-on **1.0.30**
 separately fixes obsolete manual selections publishing STOPPED for a newer song.
 Physical hub playback still requires verification after installation.
 

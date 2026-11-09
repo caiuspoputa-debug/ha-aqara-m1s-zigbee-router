@@ -1,3 +1,9 @@
+# v0.37.24 — Recuperare Zigbee2MQTT cu pauză explicită
+
+- Păstrează bifa Pauză numai ca opțiune a utilizatorului. Dacă suplimentul se oprește, supravegherea publică `offline` și reia verificările înainte de pornire.
+- Limitează seria la trei încercări cu așteptare progresivă. Bugetul se reface după 60 de secunde de funcționare confirmată sau la un boot nou al coordonatorului ori la salvarea configurării.
+- O configurare eșuată blochează pornirea printr-o stare separată de eroare, păstrată la reîncărcare. Pauzele salvate de versiunile anterioare sunt păstrate.
+
 # v0.37.23 — Transfer Telnet confirmat pentru sincronizarea MQTT
 
 Corectează transmiterea scriptului de verificare MQTT către hub: blocul Base64

@@ -1,7 +1,8 @@
-# Aqara M1S Zigbee Coordinator + Router v0.37.23
+# Aqara M1S Zigbee Coordinator + Router v0.37.24
 
-Version 0.37.23 sends Router MQTT scripts in short acknowledged commands on a single Telnet session. It includes the sensor category and MQTT diagnostic fixes from 0.37.22.
+Cu supravegherea activă, oprirea Zigbee2MQTT declanșează recuperarea cu încercări limitate, după verificarea coordonatorului. Pauza rămâne o opțiune explicită de mentenanță. Dacă salvarea configurării eșuează, pornirea este blocată separat, fără să se modifice bifa Pauză. Vezi [Supravegherea coordonatorului](COORDINATOR_GUARD_RO.md).
 
+Sunt păstrate transferul Telnet confirmat pentru MQTT Router din 0.37.23 și corecțiile de diagnostic din 0.37.22.
 
 Corecteaza oprirea receiverului la o lipsa scurta de PCM in fluxurile continue
 YouTube Cast. In 0.37.20, logul `single rebuffer started ... action=stop_receiver`
@@ -18,8 +19,8 @@ batching-ul obisnuit, ceasul de redare si sincronizarea grupului sunt pastrate.
 Stop explicit si defectele reale de transport pastreaza recuperarea existenta.
 Comportamentul pentru radio si alte surse ramane acelasi.
 
-Se instaleaza integrarea **0.37.23**, apoi se reporneste Home Assistant.
-Add-on-ul **1.0.30** contine separat corectia selectiei manuale a piesei.
+Se instalează integrarea **0.37.24**, apoi se repornește Home Assistant.
+Add-on-ul media **1.0.30** conține separat corecția selecției manuale a piesei.
 Detalii: [CAST_CONTINUOUS_TAIL_RO.md](CAST_CONTINUOUS_TAIL_RO.md).
 Testele locale nu reprezinta o verificare acustica pe huburile utilizatorului.
 

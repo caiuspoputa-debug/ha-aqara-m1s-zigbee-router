@@ -1,17 +1,37 @@
 test_audio_link_guard.py
 ...........
 ----------------------------------------------------------------------
-Ran 11 tests in 0.484s
+Ran 11 tests in 0.574s
 
 OK
 
 test_audio_transport_batch.py
-Executing <Task pending name='aqara_m1s_group_writer_224' coro=<AqaraM1SMediaGroupManager._member_writer_loop() running at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_0_37_23\custom_components\aqara_m1s_zigbee_router\media_group.py:2303> wait_for=<Future pending cb=[Task.task_wakeup()] created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py:428> created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py:384> took 0.141 seconds
-....................
+......M1S group first consecutive TCP drain timeout tolerated member=221@192.168.0.221 seq=0 timeout=1.25s action=keep_receiver
+F.............
+======================================================================
+FAIL: test_slow_member_does_not_block_healthy_bursts (test_audio_transport_batch.GroupBatchTests.test_slow_member_does_not_block_healthy_bursts)
 ----------------------------------------------------------------------
-Ran 20 tests in 3.796s
+Traceback (most recent call last):
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\async_case.py", line 90, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\async_case.py", line 112, in _callMaybeAsync
+    return self._asyncioRunner.run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 654, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "<integration-workdir>\test_audio_transport_batch.py", line 142, in test_slow_member_does_not_block_healthy_bursts
+    self.assertEqual(len(self.members[0].writer.writes), 1)
+AssertionError: 2 != 1
 
-OK
+----------------------------------------------------------------------
+Ran 20 tests in 7.406s
+
+FAILED (failures=1)
 
 test_continuous_cast_gap.py
 ...Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
@@ -26,7 +46,7 @@ Aqara media continuous Cast source gap entity=media_player.cezara session=41 hos
 .Aqara media continuous Cast source gap entity=media_player.cezara session=41 host=192.168.0.205 action=keep_receiver
 .
 ----------------------------------------------------------------------
-Ran 10 tests in 0.467s
+Ran 10 tests in 1.201s
 
 OK
 
@@ -34,68 +54,22 @@ test_coordinator_io.py
 .............Ignored M1S MQTT state for role coordinator on router entry
 .......
 ----------------------------------------------------------------------
-Ran 20 tests in 0.408s
+Ran 20 tests in 1.023s
 
 OK
 
 test_coordinator_profile.py
-test_coordinator_refresh_has_no_mqtt_or_uart_work (__main__.CoordinatorTests.test_coordinator_refresh_has_no_mqtt_or_uart_work) ... ok
-test_coordinator_sensor_platform_exposes_four_live_diagnostics (__main__.CoordinatorTests.test_coordinator_sensor_platform_exposes_four_live_diagnostics) ... ok
-test_diagnostic_categories_are_entity_category_instances (__main__.CoordinatorTests.test_diagnostic_categories_are_entity_category_instances) ... ok
-test_diagnostics_refresh_is_throttled (__main__.CoordinatorTests.test_diagnostics_refresh_is_throttled) ... ok
-test_failed_diagnostics_do_not_set_hub_offline (__main__.CoordinatorTests.test_failed_diagnostics_do_not_set_hub_offline) ... ok
-test_result_after_disconnect_or_new_generation_is_ignored (__main__.CoordinatorTests.test_result_after_disconnect_or_new_generation_is_ignored) ... ok
-test_coordinator_menu_includes_supervision_without_hub_calls (__main__.OptionsTests.test_coordinator_menu_includes_supervision_without_hub_calls) ... ok
-test_router_menu_keeps_media_and_shared_mqtt (__main__.OptionsTests.test_router_menu_keeps_media_and_shared_mqtt) ... ok
-test_saved_role_preserved_when_runtime_is_unavailable (__main__.OptionsTests.test_saved_role_preserved_when_runtime_is_unavailable) ... ok
-test_sound_and_rejoin_steps_blocked_even_when_invoked_directly (__main__.OptionsTests.test_sound_and_rejoin_steps_blocked_even_when_invoked_directly) ... ok
-test_diagnostics_ignore_shell_echo (__main__.ProfileTests.test_diagnostics_ignore_shell_echo) ... ok
-test_diagnostics_use_only_read_only_linux_commands (__main__.ProfileTests.test_diagnostics_use_only_read_only_linux_commands) ... ok
-test_incomplete_and_invalid_diagnostics_are_rejected (__main__.ProfileTests.test_incomplete_and_invalid_diagnostics_are_rejected) ... ok
-test_keep_only_live_per_hub_entities (__main__.ProfileTests.test_keep_only_live_per_hub_entities) ... ok
-test_shared_mqtt_never_writes_to_coordinator (__main__.ProfileTests.test_shared_mqtt_never_writes_to_coordinator) ... ok
-test_stopped_processes_are_not_reported_running (__main__.ProfileTests.test_stopped_processes_are_not_reported_running) ... ok
-test_transport_requires_local_port_not_an_outgoing_connection (__main__.ProfileTests.test_transport_requires_local_port_not_an_outgoing_connection) ... ok
-test_unknown_role_keeps_setup_fallback_possible (__main__.ProfileTests.test_unknown_role_keeps_setup_fallback_possible) ... ok
-test_coordinator_does_not_construct_any_media_or_mqtt_runtime (__main__.SetupTests.test_coordinator_does_not_construct_any_media_or_mqtt_runtime) ... ok
-test_coordinator_unload_does_not_touch_router_group (__main__.SetupTests.test_coordinator_unload_does_not_touch_router_group) ... ok
-test_offline_coordinator_still_uses_restricted_profile (__main__.SetupTests.test_offline_coordinator_still_uses_restricted_profile) ... ok
-test_old_sound_actions_fail_before_read_or_play (__main__.SetupTests.test_old_sound_actions_fail_before_read_or_play) ... ok
-test_retired_fine_trim_is_removed_from_entity_registry (__main__.SetupTests.test_retired_fine_trim_is_removed_from_entity_registry) ... ok
-test_router_still_constructs_and_registers_media_runtime (__main__.SetupTests.test_router_still_constructs_and_registers_media_runtime) ... ok
-test_sound_service_passes_temporary_volume_without_changing_radio_volume (__main__.SetupTests.test_sound_service_passes_temporary_volume_without_changing_radio_volume) ... ok
-test_sound_services_forward_optout_without_mutating_media_controls (__main__.SetupTests.test_sound_services_forward_optout_without_mutating_media_controls) ... ok
-test_wav_url_service_uses_central_default_without_yaml_unmute (__main__.SetupTests.test_wav_url_service_uses_central_default_without_yaml_unmute) ... ok
-test_coordinator_has_no_physical_button_triggers (__main__.TriggerTests.test_coordinator_has_no_physical_button_triggers) ... ok
-test_old_coordinator_trigger_cannot_subscribe_to_auxiliary_mqtt (__main__.TriggerTests.test_old_coordinator_trigger_cannot_subscribe_to_auxiliary_mqtt) ... ok
-test_router_physical_button_triggers_are_preserved (__main__.TriggerTests.test_router_physical_button_triggers_are_preserved) ... ok
-
+..............................
 ----------------------------------------------------------------------
-Ran 30 tests in 0.540s
+Ran 30 tests in 1.195s
 
 OK
 
 test_device_registry_compat.py
-test_current_api_empty_registry_returns_none (__main__.DeviceLookupCompatibilityTests.test_current_api_empty_registry_returns_none) ... ok
-test_current_api_missing_own_device_does_not_return_foreign_collision (__main__.DeviceLookupCompatibilityTests.test_current_api_missing_own_device_does_not_return_foreign_collision) ... ok
-test_current_api_scopes_colliding_ip_and_mac_identifiers (__main__.DeviceLookupCompatibilityTests.test_current_api_scopes_colliding_ip_and_mac_identifiers) ... ok
-test_noncallable_current_lookup_uses_old_ha_fallback (__main__.DeviceLookupCompatibilityTests.test_noncallable_current_lookup_uses_old_ha_fallback) ... ok
-test_old_ha_foreign_only_and_nonmatching_own_devices_return_none (__main__.DeviceLookupCompatibilityTests.test_old_ha_foreign_only_and_nonmatching_own_devices_return_none) ... ok
-test_old_ha_uses_scoped_enumeration_for_ip_and_mac_collisions (__main__.DeviceLookupCompatibilityTests.test_old_ha_uses_scoped_enumeration_for_ip_and_mac_collisions) ... ok
-test_ip_to_mac_migration_keeps_device_id_user_name_and_entity_link (__main__.DeviceRegistrySetupTests.test_ip_to_mac_migration_keeps_device_id_user_name_and_entity_link) ... ok
-test_setup_with_only_foreign_collisions_creates_own_device (__main__.DeviceRegistrySetupTests.test_setup_with_only_foreign_collisions_creates_own_device) ... ok
-test_stale_own_ip_device_links_move_to_own_mac_device_only (__main__.DeviceRegistrySetupTests.test_stale_own_ip_device_links_move_to_own_mac_device_only) ... ok
-test_interim_owner_none_is_not_replaced_by_obsolete_plural_owners (__main__.DeviceTriggerOwnerCompatibilityTests.test_interim_owner_none_is_not_replaced_by_obsolete_plural_owners) ... ok
-test_interim_singular_owner_avoids_plural_deprecation (__main__.DeviceTriggerOwnerCompatibilityTests.test_interim_singular_owner_avoids_plural_deprecation) ... ok
-test_modern_domain_helper_resolves_own_entry_without_legacy_lookup (__main__.DeviceTriggerOwnerCompatibilityTests.test_modern_domain_helper_resolves_own_entry_without_legacy_lookup) ... ok
-test_modern_missing_device_does_not_fall_back_to_unscoped_owner_search (__main__.DeviceTriggerOwnerCompatibilityTests.test_modern_missing_device_does_not_fall_back_to_unscoped_owner_search) ... ok
-test_true_old_ha_missing_device_returns_none (__main__.DeviceTriggerOwnerCompatibilityTests.test_true_old_ha_missing_device_returns_none) ... ok
-test_true_old_ha_plural_fallback_skips_other_domains (__main__.DeviceTriggerOwnerCompatibilityTests.test_true_old_ha_plural_fallback_skips_other_domains) ... ok
-test_missing_own_device_does_not_rename_a_foreign_collision (__main__.VisualAvailabilityRegistryTests.test_missing_own_device_does_not_rename_a_foreign_collision) ... ok
-test_offline_and_online_names_update_only_the_config_entry_device (__main__.VisualAvailabilityRegistryTests.test_offline_and_online_names_update_only_the_config_entry_device) ... ok
-
+......Executing <Task finished name='Task-2' coro=<DeviceRegistrySetupTests.test_ip_to_mac_migration_keeps_device_id_user_name_and_entity_link() done, defined at <integration-workdir>\test_device_registry_compat.py:184> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.109 seconds
+...........
 ----------------------------------------------------------------------
-Ran 17 tests in 0.112s
+Ran 17 tests in 0.294s
 
 OK
 
@@ -103,7 +77,7 @@ test_group_clean_stop.py
 ..M1S group FFmpeg did not exit after terminate pid=123 reason=user_stop; killing process
 ....
 ----------------------------------------------------------------------
-Ran 6 tests in 0.696s
+Ran 6 tests in 1.498s
 
 OK
 
@@ -120,54 +94,54 @@ M1S group quarantining affected member member=Aqara M1S Zigbee Router@192.168.0.
 M1S group confirmed TCP backpressure member=Aqara M1S Zigbee Router@192.168.0.222 seq=102 consecutive=2 action=isolate_member_keep_group_clock
 ..
 ----------------------------------------------------------------------
-Ran 26 tests in 5.546s
+Ran 26 tests in 20.271s
 
 OK
 
 test_group_sync_policy.py
 ........
 ----------------------------------------------------------------------
-Ran 8 tests in 0.174s
+Ran 8 tests in 0.331s
 
 OK
 
 test_local_audio.py
 ...............................
 ----------------------------------------------------------------------
-Ran 31 tests in 0.679s
+Ran 31 tests in 1.325s
 
 OK
 
 test_local_group_volume.py
 .....
 ----------------------------------------------------------------------
-Ran 5 tests in 0.099s
+Ran 5 tests in 0.219s
 
 OK
 
 test_notification_volume.py
 ....
 ----------------------------------------------------------------------
-Ran 4 tests in 0.092s
+Ran 4 tests in 0.216s
 
 OK
 
 test_priority_mute_policy.py
 ..................
 ----------------------------------------------------------------------
-Ran 18 tests in 0.751s
+Ran 18 tests in 1.438s
 
 OK
 
 test_router_mqtt_topic.py
 M1S Router MQTT synchronization not confirmed for hub 192.168.0.210; retrying later
 Traceback (most recent call last):
-  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_0_37_23\custom_components\aqara_m1s_zigbee_router\coordinator.py", line 170, in _sync_shared_mqtt
+  File "<integration-workdir>\custom_components\aqara_m1s_zigbee_router\coordinator.py", line 170, in _sync_shared_mqtt
     await self.hass.async_add_executor_job(ensure_router_mqtt_topic, self.client)
   File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 2253, in _execute_mock_call
     result = effect(*args, **kwargs)
              ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_0_37_23\test_router_mqtt_topic.py", line 262, in <lambda>
+  File "<integration-workdir>\test_router_mqtt_topic.py", line 262, in <lambda>
     async_add_executor_job=AsyncMock(side_effect=lambda fn, *args: fn(*args)))
                                                                    ^^^^^^^^^
   File "C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1124, in __call__
@@ -181,29 +155,30 @@ Traceback (most recent call last):
 RuntimeError: deferred
 ...........................
 ----------------------------------------------------------------------
-Ran 27 tests in 6.053s
+Ran 27 tests in 11.397s
 
 OK
 
 test_shared_mqtt.py
-Executing <Task finished name='Task-2' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at C:\Users\Dell\Documents\Codex\2026-11-07\tr\work\m1s_0_37_23\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.687 seconds
-.......
+Executing <Task finished name='Task-2' coro=<Tests.test_atomic_shell_write_backup_and_idempotence() done, defined at <integration-workdir>\test_shared_mqtt.py:75> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 1.687 seconds
+....Executing <Task finished name='Task-24' coro=<Tests.test_paho_accept_and_reject() done, defined at <integration-workdir>\test_shared_mqtt.py:59> result=None created at C:\Users\Dell\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py:100> took 0.250 seconds
+...
 ----------------------------------------------------------------------
-Ran 7 tests in 0.916s
+Ran 7 tests in 2.264s
 
 OK
 
 test_sound_delete.py
 ............
 ----------------------------------------------------------------------
-Ran 12 tests in 0.056s
+Ran 12 tests in 0.082s
 
 OK
 
 test_sound_inventory.py
 ...........
 ----------------------------------------------------------------------
-Ran 11 tests in 0.261s
+Ran 11 tests in 0.634s
 
 OK
 
@@ -215,27 +190,34 @@ test_sound_priority.py
 .....M1S WAV URL download timed out host=test
 ....
 ----------------------------------------------------------------------
-Ran 34 tests in 1.431s
+Ran 34 tests in 2.759s
 
 OK
 
 test_sound_storage.py
 ........
 ----------------------------------------------------------------------
-Ran 8 tests in 0.104s
+Ran 8 tests in 0.146s
 
 OK
 
 test_wav_fast_start.py
 ......
 ----------------------------------------------------------------------
-Ran 6 tests in 0.213s
+Ran 6 tests in 0.285s
 
 OK
 
 test_z2m_guard.py
-..................................
+.....................................
 ----------------------------------------------------------------------
-Ran 34 tests in 0.615s
+Ran 37 tests in 1.497s
+
+OK
+
+Isolated retest: test_audio_transport_batch.py
+....................
+----------------------------------------------------------------------
+Ran 20 tests in 6.454s
 
 OK

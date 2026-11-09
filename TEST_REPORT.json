@@ -1,149 +1,179 @@
 {
-  "version": "0.37.23",
-  "baseline": "0.37.22",
-  "run_at_utc": "2026-11-07T03:41:48.935209+00:00",
-  "tests_run": 345,
+  "version": "0.37.24",
+  "baseline": "0.37.23",
+  "run_at_utc": "2026-11-09T17:18:46.726550+00:00",
+  "tests_run": 348,
+  "skipped": 0,
   "success": true,
   "failed_suites": [],
   "suites": [
     {
       "file": "test_audio_link_guard.py",
       "tests": 11,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_audio_transport_batch.py",
       "tests": 20,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_continuous_cast_gap.py",
       "tests": 10,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_coordinator_io.py",
       "tests": 20,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_coordinator_profile.py",
       "tests": 30,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_device_registry_compat.py",
       "tests": 17,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_group_clean_stop.py",
       "tests": 6,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_group_cohort_alignment.py",
       "tests": 26,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_group_sync_policy.py",
       "tests": 8,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_local_audio.py",
       "tests": 31,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_local_group_volume.py",
       "tests": 5,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_notification_volume.py",
       "tests": 4,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_priority_mute_policy.py",
       "tests": 18,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_router_mqtt_topic.py",
       "tests": 27,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_shared_mqtt.py",
       "tests": 7,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_sound_delete.py",
       "tests": 12,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_sound_inventory.py",
       "tests": 11,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_sound_priority.py",
       "tests": 34,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_sound_storage.py",
       "tests": 8,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_wav_fast_start.py",
       "tests": 6,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     },
     {
       "file": "test_z2m_guard.py",
-      "tests": 34,
+      "tests": 37,
+      "skipped": 0,
       "success": true,
       "returncode": 0
     }
   ],
-  "validation": "Python syntax and JSON parsing; 345 isolated local regression tests passed; additional live read-only transfer diagnostic on one hub. No installation/full Home Assistant validation.",
-  "source_zip_sha256": "adf4124de9d2e9649aa7b6ffb09fc79e7b3d1ff807c58d3b7ad71363a1163839",
-  "live_read_only_diagnostic": {
-    "host": "192.168.0.203",
-    "old_bulk_transfer": "Observed truncation of base64 command to bas; did not reproduce exact historic 45-second timeout",
-    "chunked_transfer": "M1S_ROUTER_TOPIC_SYNC_READY",
-    "commands": 12,
-    "largest_command_characters": 454,
-    "elapsed_seconds": 10.16,
-    "device_mutations": false,
-    "limitation": "Diagnostic variant stops before locks or agent restart; full integration not deployed"
-  },
-  "existing_client_methods_unchanged": true
+  "python_syntax_checked": 53,
+  "json_checked": 6,
+  "live_home_assistant_or_hub_test": false,
+  "isolated_retests": [
+    {
+      "initial": {
+        "file": "test_audio_transport_batch.py",
+        "tests": 20,
+        "skipped": 0,
+        "success": false,
+        "returncode": 1
+      },
+      "retest": {
+        "file": "test_audio_transport_batch.py",
+        "tests": 20,
+        "skipped": 0,
+        "success": true,
+        "returncode": 0
+      }
+    }
+  ]
 }
